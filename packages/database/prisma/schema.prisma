@@ -1,0 +1,496 @@
+// =============================================================================
+// Prisma Schema: Hệ thống Quản trị Nhân sự Thông minh BAHAU
+// Trường Đại học Kiến trúc Đà Nẵng (DAU)
+// =============================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// =============================================================================
+// ENUMS (14 Enums)
+// =============================================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UnitType {
+  BOARD
+  FACULTY
+  DEPARTMENT
+  DIVISION
+  CENTER
+}
+
+enum PositionType {
+  MANAGEMENT
+  ACADEMIC
+  ADMINISTRATIVE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AcademicTitle {
+  NONE
+  ASSOCIATE_PROFESSOR
+  PROFESSOR
+}
+
+enum AcademicDegree {
+  BACHELOR
+  MASTER
+  DOCTOR
+}
+
+enum EmploymentStatus {
+  PROBATION
+  ACTIVE
+  ON_LEAVE
+  RESIGNED
+  RETIRED
+}
+
+enum AssignmentType {
+  PRIMARY
+  CONCURRENT
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum ContractType {
+  PROBATION
+  DEFINITE_TERM_12M
+  DEFINITE_TERM_36M
+  INDEFINITE_TERM
+  VISITING_LECTURER
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  TERMINATED
+  RENEWED
+}
+
+enum EmploymentEventType {
+  HIRED
+  APPOINTED
+  TRANSFERRED
+  CONCURRENT_ASSIGNED
+  PROMOTED
+  RESIGNED
+  RETIRED
+}
+
+enum FileAccessLevel {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+// =============================================================================
+// MODELS (15 Models)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// 1. Model User: Quản lý danh tính, xác thực và trạng thái đăng nhập
+// -----------------------------------------------------------------------------
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.VarChar(255)
+  passwordHash String     @db.VarChar(255)
+  status       UserStatus @default(ACTIVE)
+  isMfaEnabled Boolean    @default(false)
+  mfaSecret    String?    @db.VarChar(255)
+  lastLoginAt  DateTime?  @db.Timestamptz
+  createdAt    DateTime   @default(now()) @db.Timestamptz
+  updatedAt    DateTime   @updatedAt @db.Timestamptz
+
+  // Relations
+  employee        Employee?
+  sessions        Session[]
+  roleAssignments RoleAssignment[]
+  auditEvents     AuditEvent[]
+  uploadedFiles   FileAsset[]
+
+  @@map("users")
+}
+
+// -----------------------------------------------------------------------------
+// 2. Model Session: Quản lý phiên làm việc stateful cookie HttpOnly
+// -----------------------------------------------------------------------------
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.Text
+  expiresAt DateTime @db.Timestamptz
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// -----------------------------------------------------------------------------
+// 3. Model Role: Danh mục các vai trò hệ thống
+// -----------------------------------------------------------------------------
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  rolePermissions RolePermission[]
+  roleAssignments RoleAssignment[]
+
+  @@map("roles")
+}
+
+// -----------------------------------------------------------------------------
+// 4. Model Permission: Quyền hạn chi tiết theo module và action
+// -----------------------------------------------------------------------------
+model Permission {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @db.VarChar(100)
+  module    String   @db.VarChar(50)
+  action    String   @db.VarChar(50)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+// -----------------------------------------------------------------------------
+// 5. Model RolePermission: Bảng nối quan hệ Nhiều-Nhiều giữa Role và Permission
+// -----------------------------------------------------------------------------
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// -----------------------------------------------------------------------------
+// 6. Model RoleAssignment: Phân vai trò kèm phạm vi đơn vị (Data Scope)
+// -----------------------------------------------------------------------------
+model RoleAssignment {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  roleId      String    @db.Uuid
+  scopeUnitId String?   @db.Uuid
+  validFrom   DateTime  @default(now()) @db.Date
+  validTo     DateTime? @db.Date
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+
+  // Relations
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role                @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  scopeUnit OrganizationalUnit? @relation(fields: [scopeUnitId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([roleId])
+  @@index([scopeUnitId])
+  @@index([validFrom, validTo])
+  @@map("role_assignments")
+}
+
+// -----------------------------------------------------------------------------
+// 7. Model OrganizationalUnit: Cơ cấu tổ chức cây đa cấp của Trường DAU
+// -----------------------------------------------------------------------------
+model OrganizationalUnit {
+  id                String   @id @default(uuid()) @db.Uuid
+  code              String   @unique @db.VarChar(50)
+  name              String   @db.VarChar(255)
+  unitType          UnitType
+  parentId          String?  @db.Uuid
+  managerEmployeeId String?  @db.Uuid
+  isActive          Boolean  @default(true)
+  orderIndex        Int      @default(0)
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  parent          OrganizationalUnit?    @relation("UnitHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children        OrganizationalUnit[]   @relation("UnitHierarchy")
+  managerEmployee Employee?              @relation("UnitManager", fields: [managerEmployeeId], references: [id], onDelete: SetNull)
+  assignments     EmploymentAssignment[]
+  roleAssignments RoleAssignment[]
+  fromEvents      EmploymentEvent[]      @relation("EventFromUnit")
+  toEvents        EmploymentEvent[]      @relation("EventToUnit")
+
+  @@index([parentId])
+  @@index([managerEmployeeId])
+  @@index([isActive])
+  @@map("organizational_units")
+}
+
+// -----------------------------------------------------------------------------
+// 8. Model Position: Danh mục chức vụ quản lý & chức danh chuyên môn
+// -----------------------------------------------------------------------------
+model Position {
+  id              String       @id @default(uuid()) @db.Uuid
+  code            String       @unique @db.VarChar(50)
+  name            String       @db.VarChar(255)
+  positionType    PositionType
+  leadershipLevel Int          @default(0)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @db.Timestamptz
+  updatedAt       DateTime     @updatedAt @db.Timestamptz
+
+  // Relations
+  assignments EmploymentAssignment[]
+  fromEvents  EmploymentEvent[]      @relation("EventFromPosition")
+  toEvents    EmploymentEvent[]      @relation("EventToPosition")
+
+  @@index([positionType])
+  @@index([isActive])
+  @@map("positions")
+}
+
+// -----------------------------------------------------------------------------
+// 9. Model Employee: Hồ sơ thông tin Cán bộ Giảng viên Nhân viên toàn diện
+// -----------------------------------------------------------------------------
+model Employee {
+  id               String           @id @default(uuid()) @db.Uuid
+  userId           String?          @unique @db.Uuid
+  employeeCode     String           @unique @db.VarChar(50)
+  fullName         String           @db.VarChar(255)
+  gender           Gender
+  dateOfBirth      DateTime         @db.Date
+  idCardNumber     String           @unique @db.VarChar(20)
+  idCardIssueDate  DateTime?        @db.Date
+  idCardIssuePlace String?          @db.VarChar(255)
+  taxCode          String?          @db.VarChar(20)
+  personalEmail    String?          @db.VarChar(255)
+  workEmail        String           @unique @db.VarChar(255)
+  phoneNumber      String?          @db.VarChar(20)
+  currentAddress   String?          @db.Text
+  academicTitle    AcademicTitle    @default(NONE)
+  academicDegree   AcademicDegree   @default(BACHELOR)
+  employmentStatus EmploymentStatus @default(ACTIVE)
+  hireDate         DateTime         @db.Date
+  createdAt        DateTime         @default(now()) @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @db.Timestamptz
+
+  // Relations
+  user         User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  assignments  EmploymentAssignment[]
+  contracts    EmploymentContract[]
+  events       EmploymentEvent[]
+  managedUnits OrganizationalUnit[]   @relation("UnitManager")
+
+  @@index([employeeCode])
+  @@index([workEmail])
+  @@index([employmentStatus])
+  @@index([fullName])
+  @@index([hireDate])
+  @@map("employees")
+}
+
+// -----------------------------------------------------------------------------
+// 10. Model EmploymentAssignment: Phân công công tác chính thức & kiêm nhiệm
+// -----------------------------------------------------------------------------
+model EmploymentAssignment {
+  id             String           @id @default(uuid()) @db.Uuid
+  employeeId     String           @db.Uuid
+  unitId         String           @db.Uuid
+  positionId     String           @db.Uuid
+  assignmentType AssignmentType   @default(PRIMARY)
+  isHeadOfUnit   Boolean          @default(false)
+  startDate      DateTime         @db.Date
+  endDate        DateTime?        @db.Date
+  status         AssignmentStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @db.Timestamptz
+
+  // Relations
+  employee Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  unit     OrganizationalUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  position Position           @relation(fields: [positionId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([unitId])
+  @@index([positionId])
+  @@index([assignmentType, status])
+  @@index([status, startDate, endDate])
+  @@map("employment_assignments")
+}
+
+// -----------------------------------------------------------------------------
+// 11. Model EmploymentContract: Quản lý hợp đồng lao động & chuỗi gia hạn
+// -----------------------------------------------------------------------------
+model EmploymentContract {
+  id                String         @id @default(uuid()) @db.Uuid
+  employeeId        String         @db.Uuid
+  contractNumber    String         @unique @db.VarChar(100)
+  contractType      ContractType
+  signedDate        DateTime       @db.Date
+  effectiveDate     DateTime       @db.Date
+  expiryDate        DateTime?      @db.Date
+  salaryCoefficient Decimal        @db.Decimal(5, 2)
+  status            ContractStatus @default(ACTIVE)
+  fileAssetId       String?        @db.Uuid
+  parentContractId  String?        @db.Uuid
+  createdAt         DateTime       @default(now()) @db.Timestamptz
+  updatedAt         DateTime       @updatedAt @db.Timestamptz
+
+  // Relations
+  employee         Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  parentContract   EmploymentContract?  @relation("ContractRenewal", fields: [parentContractId], references: [id], onDelete: SetNull)
+  renewedContracts EmploymentContract[] @relation("ContractRenewal")
+  fileAsset        FileAsset?           @relation(fields: [fileAssetId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([status, expiryDate])
+  @@index([fileAssetId])
+  @@index([parentContractId])
+  @@map("employment_contracts")
+}
+
+// -----------------------------------------------------------------------------
+// 12. Model EmploymentEvent: Lịch sử biến động công tác (Timeline)
+// -----------------------------------------------------------------------------
+model EmploymentEvent {
+  id             String              @id @default(uuid()) @db.Uuid
+  employeeId     String              @db.Uuid
+  eventType      EmploymentEventType
+  decisionNumber String?             @db.VarChar(100)
+  decisionDate   DateTime?           @db.Date
+  effectiveDate  DateTime            @db.Date
+  fromUnitId     String?             @db.Uuid
+  toUnitId       String?             @db.Uuid
+  fromPositionId String?             @db.Uuid
+  toPositionId   String?             @db.Uuid
+  note           String?             @db.Text
+  fileAssetId    String?             @db.Uuid
+  createdAt      DateTime            @default(now()) @db.Timestamptz
+
+  // Relations
+  employee     Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fromUnit     OrganizationalUnit? @relation("EventFromUnit", fields: [fromUnitId], references: [id], onDelete: SetNull)
+  toUnit       OrganizationalUnit? @relation("EventToUnit", fields: [toUnitId], references: [id], onDelete: SetNull)
+  fromPosition Position?           @relation("EventFromPosition", fields: [fromPositionId], references: [id], onDelete: SetNull)
+  toPosition   Position?           @relation("EventToPosition", fields: [toPositionId], references: [id], onDelete: SetNull)
+  fileAsset    FileAsset?          @relation(fields: [fileAssetId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([effectiveDate])
+  @@index([fromUnitId])
+  @@index([toUnitId])
+  @@index([fromPositionId])
+  @@index([toPositionId])
+  @@index([fileAssetId])
+  @@map("employment_events")
+}
+
+// -----------------------------------------------------------------------------
+// 13. Model FileAsset: Metadata tệp đính kèm bảo mật
+// -----------------------------------------------------------------------------
+model FileAsset {
+  id               String          @id @default(uuid()) @db.Uuid
+  originalFileName String          @db.VarChar(255)
+  storedFileName   String          @db.VarChar(255)
+  mimeType         String          @db.VarChar(100)
+  fileSizeBytes    BigInt
+  sha256Checksum   String          @db.VarChar(64)
+  storagePath      String          @db.VarChar(500)
+  accessLevel      FileAccessLevel @default(INTERNAL)
+  uploadedByUserId String?         @db.Uuid
+  createdAt        DateTime        @default(now()) @db.Timestamptz
+
+  // Relations
+  uploadedByUser User?                @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  contracts      EmploymentContract[]
+  events         EmploymentEvent[]
+
+  @@index([uploadedByUserId])
+  @@index([sha256Checksum])
+  @@map("file_assets")
+}
+
+// -----------------------------------------------------------------------------
+// 14. Model OutboxEvent: Hàng đợi sự kiện giao dịch (Transactional Outbox)
+// -----------------------------------------------------------------------------
+model OutboxEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  aggregateType  String       @db.VarChar(100)
+  aggregateId    String       @db.Uuid
+  eventType      String       @db.VarChar(100)
+  payload        Json         @db.JsonB
+  idempotencyKey String       @unique @db.VarChar(255)
+  status         OutboxStatus @default(PENDING)
+  retryCount     Int          @default(0)
+  lastError      String?      @db.Text
+  createdAt      DateTime     @default(now()) @db.Timestamptz
+  processedAt    DateTime?    @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@map("outbox_events")
+}
+
+// -----------------------------------------------------------------------------
+// 15. Model AuditEvent: Nhật ký kiểm toán bảo mật & truy vết thay đổi dữ liệu
+// -----------------------------------------------------------------------------
+model AuditEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  action     String   @db.VarChar(100)
+  entityName String   @db.VarChar(100)
+  entityId   String   @db.Uuid
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.Text
+  diffData   Json?    @db.JsonB
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityName, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_events")
+}

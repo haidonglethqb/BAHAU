@@ -1,0 +1,57 @@
+{
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "passRate": "100.0%",
+    "durationMs": 674
+  },
+  "results": [
+    {
+      "tier": "Tier 1: Feature Coverage",
+      "criterion": "AC1: Workspaces Linkage",
+      "testId": "TC-T1-AC1-01",
+      "description": "Root package.json declares valid workspaces array containing packages/* and apps/*",
+      "status": "PASS",
+      "durationMs": 1,
+      "error": null
+    },
+    {
+      "tier": "Tier 1: Feature Coverage",
+      "criterion": "AC1: Workspaces Linkage",
+      "testId": "TC-T1-AC1-02",
+      "description": "packages/contracts exists with name @bahau/contracts",
+      "status": "PASS",
+      "durationMs": 1,
+      "error": null
+    },
+    {
+      "tier": "Tier 1: Feature Coverage",
+      "criterion": "AC1: Workspaces Linkage",
+      "testId": "TC-T1-AC1-03",
+      "description": "packages/database exists with name @bahau/database",
+      "status": "PASS",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "tier": "Tier 1: Feature Coverage",
+      "criterion": "AC1: Workspaces Linkage",
+      "testId": "TC-T1-AC1-04",
+      "description": "npm query recognizes @bahau/contracts and @bahau/database as workspace members",
+      "status": "PASS",
+      "durationMs": 670,
+      "error": null
+    },
+    {
+      "tier": "Tier 1: Feature Coverage",
+      "criterion": "AC1: Workspaces Linkage",
+      "testId": "TC-T1-AC1-05",
+      "description": "@bahau/contracts and @bahau/database are linked in root node_modules/@bahau",
+      "status": "PASS",
+      "durationMs": 0,
+      "error": null
+    }
+  ]
+}

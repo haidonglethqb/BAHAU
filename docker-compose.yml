@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: bahau_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bahau_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bahau_secret_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-bahau_hrms}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bahau_admin} -d ${POSTGRES_DB:-bahau_hrms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
