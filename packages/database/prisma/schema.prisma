@@ -112,8 +112,50 @@ enum OutboxStatus {
   FAILED
 }
 
+enum WorkflowModule {
+  LEAVE
+  BUSINESS_TRIP
+  PROFILE_UPDATE
+  ATTENDANCE_ADJUSTMENT
+  CERTIFICATE_VERIFY
+}
+
+enum WorkflowStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURNED
+  CANCELLED
+}
+
+enum WorkflowStepStatus {
+  WAITING
+  APPROVED
+  REJECTED
+  SKIPPED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  MATERNITY
+  UNPAID
+  BEREAVEMENT
+  WEDDING
+  ACADEMIC
+}
+
+enum LeaveLedgerAction {
+  GRANT_ANNUAL
+  CARRY_FORWARD
+  HOLD
+  USE
+  RESTORE
+  EXPIRE
+}
+
 // =============================================================================
-// MODELS (15 Models)
+// MODELS
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -315,11 +357,17 @@ model Employee {
   updatedAt        DateTime         @updatedAt @db.Timestamptz
 
   // Relations
-  user         User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  assignments  EmploymentAssignment[]
-  contracts    EmploymentContract[]
-  events       EmploymentEvent[]
-  managedUnits OrganizationalUnit[]   @relation("UnitManager")
+  user                    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  assignments             EmploymentAssignment[]
+  contracts               EmploymentContract[]
+  events                  EmploymentEvent[]
+  managedUnits            OrganizationalUnit[]   @relation("UnitManager")
+  leaveRequests           LeaveRequest[]         @relation("EmployeeLeaveRequests")
+  substituteLeaveRequests LeaveRequest[]         @relation("SubstituteEmployeeLeaveRequests")
+  leaveLedgers            LeaveLedger[]
+  businessTripRequests    BusinessTripRequest[]
+  workflowRequests        WorkflowInstance[]     @relation("RequesterEmployeeWorkflows")
+  assignedWorkflowSteps   WorkflowStep[]         @relation("ApproverEmployeeSteps")
 
   @@index([employeeCode])
   @@index([workEmail])
@@ -494,3 +542,130 @@ model AuditEvent {
   @@index([action])
   @@map("audit_events")
 }
+
+// -----------------------------------------------------------------------------
+// 16. Model WorkflowInstance: Phiên phê duyệt đa cấp theo quy trình
+// -----------------------------------------------------------------------------
+model WorkflowInstance {
+  id                  String         @id @default(uuid()) @db.Uuid
+  module              WorkflowModule
+  recordId            String         @db.Uuid
+  requesterEmployeeId String         @db.Uuid
+  currentStepIndex    Int            @default(0)
+  status              WorkflowStatus @default(PENDING)
+  createdAt           DateTime       @default(now()) @db.Timestamptz
+  updatedAt           DateTime       @updatedAt @db.Timestamptz
+
+  // Relations
+  requesterEmployee Employee       @relation("RequesterEmployeeWorkflows", fields: [requesterEmployeeId], references: [id], onDelete: Cascade)
+  steps             WorkflowStep[]
+
+  @@index([module, recordId])
+  @@index([requesterEmployeeId])
+  @@index([status])
+  @@map("workflow_instances")
+}
+
+// -----------------------------------------------------------------------------
+// 17. Model WorkflowStep: Từng bước phê duyệt tuần tự
+// -----------------------------------------------------------------------------
+model WorkflowStep {
+  id                 String             @id @default(uuid()) @db.Uuid
+  instanceId         String             @db.Uuid
+  stepIndex          Int
+  stepName           String             @db.VarChar(100)
+  approverRoleCode   String?            @db.VarChar(50)
+  approverEmployeeId String?            @db.Uuid
+  status             WorkflowStepStatus @default(WAITING)
+  comment            String?            @db.Text
+  actionAt           DateTime?          @db.Timestamptz
+  createdAt          DateTime           @default(now()) @db.Timestamptz
+  updatedAt          DateTime           @updatedAt @db.Timestamptz
+
+  // Relations
+  instance         WorkflowInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  approverEmployee Employee?        @relation("ApproverEmployeeSteps", fields: [approverEmployeeId], references: [id], onDelete: SetNull)
+
+  @@index([instanceId, stepIndex])
+  @@index([approverEmployeeId, status])
+  @@map("workflow_steps")
+}
+
+// -----------------------------------------------------------------------------
+// 18. Model LeaveRequest: Đơn xin nghỉ phép
+// -----------------------------------------------------------------------------
+model LeaveRequest {
+  id                   String         @id @default(uuid()) @db.Uuid
+  employeeId           String         @db.Uuid
+  leaveType            LeaveType
+  startDate            DateTime       @db.Date
+  endDate              DateTime       @db.Date
+  totalDays            Decimal        @db.Decimal(4, 1)
+  reason               String         @db.Text
+  substituteEmployeeId String?        @db.Uuid
+  workflowInstanceId   String?        @unique @db.Uuid
+  status               WorkflowStatus @default(PENDING)
+  createdAt            DateTime       @default(now()) @db.Timestamptz
+  updatedAt            DateTime       @updatedAt @db.Timestamptz
+
+  // Relations
+  employee           Employee      @relation("EmployeeLeaveRequests", fields: [employeeId], references: [id], onDelete: Cascade)
+  substituteEmployee Employee?     @relation("SubstituteEmployeeLeaveRequests", fields: [substituteEmployeeId], references: [id], onDelete: SetNull)
+  ledgerEntries      LeaveLedger[]
+
+  @@index([employeeId])
+  @@index([startDate, endDate])
+  @@index([status])
+  @@map("leave_requests")
+}
+
+// -----------------------------------------------------------------------------
+// 19. Model LeaveLedger: Sổ cái số dư ngày phép bất biến (Double-entry Ledger)
+// -----------------------------------------------------------------------------
+model LeaveLedger {
+  id                     String            @id @default(uuid()) @db.Uuid
+  employeeId             String            @db.Uuid
+  year                   Int
+  action                 LeaveLedgerAction
+  amount                 Decimal           @db.Decimal(4, 1)
+  balanceAfter           Decimal           @db.Decimal(4, 1)
+  referenceLeaveRequestId String?           @db.Uuid
+  note                   String?           @db.VarChar(255)
+  createdAt              DateTime          @default(now()) @db.Timestamptz
+
+  // Relations
+  employee     Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveRequest LeaveRequest? @relation(fields: [referenceLeaveRequestId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, year])
+  @@index([referenceLeaveRequestId])
+  @@map("leave_ledgers")
+}
+
+// -----------------------------------------------------------------------------
+// 20. Model BusinessTripRequest: Đơn đăng ký đi công tác
+// -----------------------------------------------------------------------------
+model BusinessTripRequest {
+  id                 String         @id @default(uuid()) @db.Uuid
+  employeeId         String         @db.Uuid
+  purpose            String         @db.Text
+  destination        String         @db.VarChar(255)
+  startDate          DateTime       @db.Date
+  endDate            DateTime       @db.Date
+  totalDays          Decimal        @db.Decimal(4, 1)
+  budgetEstimate     Decimal?       @db.Decimal(12, 2)
+  fundingSource      String?        @db.VarChar(100)
+  workflowInstanceId String?        @unique @db.Uuid
+  status             WorkflowStatus @default(PENDING)
+  createdAt          DateTime       @default(now()) @db.Timestamptz
+  updatedAt          DateTime       @updatedAt @db.Timestamptz
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([startDate, endDate])
+  @@index([status])
+  @@map("business_trip_requests")
+}
+

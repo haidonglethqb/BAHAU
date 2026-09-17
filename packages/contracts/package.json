@@ -25,6 +25,10 @@
       "types": "./dist/employee/index.d.ts",
       "default": "./dist/employee/index.js"
     },
+    "./leave": {
+      "types": "./dist/leave/index.d.ts",
+      "default": "./dist/leave/index.js"
+    },
     "./*": {
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"

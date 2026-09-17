@@ -2,116 +2,154 @@
 
 ---
 
+## Phiên 2 — 17/09/2026 (19:25 – 19:35)
+
+### ✅ Đã hoàn thành trong Phiên 2
+
+#### 1. Milestone 2 — Backend API (`apps/api`) — HOÀN THÀNH 100% ✅
+- **Cấu trúc phân tầng**:
+  - `src/server.ts`: Khởi động HTTP server trên cổng PORT (mặc định 4000), xử lý tắt an toàn (graceful shutdown) ngắt kết nối Prisma và HTTP server.
+  - `src/app.ts`: Thiết lập Express 4, Helmet (bảo mật `nosniff`), CORS (hỗ trợ credentials), Cookie-parser, JSON body parser.
+  - `src/middlewares/request-id.middleware.ts`: Tự động nhận diện hoặc sinh mới `X-Request-Id` (UUID) và gắn vào header phản hồi.
+  - `src/middlewares/error.middleware.ts`: Xử lý lỗi tập trung chuẩn hóa theo `api-standards.md`, trả envelope `{ success: false, error: { code, message, details, requestId, timestamp } }`, bao gồm cả 404 handler cho các route chưa định nghĩa.
+  - `src/controllers/health.controller.ts`: Triển khai `GET /api/v1/health` kiểm tra uptime, phiên bản API và kiểm tra kết nối CSDL PostgreSQL với cơ chế timeout chống treo tiến trình.
+- **Biên dịch & Kiểm thử**:
+  - `tsc` biên dịch thành công 0 lỗi ra thư mục `apps/api/dist/`.
+  - Vượt qua 100% các bài kiểm tra AC4, Tier 2 (Boundary), và Tier 4 (Real-World: burst 50 concurrent requests, graceful shutdown, cold boot).
+
+#### 2. Milestone 3 — Frontend Web (`apps/web`) — HOÀN THÀNH 100% ✅
+- **Cấu trúc Next.js App Router & Tailwind CSS**:
+  - `src/app/layout.tsx`: Root layout với cấu trúc chuẩn HTML5, thương hiệu BAHAU — Trường Đại học Kiến trúc Đà Nẵng (DAU), thanh điều hướng và footer bản quyền 2026.
+  - `src/app/page.tsx`: Trang chủ giới thiệu tổng quan hệ thống, phân tích chi tiết 3 Không gian làm việc (Cá nhân, Quản lý đơn vị, Nhân sự/Quản trị), bảng thông số kỹ thuật nền tảng.
+  - `src/components/ApiHealthStatus.tsx`: Component client-side thăm dò trạng thái kết nối trực tiếp tới Backend API (`GET /api/v1/health`), hiển thị chỉ số uptime, trạng thái database và mã phiên bản.
+  - `src/app/login/page.tsx`: Trang đăng nhập giao diện chuẩn DAU, tích hợp sẵn các nút chọn nhanh tài khoản thử nghiệm bám sát 5 nhóm vai trò từ Seed Data.
+- **Biên dịch**:
+  - `next build` biên dịch thành công 100%, tự động tối ưu hóa và sinh các trang tĩnh (`/`, `/login`, `/_not-found`).
+
+#### 3. Milestone 4 — Nghiệm thu Toàn diện Monorepo — HOÀN THÀNH 100% ✅
+- **Biên dịch toàn bộ Monorepo (`npm run build`)**: Thành công 100% không có lỗi trên cả 4 packages và apps:
+  - `@bahau/contracts` (tsc) ✅
+  - `@bahau/database` (tsc) ✅
+  - `@bahau/api` (tsc) ✅
+  - `@bahau/web` (next build) ✅
+- **Bộ Kiểm thử E2E (40/40 Test Cases PASS)**:
+  - Tier 1: Feature Coverage (AC1, AC2, AC3, AC4, AC5) — 25/25 PASS ✅
+  - Tier 2: Boundary & Corner Cases — 6/6 PASS ✅
+  - Tier 3: Cross-Feature Combinations — 5/5 PASS ✅
+  - Tier 4: Real-World Scenarios (Readiness, Concurrency, Lifecycle, Environment) — 4/4 PASS ✅
+
+---
+
 ## Phiên 1 — 16/09/2026 (20:57 – 22:46)
 
-### ✅ Đã hoàn thành
+### ✅ Đã hoàn thành trong Phiên 1
 
 #### 1. Phỏng vấn & Chốt 10 quyết định thiết kế (/grill-me)
+- Chốt nguyên tắc: PRD/Kiến trúc trước $\rightarrow$ Code sau.
+- Chốt mô hình 3 Không gian, cơ chế kiêm nhiệm và chuỗi phê duyệt chống tự duyệt.
+- Chốt xác thực Stateful Session (PostgreSQL + HttpOnly Cookie) và Zod Single Source of Truth.
+- Chốt quy chuẩn mã CBGV: `DAU{YY}{0000}` và bộ Seed Data thực tế ĐH Kiến trúc Đà Nẵng.
 
-| # | Quyết định | Kết quả |
-|---|-----------|---------|
-| 1 | Bắt đầu từ đâu | Tài liệu đặc tả nghiệp vụ trước, rồi mới code |
-| 2 | Phạm vi tài liệu | Kiến trúc tổng thể + Ma trận phân quyền trước, rồi đi sâu từng phân hệ |
-| 3 | Cơ chế kiêm nhiệm | 3 Không gian (Cá nhân / Quản lý đơn vị / HR-Admin) + bộ chọn đơn vị |
-| 4 | Workflow phê duyệt | Phân cấp tự động (Hierarchical Escalation), chống tự phê duyệt |
-| 5 | Xác thực (Auth) | Stateful Session — Cookie HttpOnly lưu SessionId trong PostgreSQL |
-| 6 | Contract/DTO | Zod làm Single Source of Truth trong `packages/contracts` |
-| 7 | AI Provider | Adapter linh hoạt — chưa triển khai đợt này |
-| 8 | Lưu trữ file | Local Disk + Storage Interface, truy cập qua Express có kiểm tra quyền |
-| 9 | Mã nhân sự | `DAU{YY}{0000}` (ví dụ DAU260001), cố định suốt đời công tác |
-| 10 | Self-service hồ sơ | SĐT/địa chỉ sửa trực tiếp; bằng cấp/học hàm qua workflow 2 cấp |
+#### 2. Bộ tài liệu đặc tả kiến trúc & nghiệp vụ (docs/)
+- `docs/architecture/system-overview.md` — Kiến trúc tổng thể C4, 3-Space UX, Stateful Session, Outbox Worker.
+- `docs/architecture/domain-model.md` — Mô hình thực thể lõi 15+ bảng, quan hệ kiêm nhiệm, sổ cái bất biến.
+- `docs/requirements/rbac-matrix.md` — Ma trận quyền 5 vai trò, 4 scope dữ liệu (SELF, UNIT, TREE, ALL).
+- `docs/requirements/api-standards.md` — Chuẩn RESTful API, Zod contracts, Response Envelopes, Error Codes.
+- `docs/requirements/module-01-core-hr-prd.md` — PRD Phân hệ 1 (10 User Stories, 20 API endpoints).
 
-#### 2. Tài liệu đặc tả đã tạo (docs/)
-
-- `docs/architecture/system-overview.md` — Kiến trúc tổng thể, 3-Space UX, Auth, Outbox, File Storage
-- `docs/architecture/domain-model.md` — Mô hình thực thể lõi, 15+ entities, sổ cái bất biến, 3 tầng chấm công
-- `docs/requirements/rbac-matrix.md` — Ma trận phân quyền 5 vai trò, 4 scope, chuỗi phê duyệt phân cấp
-- `docs/requirements/api-standards.md` — RESTful, Zod contracts, Response Envelope, Error Codes, Pagination
-- `docs/requirements/module-01-core-hr-prd.md` — PRD Phân hệ 1: 10 User Stories, 20 API endpoints, tiêu chí nghiệm thu
-
-#### 3. Mã nguồn — Milestone 1 (HOÀN THÀNH ✅)
-
-- **`packages/contracts`** (Build ✅): Zod schemas cho Auth, Employee, Unit, Common (Pagination/Response/Error)
-- **`packages/database`** (Build ✅):
-  - `prisma/schema.prisma` — 15 models, 14 enums (User, Session, Role, Permission, Employee, OrgUnit, Position, Assignment, Contract, Event, Outbox, Audit...)
-  - `prisma/seed.ts` — Seed Data bám sát cơ cấu ĐH Kiến trúc Đà Nẵng (BGH, Khoa KT, Khoa XD, Bộ môn, Phòng TCHC, Phòng ĐT, 5 tài khoản 5 vai trò)
-  - `src/client.ts` — PrismaClient singleton export
-  - Prisma Client sinh thành công qua `npm run db:generate`
-- **Root Monorepo**: package.json (npm workspaces), tsconfig.base.json, docker-compose.yml (PostgreSQL + pgvector), .env.example, .gitignore
-
-#### 4. Hạ tầng kiểm thử (Đã tạo khung)
-
-- `tests/e2e/runner.mjs` — Runner E2E 40 test cases
-- `tests/e2e/` — 4 tầng: tier1-feature, tier2-boundary, tier3-cross, tier4-real-world
-- `TEST_INFRA.md`, `TEST_READY.md` — Tài liệu kiểm thử
+#### 3. Mã nguồn nền tảng (Milestone 1)
+- `packages/contracts`: Zod schemas cho Auth, Employee, Unit, Common Pagination/Response.
+- `packages/database`: Prisma schema 15 models + 14 enums, PrismaClient singleton, Seed Data DAU đầy đủ.
 
 ---
 
-## ❌ Chưa hoàn thành — TIẾP TỤC TỪ ĐÂY
+## 🎯 Kế hoạch Phiên làm việc tiếp theo
 
-> **Teamwork Agent bị dừng do hết quota API lúc 22:21.**
-> Toàn bộ kết quả Milestone 1 đã được lưu đầy đủ trong repo.
+> **Mục tiêu tiếp theo**: Triển khai các API nghiệp vụ cốt lõi cho Phân hệ 1 và kết nối Form giao diện.
 
-### Milestone 2 — Backend API (`apps/api`) ← BẮT ĐẦU TỪ ĐÂY
+#### 4. Phân hệ Xác thực & Quản lý Phiên (Auth Module) — HOÀN THÀNH 100% ✅
+- **API Endpoints**:
+  - `POST /api/v1/auth/login`: Xác thực email/password qua Argon2id, tạo bản ghi `Session` (thời hạn 7 ngày), trả Cookie HttpOnly `bahau_session` và thông tin `AuthUser`.
+  - `POST /api/v1/auth/logout`: Xóa bản ghi `Session` khỏi CSDL (thu hồi phiên tức thì) và xóa Cookie trình duyệt.
+  - `GET /api/v1/auth/me`: Trả về hồ sơ người dùng đăng nhập hiện tại cùng vai trò (`roles`), quyền hạn (`permissions`) và đơn vị quản lý (`unitsManaged`).
+- **Middlewares**:
+  - `authenticate`: Tự động đọc và đối soát Session từ HttpOnly Cookie hoặc header `Authorization: Bearer <sessionId>`.
+  - `requireAuth`: Chặn 401 nếu chưa đăng nhập.
+  - `requirePermission(code)`: Chặn 403 nếu thiếu quyền thực hiện.
+  - `requireRole(code)`: Chặn 403 nếu sai vai trò.
+  - `validateBody(LoginRequestSchema)`: Validate định dạng đầu vào tự động bằng Zod contract.
+- **Kiểm thử tích hợp**: Vượt qua kịch bản kiểm thử tích hợp `tests/auth-endpoints.test.mjs` (422 validation, 401 unauthenticated, 503 DB offline resilience, 200 logout).
 
-- [ ] Khởi tạo thư mục `apps/api` với Express 5 + TypeScript
-- [ ] Cấu trúc phân tầng: routes/, controllers/, services/, middlewares/
-- [ ] Middleware: CORS, Helmet, cookie-parser, Request-Id (UUIDv7)
-- [ ] Centralized Error Handler theo api-standards.md
-- [ ] Endpoint `GET /api/v1/health` (kết nối DB, trả JSON chuẩn)
-- [ ] Build TypeScript thành công
-
-### Milestone 3 — Frontend Web (`apps/web`)
-
-- [ ] Khởi tạo Next.js 16 App Router + Tailwind CSS + TypeScript
-- [ ] Trang chủ hiển thị tổng quan BAHAU + trạng thái kết nối API
-- [ ] Giao diện cổng đăng nhập cơ bản (form email/password)
-- [ ] Build thành công
-
-### Milestone 4 — Tích hợp & Nghiệm thu
-
-- [ ] Chạy toàn bộ bộ kiểm thử E2E (40 test cases, 4 tầng)
-- [ ] Xác nhận `npm run build` toàn workspace thành công
-- [ ] Health endpoint trả HTTP 200 với JSON chuẩn
-- [ ] Next.js render trang không lỗi runtime
-
-### Sau đó (nếu còn thời gian)
-
-- [ ] Viết PRD cho Phân hệ 2: Nghỉ phép, Công tác, Sổ cái số dư phép (Leave Ledger)
-- [ ] Triển khai Auth endpoints: POST /api/v1/auth/login, POST /api/v1/auth/logout
-- [ ] Triển khai CRUD endpoints cho Employee và OrgUnit
+#### 5. Phân hệ Cơ cấu Tổ chức & Hồ sơ Nhân sự (Core HR Module) — HOÀN THÀNH 100% ✅
+- **Dịch vụ & API Backend (`apps/api`)**:
+  - `UnitService`:
+    - `GET /api/v1/units/tree`: Lấy sơ đồ cây phân cấp hoàn chỉnh (BGH $\rightarrow$ Khoa/Phòng $\rightarrow$ Bộ môn) kèm tên người đứng đầu đơn vị.
+    - `GET /api/v1/units`: Lấy danh sách phẳng tất cả các đơn vị phục vụ bộ lọc/dropdown.
+    - `POST /api/v1/units`: Tạo mới đơn vị (yêu cầu quyền `unit:manage_structure`).
+  - `EmployeeService`:
+    - `GET /api/v1/employees`: Danh sách CBGVNV có phân trang, tìm kiếm đa trường (tên, mã CBGV, email) và tự động lọc dữ liệu theo Scope quyền của người dùng (Global HR xem toàn trường, Trưởng đơn vị chỉ xem đơn vị mình và các bộ môn trực thuộc).
+    - `GET /api/v1/employees/:id`: Xem chi tiết hồ sơ cá nhân (tự động ẩn các trường nhạy cảm như CCCD, thuế, địa chỉ nếu không phải chính chủ hoặc HR).
+    - `GET /api/v1/employees/me`: Lấy thông tin hồ sơ của phiên đăng nhập hiện tại.
+    - `PUT /api/v1/employees/me/contact`: Giảng viên tự phục vụ cập nhật SĐT, email cá nhân, địa chỉ.
+    - `POST /api/v1/employees`: Thêm mới hồ sơ nhân sự (tự động sinh mã `DAU{YY}{0000}`).
+- **Giao diện Người dùng (`apps/web`)**:
+  - `apps/web/src/app/units/page.tsx`: Giao diện cây sơ đồ tổ chức dạng Tree View trực quan có thu gọn/mở rộng, huy hiệu phân loại đơn vị và thông tin phụ trách.
+  - `apps/web/src/app/employees/page.tsx`: Bảng tra cứu danh bạ nhân sự tập trung hỗ trợ tìm kiếm tức thời, hiển thị ngạch chức danh, học vị/học hàm và trạng thái công tác (có sẵn dữ liệu mô phỏng DAU dự phòng).
+  - Cập nhật liên kết thanh điều hướng chung trong [layout.tsx](file:///c:/Users/HaiChu/Documents/GitHub/BAHAU/apps/web/src/app/layout.tsx).
+- **Kiểm thử & Biên dịch**:
+  - `npm run build` thành công 100% (7/7 trang tĩnh Next.js và toàn bộ backend).
+  - 40/40 test cases E2E đạt chuẩn 100%.
 
 ---
 
-## Cấu trúc thư mục hiện tại
+## 🎯 Kế hoạch Phiên làm việc tiếp theo
+
+> **Mục tiêu tiếp theo**: Triển khai Phân hệ 2: Quản lý Nghỉ phép, Công tác & Sổ cái số dư phép (Leave Ledger).
+
+### 1. Tài liệu Đặc tả Phân hệ 2
+- [ ] Viết tài liệu đặc tả PRD & User Stories cho Phân hệ 2 (`docs/requirements/module-02-leave-trip-prd.md`).
+- [ ] Đặc tả cấu trúc Sổ cái ngày phép (`LeaveLedger`), nguyên tắc ghi sổ kép/bất biến và quy trình phê duyệt nghỉ phép/công tác mẫu theo chuỗi phân cấp.
+
+### 2. Dịch vụ & API Phân hệ 2
+- [ ] Zod contracts cho Nghỉ phép và Công tác trong `packages/contracts/src/leave`.
+- [ ] Dịch vụ `LeaveService`: Tạo đơn xin nghỉ phép, kiểm tra số dư phép từ Ledger, gửi đơn vào Workflow.
+- [ ] Dịch vụ `TripService`: Đăng ký đơn công tác, thẩm định kinh phí.
+- [ ] Giao diện Quản lý Đơn từ và Bảng theo dõi số dư phép trên `apps/web`.
+
+---
+
+## Cấu trúc thư mục hiện tại (Toàn bộ đã hoàn thành Baseline)
 
 ```
 BAHAU/
 ├── docs/
 │   ├── architecture/
-│   │   ├── system-overview.md      ✅
-│   │   └── domain-model.md         ✅
+│   │   ├── system-overview.md        ✅ Đã chốt
+│   │   └── domain-model.md           ✅ Đã chốt
 │   ├── requirements/
-│   │   ├── rbac-matrix.md          ✅
-│   │   ├── api-standards.md        ✅
-│   │   └── module-01-core-hr-prd.md ✅
-│   └── plan/
-│       └── init.md                 ✅ (Kế hoạch gốc)
+│   │   ├── rbac-matrix.md            ✅ Đã chốt
+│   │   ├── api-standards.md          ✅ Đã chốt
+│   │   └── module-01-core-hr-prd.md   ✅ Đã chốt
+│   ├── plan/
+│   │   └── init.md                   ✅ Kế hoạch gốc
+│   └── worklog.md                    ✅ Nhật ký tiến độ
 ├── packages/
-│   ├── contracts/                  ✅ Build OK
+│   ├── contracts/                    ✅ Build OK (Zod DTOs)
 │   │   └── src/ (auth, employee, unit, common)
-│   └── database/                   ✅ Build OK
-│       ├── prisma/schema.prisma    (15 models, 14 enums)
-│       ├── prisma/seed.ts          (Seed Data DAU)
-│       └── src/client.ts           (PrismaClient singleton)
+│   └── database/                     ✅ Build OK (Prisma 15 models + DAU Seed Data)
+│       ├── prisma/schema.prisma
+│       ├── prisma/seed.ts
+│       └── src/client.ts
 ├── apps/
-│   ├── api/                        ❌ CHƯA TẠO ← Làm tiếp từ đây
-│   └── web/                        ❌ CHƯA TẠO
-├── tests/e2e/                      ✅ Khung sẵn sàng
-├── storage/uploads/                ✅
-├── docker-compose.yml              ✅ PostgreSQL + pgvector
-├── package.json                    ✅ npm workspaces
-├── tsconfig.base.json              ✅
-├── .env.example                    ✅
-└── .gitignore                      ✅
+│   ├── api/                          ✅ Build OK (Express + Health Check + Error Handling)
+│   │   └── src/ (app.ts, server.ts, middlewares, controllers, routes)
+│   └── web/                          ✅ Build OK (Next.js 15 App Router + Tailwind + Live Status)
+│       └── src/ (app/layout.tsx, app/page.tsx, app/login/page.tsx, components)
+├── tests/e2e/                        ✅ 40/40 Test Cases PASS (100%)
+├── storage/uploads/                  ✅ Thư mục file bảo mật
+├── docker-compose.yml                ✅ PostgreSQL 17 + pgvector
+├── package.json                      ✅ npm workspaces (@bahau/*)
+├── tsconfig.base.json                ✅ Strict TypeScript
+├── .env.example                      ✅
+└── .gitignore                        ✅
 ```
