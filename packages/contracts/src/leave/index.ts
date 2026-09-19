@@ -5,7 +5,7 @@ import { z } from "zod";
 // =============================================================================
 export const LeaveTypeEnum = z.enum([
   "ANNUAL",       // Nghỉ phép năm
-  "SICK",         // Nghỉ ốm đau / thai sản
+  "SICK",         // Nghỉ ốm đau / điều trị
   "MATERNITY",    // Nghỉ chế độ thai sản
   "UNPAID",       // Nghỉ việc riêng không hưởng lương
   "BEREAVEMENT",  // Nghỉ chế độ tang lễ
@@ -24,6 +24,62 @@ export const WorkflowStatusEnum = z.enum([
 ]);
 
 export type WorkflowStatus = z.infer<typeof WorkflowStatusEnum>;
+
+export const WorkflowStepStatusEnum = z.enum([
+  "WAITING",
+  "APPROVED",
+  "REJECTED",
+  "SKIPPED",
+]);
+
+export type WorkflowStepStatus = z.infer<typeof WorkflowStepStatusEnum>;
+
+export const LeaveLedgerActionEnum = z.enum([
+  "GRANT_ANNUAL",
+  "CARRY_FORWARD",
+  "HOLD",
+  "USE",
+  "RESTORE",
+  "EXPIRE",
+]);
+
+export type LeaveLedgerAction = z.infer<typeof LeaveLedgerActionEnum>;
+
+// =============================================================================
+// WORKFLOW STEPS & INSTANCES SCHEMAS
+// =============================================================================
+
+export const WorkflowStepDetailDtoSchema = z.object({
+  id: z.string().uuid(),
+  instanceId: z.string().uuid(),
+  stepIndex: z.number().int(),
+  stepName: z.string(),
+  approverRoleCode: z.string().nullable().optional(),
+  approverEmployeeId: z.string().uuid().nullable().optional(),
+  approverEmployeeName: z.string().nullable().optional(),
+  status: WorkflowStepStatusEnum,
+  comment: z.string().nullable().optional(),
+  actionAt: z.string().nullable().optional(),
+  createdAt: z.string(),
+});
+
+export type WorkflowStepDetailDto = z.infer<typeof WorkflowStepDetailDtoSchema>;
+
+export const WorkflowInstanceDetailDtoSchema = z.object({
+  id: z.string().uuid(),
+  module: z.string(),
+  recordId: z.string().uuid(),
+  requesterEmployeeId: z.string().uuid(),
+  requesterName: z.string().optional(),
+  requesterCode: z.string().optional(),
+  currentStepIndex: z.number().int(),
+  status: WorkflowStatusEnum,
+  steps: z.array(WorkflowStepDetailDtoSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type WorkflowInstanceDetailDto = z.infer<typeof WorkflowInstanceDetailDtoSchema>;
 
 // =============================================================================
 // LEAVE SCHEMAS
@@ -51,11 +107,18 @@ export const LeaveRequestDtoSchema = z.object({
   totalDays: z.number(),
   reason: z.string(),
   substituteEmployeeName: z.string().nullable().optional(),
+  workflowInstanceId: z.string().uuid().nullable().optional(),
   status: WorkflowStatusEnum,
   createdAt: z.string(),
 });
 
 export type LeaveRequestDto = z.infer<typeof LeaveRequestDtoSchema>;
+
+export const LeaveRequestDetailDtoSchema = LeaveRequestDtoSchema.extend({
+  workflow: WorkflowInstanceDetailDtoSchema.optional(),
+});
+
+export type LeaveRequestDetailDto = z.infer<typeof LeaveRequestDetailDtoSchema>;
 
 export const LeaveBalanceDtoSchema = z.object({
   year: z.number().int(),
@@ -67,6 +130,20 @@ export const LeaveBalanceDtoSchema = z.object({
 });
 
 export type LeaveBalanceDto = z.infer<typeof LeaveBalanceDtoSchema>;
+
+export const LeaveLedgerEntryDtoSchema = z.object({
+  id: z.string().uuid(),
+  employeeId: z.string().uuid(),
+  year: z.number().int(),
+  action: LeaveLedgerActionEnum,
+  amount: z.number(),
+  balanceAfter: z.number(),
+  referenceLeaveRequestId: z.string().uuid().nullable().optional(),
+  note: z.string().nullable().optional(),
+  createdAt: z.string(),
+});
+
+export type LeaveLedgerEntryDto = z.infer<typeof LeaveLedgerEntryDtoSchema>;
 
 // =============================================================================
 // BUSINESS TRIP SCHEMAS
@@ -95,11 +172,18 @@ export const BusinessTripDtoSchema = z.object({
   totalDays: z.number(),
   budgetEstimate: z.number().nullable().optional(),
   fundingSource: z.string().nullable().optional(),
+  workflowInstanceId: z.string().uuid().nullable().optional(),
   status: WorkflowStatusEnum,
   createdAt: z.string(),
 });
 
 export type BusinessTripDto = z.infer<typeof BusinessTripDtoSchema>;
+
+export const BusinessTripDetailDtoSchema = BusinessTripDtoSchema.extend({
+  workflow: WorkflowInstanceDetailDtoSchema.optional(),
+});
+
+export type BusinessTripDetailDto = z.infer<typeof BusinessTripDetailDtoSchema>;
 
 // =============================================================================
 // WORKFLOW ACTIONS

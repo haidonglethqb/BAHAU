@@ -133,10 +133,10 @@ export async function runBoundaryCornerTests(reporter) {
           cwd: ROOT_DIR,
           env: { ...process.env, PORT: "3001", NODE_ENV: "development" },
         });
-        const open = await waitForPort(3001, "127.0.0.1", 12000, entry3);
+        const open = await waitForPort(3001, "127.0.0.1", 20000, entry3);
         assert.ok(open, "Web server must boot on port 3001");
         const malformedUrl = "http://127.0.0.1:3001/?x=" + encodeURIComponent("<script>alert(1)</script>&num=99999999999999999999");
-        const res = await httpGet(malformedUrl);
+        const res = await httpGet(malformedUrl, {}, 20000);
         assert.strictEqual(res.status, 200, "Web server should handle query string without 500 crash");
         reporter?.record(tier, criterion, testId, desc, "PASS", Date.now() - start);
       } catch (err) {

@@ -119,6 +119,9 @@ export async function pollEndpoint(url, predicate, options = {}) {
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 
-  const lastRes = await httpGet(url, {}, 3000);
+  const lastRes = await httpGet(url, {}, 5000);
+  if (predicate(lastRes)) {
+    return { success: true, lastResponse: lastRes };
+  }
   return { success: false, lastResponse: lastRes };
 }

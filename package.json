@@ -8,7 +8,11 @@
     "apps/*"
   ],
   "scripts": {
+    "dev": "npm run dev --workspace=@bahau/web",
+    "start": "npm run start --workspace=@bahau/web",
     "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run dev --workspace=@bahau/api",
+    "dev:web": "npm run dev --workspace=@bahau/web",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "db:generate": "npm run generate --workspace=@bahau/database",
@@ -16,7 +20,9 @@
     "db:seed": "npm run seed --workspace=@bahau/database",
     "db:studio": "npm run studio --workspace=@bahau/database",
     "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "test:e2e": "node tests/e2e/runner.mjs --all",
+    "test:phases": "node tests/leave-workflow-endpoints.test.mjs && node tests/contract-events-endpoints.test.mjs && node tests/attendance-endpoints.test.mjs && node tests/kpi-endpoints.test.mjs && node tests/training-endpoints.test.mjs && node tests/dashboard-ai-endpoints.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

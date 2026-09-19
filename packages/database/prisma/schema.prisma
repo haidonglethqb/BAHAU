@@ -135,6 +135,43 @@ enum WorkflowStepStatus {
   SKIPPED
 }
 
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  EARLY_LEAVE
+  ABSENT
+  ON_LEAVE
+  BUSINESS_TRIP
+  HOLIDAY
+  WEEKEND
+}
+
+enum KpiPeriodStatus {
+  DRAFT
+  OPEN
+  IN_REVIEW
+  FINALIZED
+}
+
+enum KpiTargetType {
+  LECTURER
+  STAFF
+}
+
+enum KpiEvaluationStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  FINALIZED
+}
+
+enum KpiRanking {
+  EXCELLENT
+  GOOD
+  SATISFACTORY
+  UNSATISFACTORY
+}
+
 enum LeaveType {
   ANNUAL
   SICK
@@ -152,6 +189,56 @@ enum LeaveLedgerAction {
   USE
   RESTORE
   EXPIRE
+}
+
+enum CertificateType {
+  PROFESSIONAL_PRACTICE
+  ACADEMIC_TITLE_DEGREE
+  LANGUAGE
+  INFORMATICS
+  POLITICAL_THEORY
+  OTHER
+}
+
+enum CertificateStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum TrainingCategory {
+  PEDAGOGY
+  PROFESSIONAL
+  POLITICAL
+  LANGUAGE_IT
+  OVERSEAS_POSTGRAD
+}
+
+enum TrainingCourseStatus {
+  PLANNING
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum ParticipantStatus {
+  REGISTERED
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  DROPPED
+}
+
+enum NotificationType {
+  SYSTEM
+  WORKFLOW
+  ALERT
+  CONTRACT
+  CERTIFICATE
+  KPI
+  TRAINING
 }
 
 // =============================================================================
@@ -178,6 +265,7 @@ model User {
   roleAssignments RoleAssignment[]
   auditEvents     AuditEvent[]
   uploadedFiles   FileAsset[]
+  notifications   Notification[]
 
   @@map("users")
 }
@@ -368,6 +456,14 @@ model Employee {
   businessTripRequests    BusinessTripRequest[]
   workflowRequests        WorkflowInstance[]     @relation("RequesterEmployeeWorkflows")
   assignedWorkflowSteps   WorkflowStep[]         @relation("ApproverEmployeeSteps")
+  attendanceRecords       AttendanceRecord[]
+  adjustmentRequests      AttendanceAdjustmentRequest[]
+  monthlyTimesheets       MonthlyTimesheetSummary[]
+  kpiEvaluations          KpiEvaluation[]               @relation("EmployeeKpiEvaluations")
+  managedKpiEvaluations   KpiEvaluation[]               @relation("ManagerKpiEvaluations")
+  certificates            Certificate[]                 @relation("EmployeeCertificates")
+  verifiedCertificates    Certificate[]                 @relation("VerifierCertificates")
+  trainingParticipations  TrainingParticipant[]
 
   @@index([employeeCode])
   @@index([workEmail])
@@ -669,3 +765,368 @@ model BusinessTripRequest {
   @@map("business_trip_requests")
 }
 
+// -----------------------------------------------------------------------------
+// 21. Model AttendancePeriod: Quản lý kỳ công tháng & trạng thái khóa kỳ
+// -----------------------------------------------------------------------------
+model AttendancePeriod {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  month               Int                       @db.SmallInt
+  year                Int                       @db.SmallInt
+  startDate           DateTime                  @db.Date
+  endDate             DateTime                  @db.Date
+  standardWorkingDays Decimal                   @default(22) @db.Decimal(4, 1)
+  isLocked            Boolean                   @default(false)
+  lockedAt            DateTime?                 @db.Timestamptz
+  lockedById          String?                   @db.Uuid
+  note                String?                   @db.VarChar(255)
+  createdAt           DateTime                  @default(now()) @db.Timestamptz
+  updatedAt           DateTime                  @updatedAt @db.Timestamptz
+
+  // Relations
+  records             AttendanceRecord[]
+  timesheetSummaries  MonthlyTimesheetSummary[]
+
+  @@unique([year, month])
+  @@index([isLocked])
+  @@map("attendance_periods")
+}
+
+// -----------------------------------------------------------------------------
+// 22. Model AttendanceRecord: Lớp 1 - Điểm danh quẹt thẻ hàng ngày
+// -----------------------------------------------------------------------------
+model AttendanceRecord {
+  id                  String                       @id @default(uuid()) @db.Uuid
+  employeeId          String                       @db.Uuid
+  periodId            String?                      @db.Uuid
+  workDate            DateTime                     @db.Date
+  checkInTime         DateTime?                    @db.Timestamptz
+  checkOutTime        DateTime?                    @db.Timestamptz
+  rawWorkingHours     Decimal                      @default(0) @db.Decimal(4, 2)
+  status              AttendanceStatus             @default(PRESENT)
+  deviceSource        String?                      @db.VarChar(100)
+  importBatchId       String?                      @db.VarChar(100)
+  adjustmentRequestId String?                      @unique @db.Uuid
+  createdAt           DateTime                     @default(now()) @db.Timestamptz
+  updatedAt           DateTime                     @updatedAt @db.Timestamptz
+
+  // Relations
+  employee            Employee                     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  period              AttendancePeriod?            @relation(fields: [periodId], references: [id], onDelete: SetNull)
+  adjustmentRequest   AttendanceAdjustmentRequest? @relation(fields: [adjustmentRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, workDate])
+  @@index([periodId])
+  @@index([workDate])
+  @@index([status])
+  @@map("attendance_records")
+}
+
+// -----------------------------------------------------------------------------
+// 23. Model AttendanceAdjustmentRequest: Lớp 2 - Đơn giải trình / điều chỉnh giờ công
+// -----------------------------------------------------------------------------
+model AttendanceAdjustmentRequest {
+  id                  String            @id @default(uuid()) @db.Uuid
+  employeeId          String            @db.Uuid
+  workDate            DateTime          @db.Date
+  originalCheckIn     DateTime?         @db.Timestamptz
+  originalCheckOut    DateTime?         @db.Timestamptz
+  adjustedCheckIn     DateTime?         @db.Timestamptz
+  adjustedCheckOut    DateTime?         @db.Timestamptz
+  reason              String            @db.Text
+  workflowInstanceId  String?           @unique @db.Uuid
+  status              WorkflowStatus    @default(PENDING)
+  createdAt           DateTime          @default(now()) @db.Timestamptz
+  updatedAt           DateTime          @updatedAt @db.Timestamptz
+
+  // Relations
+  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  attendanceRecord    AttendanceRecord?
+
+  @@index([employeeId])
+  @@index([workDate])
+  @@index([status])
+  @@map("attendance_adjustment_requests")
+}
+
+// -----------------------------------------------------------------------------
+// 24. Model MonthlyTimesheetSummary: Lớp 3 - Bảng công tổng hợp chốt tháng
+// -----------------------------------------------------------------------------
+model MonthlyTimesheetSummary {
+  id                  String            @id @default(uuid()) @db.Uuid
+  employeeId          String            @db.Uuid
+  periodId            String            @db.Uuid
+  standardDays        Decimal           @default(22) @db.Decimal(4, 1)
+  actualWorkingDays   Decimal           @default(0) @db.Decimal(4, 1)
+  paidLeaveDays       Decimal           @default(0) @db.Decimal(4, 1)
+  unpaidLeaveDays     Decimal           @default(0) @db.Decimal(4, 1)
+  businessTripDays    Decimal           @default(0) @db.Decimal(4, 1)
+  lateCount           Int               @default(0)
+  earlyLeaveCount     Int               @default(0)
+  totalPayableDays    Decimal           @default(0) @db.Decimal(4, 1)
+  isFinalized         Boolean           @default(false)
+  createdAt           DateTime          @default(now()) @db.Timestamptz
+  updatedAt           DateTime          @updatedAt @db.Timestamptz
+
+  // Relations
+  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  period              AttendancePeriod  @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, periodId])
+  @@index([periodId])
+  @@map("monthly_timesheet_summaries")
+}
+
+// -----------------------------------------------------------------------------
+// 25. Model KpiPeriod: Quản lý kỳ đánh giá (Học kỳ / Năm học)
+// -----------------------------------------------------------------------------
+model KpiPeriod {
+  id           String          @id @default(uuid()) @db.Uuid
+  code         String          @unique @db.VarChar(50)
+  name         String          @db.VarChar(255)
+  academicYear String          @db.VarChar(20)
+  semester     String?         @db.VarChar(20)
+  startDate    DateTime        @db.Date
+  endDate      DateTime        @db.Date
+  status       KpiPeriodStatus @default(OPEN)
+  createdAt    DateTime        @default(now()) @db.Timestamptz
+  updatedAt    DateTime        @updatedAt @db.Timestamptz
+
+  // Relations
+  evaluations KpiEvaluation[]
+
+  @@index([status])
+  @@index([academicYear])
+  @@map("kpi_periods")
+}
+
+// -----------------------------------------------------------------------------
+// 26. Model KpiTemplate: Mẫu tiêu chí đánh giá theo đối tượng (Giảng viên / Chuyên viên)
+// -----------------------------------------------------------------------------
+model KpiTemplate {
+  id            String        @id @default(uuid()) @db.Uuid
+  code          String        @unique @db.VarChar(50)
+  name          String        @db.VarChar(255)
+  targetType    KpiTargetType
+  description   String?       @db.Text
+  totalMaxScore Decimal       @default(100) @db.Decimal(5, 1)
+  createdAt     DateTime      @default(now()) @db.Timestamptz
+  updatedAt     DateTime      @updatedAt @db.Timestamptz
+
+  // Relations
+  criteria    KpiCriterion[]
+  evaluations KpiEvaluation[]
+
+  @@index([targetType])
+  @@map("kpi_templates")
+}
+
+// -----------------------------------------------------------------------------
+// 27. Model KpiCriterion: Từng tiêu chí con của mẫu đánh giá
+// -----------------------------------------------------------------------------
+model KpiCriterion {
+  id          String      @id @default(uuid()) @db.Uuid
+  templateId  String      @db.Uuid
+  orderIndex  Int         @default(0)
+  category    String      @db.VarChar(100)
+  name        String      @db.VarChar(255)
+  description String?     @db.Text
+  maxScore    Decimal     @db.Decimal(5, 1)
+  weight      Decimal     @default(1) @db.Decimal(4, 2)
+  createdAt   DateTime    @default(now()) @db.Timestamptz
+  updatedAt   DateTime    @updatedAt @db.Timestamptz
+
+  // Relations
+  template KpiTemplate         @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items    KpiEvaluationItem[]
+
+  @@index([templateId, orderIndex])
+  @@map("kpi_criteria")
+}
+
+// -----------------------------------------------------------------------------
+// 28. Model KpiEvaluation: Phiếu đánh giá cá nhân theo kỳ
+// -----------------------------------------------------------------------------
+model KpiEvaluation {
+  id                String              @id @default(uuid()) @db.Uuid
+  periodId          String              @db.Uuid
+  templateId        String              @db.Uuid
+  employeeId        String              @db.Uuid
+  managerEmployeeId String?             @db.Uuid
+  status            KpiEvaluationStatus @default(DRAFT)
+  totalSelfScore    Decimal?            @db.Decimal(5, 1)
+  totalManagerScore Decimal?            @db.Decimal(5, 1)
+  totalFinalScore   Decimal?            @db.Decimal(5, 1)
+  ranking           KpiRanking?
+  managerComment    String?             @db.Text
+  councilComment    String?             @db.Text
+  submittedAt       DateTime?           @db.Timestamptz
+  reviewedAt        DateTime?           @db.Timestamptz
+  finalizedAt       DateTime?           @db.Timestamptz
+  createdAt         DateTime            @default(now()) @db.Timestamptz
+  updatedAt         DateTime            @updatedAt @db.Timestamptz
+
+  // Relations
+  period          KpiPeriod           @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  template        KpiTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  employee        Employee            @relation("EmployeeKpiEvaluations", fields: [employeeId], references: [id], onDelete: Cascade)
+  managerEmployee Employee?           @relation("ManagerKpiEvaluations", fields: [managerEmployeeId], references: [id], onDelete: SetNull)
+  items           KpiEvaluationItem[]
+
+  @@unique([periodId, employeeId])
+  @@index([periodId])
+  @@index([employeeId])
+  @@index([status])
+  @@index([ranking])
+  @@map("kpi_evaluations")
+}
+
+// -----------------------------------------------------------------------------
+// 29. Model KpiEvaluationItem: Chi tiết điểm và minh chứng từng tiêu chí
+// -----------------------------------------------------------------------------
+model KpiEvaluationItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  evaluationId String   @db.Uuid
+  criterionId  String   @db.Uuid
+  selfScore    Decimal? @db.Decimal(5, 1)
+  managerScore Decimal? @db.Decimal(5, 1)
+  finalScore   Decimal? @db.Decimal(5, 1)
+  selfNote     String?  @db.Text
+  evidenceUrl  String?  @db.VarChar(500)
+  managerNote  String?  @db.Text
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  evaluation KpiEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  criterion  KpiCriterion  @relation(fields: [criterionId], references: [id], onDelete: Restrict)
+
+  @@unique([evaluationId, criterionId])
+  @@index([evaluationId])
+  @@index([criterionId])
+  @@map("kpi_evaluation_items")
+}
+
+// -----------------------------------------------------------------------------
+// 30. Model Certificate: Quản lý chứng chỉ hành nghề, chức danh & năng lực CBGV
+// -----------------------------------------------------------------------------
+model Certificate {
+  id                String            @id @default(uuid()) @db.Uuid
+  employeeId        String            @db.Uuid
+  certificateType   CertificateType
+  name              String            @db.VarChar(255)
+  certificateNumber String            @db.VarChar(100)
+  issuedBy          String            @db.VarChar(255)
+  issuedDate        DateTime          @db.Date
+  expiryDate        DateTime?         @db.Date
+  score             String?           @db.VarChar(50)
+  fileUrl           String?           @db.VarChar(500)
+  status            CertificateStatus @default(PENDING)
+  verifiedById      String?           @db.Uuid
+  verifiedAt        DateTime?         @db.Timestamptz
+  rejectionReason   String?           @db.Text
+  createdAt         DateTime          @default(now()) @db.Timestamptz
+  updatedAt         DateTime          @updatedAt @db.Timestamptz
+
+  // Relations
+  employee   Employee  @relation("EmployeeCertificates", fields: [employeeId], references: [id], onDelete: Cascade)
+  verifiedBy Employee? @relation("VerifierCertificates", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([certificateType])
+  @@index([status])
+  @@index([expiryDate])
+  @@map("certificates")
+}
+
+// -----------------------------------------------------------------------------
+// 31. Model TrainingCourse: Khóa bồi dưỡng chuyên môn, sư phạm & Đề án 89
+// -----------------------------------------------------------------------------
+model TrainingCourse {
+  id          String               @id @default(uuid()) @db.Uuid
+  code        String               @unique @db.VarChar(50)
+  name        String               @db.VarChar(255)
+  category    TrainingCategory
+  provider    String               @db.VarChar(255)
+  startDate   DateTime             @db.Date
+  endDate     DateTime             @db.Date
+  location    String?              @db.VarChar(255)
+  budget      Decimal?             @default(0) @db.Decimal(15, 2)
+  status      TrainingCourseStatus @default(PLANNING)
+  description String?              @db.Text
+  createdAt   DateTime             @default(now()) @db.Timestamptz
+  updatedAt   DateTime             @updatedAt @db.Timestamptz
+
+  // Relations
+  participants TrainingParticipant[]
+
+  @@index([category])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@map("training_courses")
+}
+
+// -----------------------------------------------------------------------------
+// 32. Model TrainingParticipant: Danh sách CBGV tham gia khóa bồi dưỡng
+// -----------------------------------------------------------------------------
+model TrainingParticipant {
+  id                String            @id @default(uuid()) @db.Uuid
+  courseId          String            @db.Uuid
+  employeeId        String            @db.Uuid
+  status            ParticipantStatus @default(REGISTERED)
+  grade             String?           @db.VarChar(50)
+  certificateIssued Boolean           @default(false)
+  note              String?           @db.Text
+  createdAt         DateTime          @default(now()) @db.Timestamptz
+  updatedAt         DateTime          @updatedAt @db.Timestamptz
+
+  // Relations
+  course   TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  employee Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, employeeId])
+  @@index([courseId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("training_participants")
+}
+
+// -----------------------------------------------------------------------------
+// 33. Model Notification: Thông báo người dùng từ hệ thống và tiến trình Outbox
+// -----------------------------------------------------------------------------
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  title     String           @db.VarChar(255)
+  content   String           @db.Text
+  type      NotificationType @default(SYSTEM)
+  isRead    Boolean          @default(false)
+  metadata  Json?            @db.JsonB
+  createdAt DateTime         @default(now()) @db.Timestamptz
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// -----------------------------------------------------------------------------
+// 34. Model PolicyKnowledge: Cơ sở tri thức quy chế & pháp quy DAU cho AI Assistant RAG
+// -----------------------------------------------------------------------------
+model PolicyKnowledge {
+  id            String    @id @default(uuid()) @db.Uuid
+  documentNo    String    @db.VarChar(100)
+  title         String    @db.VarChar(255)
+  category      String    @db.VarChar(100)
+  chunkText     String    @db.Text
+  keywords      String[]
+  metadata      Json?     @db.JsonB
+  effectiveDate DateTime? @db.Date
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+
+  @@index([category])
+  @@index([documentNo])
+  @@map("policy_knowledge")
+}

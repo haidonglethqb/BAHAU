@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getPendingTasks,
+  getInstanceDetails,
   approveStep,
   rejectStep,
 } from "../../controllers/workflow.controller.js";
@@ -15,12 +16,15 @@ import {
 const router = Router();
 
 router.get("/workflow/pending", requireAuth, asyncHandler(getPendingTasks));
+router.get("/workflow/instances/:id", requireAuth, asyncHandler(getInstanceDetails));
+
 router.post(
   "/workflow/steps/:id/approve",
   requireAuth,
   validateBody(WorkflowApprovalActionSchema),
   asyncHandler(approveStep)
 );
+
 router.post(
   "/workflow/steps/:id/reject",
   requireAuth,

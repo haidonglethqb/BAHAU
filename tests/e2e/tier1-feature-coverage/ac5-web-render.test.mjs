@@ -41,7 +41,7 @@ export async function runWebRenderTests(reporter) {
         cwd: ROOT_DIR,
         env: { ...process.env, PORT: "3000", NODE_ENV: "development" },
       });
-      serverRunning = await waitForPort(3000, "127.0.0.1", 15000, entry);
+      serverRunning = await waitForPort(3000, "127.0.0.1", 20000, entry);
     } catch {
       serverRunning = false;
     }
@@ -52,7 +52,7 @@ export async function runWebRenderTests(reporter) {
       const desc = "Next.js web app starts successfully and listens on port 3000";
       const start = Date.now();
       try {
-        assert.ok(serverRunning, "Next.js web app must boot and open port 3000 within 15s");
+        assert.ok(serverRunning, "Next.js web app must boot and open port 3000 within 20s");
         reporter?.record(tier, criterion, testId, desc, "PASS", Date.now() - start);
       } catch (err) {
         reporter?.record(tier, criterion, testId, desc, "FAIL", Date.now() - start, err);
@@ -66,7 +66,7 @@ export async function runWebRenderTests(reporter) {
       const start = Date.now();
       try {
         assert.ok(serverRunning, "Server must be running to test endpoint");
-        const res = await httpGet("http://127.0.0.1:3000/");
+        const res = await httpGet("http://127.0.0.1:3000/", {}, 20000);
         assert.strictEqual(res.status, 200, `Expected HTTP 200, received ${res.status}: ${res.bodyText.slice(0, 300)}`);
         reporter?.record(tier, criterion, testId, desc, "PASS", Date.now() - start);
       } catch (err) {

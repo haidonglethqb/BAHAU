@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Be Vietnam Pro', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* DAU Heritage Blue */
+  --color-brand-50: #f0f6fb;
+  --color-brand-100: #e0edf7;
+  --color-brand-200: #bae6fd;
+  --color-brand-500: #004b87;
+  --color-brand-600: #003865;
+  --color-brand-700: #002747;
+
+  /* Architectural terracotta / ochre */
+  --color-ochre-50: #fef3c7;
+  --color-ochre-500: #d97706;
+  --color-ochre-700: #92400e;
+
+  /* Neutral surfaces */
+  --color-canvas: #f8fafc;
+  --color-surface: #ffffff;
+  --color-line: #e2e8f0;
+  --color-ink: #0f172a;
+  --color-muted: #475569;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    margin: 0;
+  }
+  ::selection {
+    background: #bae6fd;
+    color: #002747;
+  }
+}
+
+/* Hide scrollbars until scrolling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}

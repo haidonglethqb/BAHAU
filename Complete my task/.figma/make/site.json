@@ -1,0 +1,10 @@
+{
+  "description": "Streamline task management by automating requests and workflows, helping users save time and increase productivity effortlessly.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
