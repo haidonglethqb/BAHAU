@@ -1,13 +1,76 @@
-import { useState } from 'react'
-import { CalendarDays, CheckCircle2, Info, ShieldAlert, UserCheck, X } from 'lucide-react'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { CalendarDays, CheckCircle2, Info, Loader2, ShieldAlert, UserCheck, X } from 'lucide-react'
 import { PENDING, type LeaveRequest } from '../data'
 import { Avatar, Badge, Button, Card } from './ui'
+import apiClient from '../services/api-client'
 
 export function Approvals() {
-  const [queue, setQueue] = useState(PENDING)
+  const [queue, setQueue] = useState<LeaveRequest[]>(PENDING)
+  const [loading, setLoading] = useState(false)
+  const [actionId, setActionId] = useState<string | null>(null)
   const [rejecting, setRejecting] = useState<LeaveRequest | null>(null)
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'danger' } | null>(null)
 
-  const act = (id: string) => setQueue((q) => q.filter((r) => r.id !== id))
+  const loadPending = async () => {
+    try {
+      setLoading(true)
+      const tasks = await apiClient.workflow.getPending()
+      if (tasks && tasks.length > 0) {
+        setQueue(tasks)
+      }
+    } catch (e) {
+      console.warn('[Approvals] Fallback to mock data', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadPending()
+  }, [])
+
+  const handleApprove = async (r: LeaveRequest) => {
+    try {
+      setActionId(r.id)
+      await apiClient.workflow.approveStep(r.id, 'Trưởng khoa đồng ý phê duyệt')
+      setQueue((q) => q.filter((item) => item.id !== r.id))
+      setToast({
+        tone: 'success',
+        message: `Đã phê duyệt thành công đơn của ${r.requester}. Đơn đã chuyển tiếp phòng TCHC xử lý.`,
+      })
+      setTimeout(() => setToast(null), 5000)
+    } catch (e: any) {
+      setToast({
+        tone: 'danger',
+        message: e?.message || 'Có lỗi khi phê duyệt đơn.',
+      })
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  const handleRejectConfirm = async (r: LeaveRequest, reason: string) => {
+    try {
+      setActionId(r.id)
+      await apiClient.workflow.rejectStep(r.id, reason)
+      setQueue((q) => q.filter((item) => item.id !== r.id))
+      setRejecting(null)
+      setToast({
+        tone: 'danger',
+        message: `Đã từ chối đơn của ${r.requester} kèm lý do phản hồi cho cán bộ.`,
+      })
+      setTimeout(() => setToast(null), 5000)
+    } catch (e: any) {
+      setToast({
+        tone: 'danger',
+        message: e?.message || 'Có lỗi khi từ chối đơn.',
+      })
+    } finally {
+      setActionId(null)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -16,10 +79,35 @@ export function Approvals() {
           <h1 className="text-[26px] font-bold leading-tight text-ink">Hộp thư phê duyệt</h1>
           <p className="mt-1 text-[14px] text-muted">Đơn từ của cán bộ trong đơn vị đang chờ bạn xử lý.</p>
         </div>
-        <Badge tone="warning">
-          <ShieldAlert size={12} /> {queue.length} bước cần xử lý
-        </Badge>
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 size={15} className="animate-spin text-brand-500" />}
+          <Badge tone="warning">
+            <ShieldAlert size={12} /> {queue.length} bước cần xử lý
+          </Badge>
+        </div>
       </div>
+
+      {toast && (
+        <div
+          className={`mb-5 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-[13px] font-medium ${
+            toast.tone === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-rose-200 bg-rose-50 text-rose-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {toast.tone === 'success' ? (
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            ) : (
+              <X size={16} className="text-rose-600 shrink-0" />
+            )}
+            <span>{toast.message}</span>
+          </div>
+          <button onClick={() => setToast(null)} className="hover:opacity-75">
+            <X size={15} />
+          </button>
+        </div>
+      )}
 
       {/* Anti-self-approval banner */}
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3">
@@ -34,7 +122,7 @@ export function Approvals() {
         <Card className="flex flex-col items-center gap-2 py-16 text-center">
           <CheckCircle2 size={32} className="text-[#059669]" />
           <p className="text-[15px] font-semibold text-ink">Đã xử lý xong tất cả đơn từ</p>
-          <p className="text-[13px] text-muted">Không còn đơn nào chờ phê duyệt.</p>
+          <p className="text-[13px] text-muted">Không còn đơn nào chờ phê duyệt trong đơn vị.</p>
         </Card>
       ) : (
         <div className="space-y-4">
@@ -74,13 +162,26 @@ export function Approvals() {
               </div>
 
               <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-                <Button variant="success" onClick={() => act(r.id)}>
-                  <CheckCircle2 size={16} /> Phê duyệt
+                <Button
+                  variant="success"
+                  disabled={actionId === r.id}
+                  onClick={() => handleApprove(r)}
+                >
+                  {actionId === r.id ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                  Phê duyệt
                 </Button>
-                <Button variant="danger-outline" onClick={() => setRejecting(r)}>
+                <Button
+                  variant="danger-outline"
+                  disabled={actionId === r.id}
+                  onClick={() => setRejecting(r)}
+                >
                   <X size={16} /> Từ chối
                 </Button>
-                <Button variant="warning-outline" onClick={() => act(r.id)}>
+                <Button
+                  variant="warning-outline"
+                  disabled={actionId === r.id}
+                  onClick={() => handleApprove(r)}
+                >
                   Yêu cầu bổ sung
                 </Button>
               </div>
@@ -92,11 +193,9 @@ export function Approvals() {
       {rejecting && (
         <RejectDialog
           request={rejecting}
+          isSubmitting={actionId === rejecting.id}
           onClose={() => setRejecting(null)}
-          onConfirm={() => {
-            act(rejecting.id)
-            setRejecting(null)
-          }}
+          onConfirm={(reason) => handleRejectConfirm(rejecting, reason)}
         />
       )}
     </div>
@@ -131,7 +230,17 @@ function Field({
   )
 }
 
-function RejectDialog({ request, onClose, onConfirm }: { request: LeaveRequest; onClose: () => void; onConfirm: () => void }) {
+function RejectDialog({
+  request,
+  isSubmitting,
+  onClose,
+  onConfirm,
+}: {
+  request: LeaveRequest
+  isSubmitting?: boolean
+  onClose: () => void
+  onConfirm: (reason: string) => void
+}) {
   const [reason, setReason] = useState('')
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
@@ -156,10 +265,16 @@ function RejectDialog({ request, onClose, onConfirm }: { request: LeaveRequest; 
           />
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-6 py-4">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
             Hủy
           </Button>
-          <Button variant="success" className="!bg-[#DC2626] hover:!bg-[#B91C1C]" disabled={!reason.trim()} onClick={onConfirm}>
+          <Button
+            variant="success"
+            className="!bg-[#DC2626] hover:!bg-[#B91C1C]"
+            disabled={!reason.trim() || isSubmitting}
+            onClick={() => onConfirm(reason)}
+          >
+            {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
             Xác nhận từ chối
           </Button>
         </div>

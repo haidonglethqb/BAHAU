@@ -28,6 +28,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     success: true,
     data: {
       user,
+      sessionId,
       message: "Đăng nhập thành công",
     },
     meta: {

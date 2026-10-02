@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import type { Role } from "../data";
+import apiClient from "../services/api-client";
 
 export interface AuthUser {
   id: string;
@@ -131,6 +132,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const target = ROLE_USER_MAP[role];
     if (target) {
       login(target);
+      const roleApiEmailMap: Record<Role, string> = {
+        cbgv: "employee@dau.edu.vn",
+        truongkhoa: "unithead@dau.edu.vn",
+        tchc: "hrspecialist@dau.edu.vn",
+        hieutruong: "rector@dau.edu.vn",
+        admin: "admin@dau.edu.vn",
+      };
+      const apiEmail = roleApiEmailMap[role] || target.email;
+      apiClient.auth.login(apiEmail, "Admin@123456").catch(() => {});
     }
   };
 
@@ -138,11 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     try {
       localStorage.removeItem(STORAGE_KEY);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
-      await fetch(`${apiUrl}/api/v1/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-      }).catch(() => {});
+      await apiClient.auth.logout();
     } catch (e) {
       console.warn("Logout error", e);
     }

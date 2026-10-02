@@ -12,6 +12,9 @@ import trainingRoutes from "./training.routes.js";
 import dashboardRoutes from "./dashboard.routes.js";
 import notificationRoutes from "./notification.routes.js";
 import aiRoutes from "./ai.routes.js";
+import workloadRoutes from "./workload.routes.js";
+import payrollRoutes from "./payroll.routes.js";
+import executiveRoutes from "./executive.routes.js";
 
 const router = Router();
 
@@ -28,5 +31,8 @@ router.use(trainingRoutes);
 router.use(dashboardRoutes);
 router.use(notificationRoutes);
 router.use(aiRoutes);
+router.use(workloadRoutes);
+router.use(payrollRoutes);
+router.use(executiveRoutes);
 
 export default router;

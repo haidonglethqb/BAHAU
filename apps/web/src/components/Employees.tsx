@@ -1,33 +1,75 @@
-import { useMemo, useState } from 'react'
-import { ArrowRight, Search, Stamp, X } from 'lucide-react'
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, Loader2, Search, Stamp, X } from 'lucide-react'
 import { EMPLOYEES, type Employee } from '../data'
 import { Avatar, Badge, Button, Card, StatusPill, cx } from './ui'
+import apiClient from '../services/api-client'
 
-const UNITS = ['Tất cả đơn vị', 'Khoa Kiến trúc', 'Khoa Xây dựng', 'Khoa CNTT', 'Khoa Mỹ thuật ứng dụng', 'Phòng Đào tạo']
-const DEGREES = ['Tất cả học vị', 'PGS.TS', 'TS', 'ThS', 'KS']
+const UNITS = [
+  'Tất cả đơn vị',
+  'Khoa Kiến trúc',
+  'Khoa Xây dựng',
+  'Khoa CNTT',
+  'Khoa Mỹ thuật ứng dụng',
+  'Phòng Tổ chức - Hành chính',
+  'Phòng Đào tạo',
+  'Ban Giám hiệu',
+]
+const DEGREES = ['Tất cả học vị', 'GS.TS', 'PGS.TS', 'TS', 'ThS', 'KS', 'CN']
 
 export function Employees() {
+  const [data, setData] = useState<Employee[]>(EMPLOYEES)
+  const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
   const [unit, setUnit] = useState(UNITS[0])
   const [degree, setDegree] = useState(DEGREES[0])
   const [selected, setSelected] = useState<Employee | null>(null)
 
+  useEffect(() => {
+    const loadEmployees = async () => {
+      try {
+        setLoading(true)
+        const emps = await apiClient.employees.getAll()
+        if (emps && emps.length > 0) {
+          setData(emps)
+        }
+      } catch (e) {
+        console.warn('[Employees] Fallback to mock', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadEmployees()
+  }, [])
+
   const rows = useMemo(
     () =>
-      EMPLOYEES.filter(
+      data.filter(
         (e) =>
-          (unit === UNITS[0] || e.unit === unit) &&
+          (unit === UNITS[0] || e.unit.includes(unit) || unit.includes(e.unit)) &&
           (degree === DEGREES[0] || e.degree === degree) &&
-          (q === '' || e.name.toLowerCase().includes(q.toLowerCase()) || e.code.toLowerCase().includes(q.toLowerCase())),
+          (q === '' ||
+            e.name.toLowerCase().includes(q.toLowerCase()) ||
+            e.code.toLowerCase().includes(q.toLowerCase()) ||
+            e.email.toLowerCase().includes(q.toLowerCase())),
       ),
-    [q, unit, degree],
+    [data, q, unit, degree],
   )
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-[26px] font-bold leading-tight text-ink">Danh bạ cán bộ giảng viên</h1>
-        <p className="mt-1 text-[14px] text-muted">Tra cứu và quản lý hồ sơ nhân sự toàn trường.</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-[26px] font-bold leading-tight text-ink">Danh bạ cán bộ giảng viên</h1>
+          <p className="mt-1 text-[14px] text-muted">Tra cứu và quản lý hồ sơ nhân sự toàn trường.</p>
+        </div>
+        {loading && (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 size={14} className="animate-spin text-brand-500" /> Đang đồng bộ CSDL...
+          </span>
+        )}
       </div>
 
       {/* Filter bar */}
@@ -170,7 +212,7 @@ function Drawer({ employee, onClose }: { employee: Employee; onClose: () => void
               <Item label="Số điện thoại" value={employee.phone} mono />
               <Item label="Học vị" value={employee.degree} />
               <Item label="Đơn vị chính" value={employee.unit} />
-              <Item label="Địa chỉ" value="566 Núi Thành, Hải Châu, Đà Nẵng" full />
+              <Item label="Địa chỉ làm việc" value="566 Núi Thành, Hải Châu, Đà Nẵng" full />
             </dl>
           )}
           {tab === 1 && (
@@ -191,7 +233,7 @@ function Drawer({ employee, onClose }: { employee: Employee; onClose: () => void
           )}
           {tab === 2 && (
             <div className="space-y-4">
-              <Item label="Loại hợp đồng" value="Hợp đồng không xác định thời hạn" />
+              <Item label="Loại hợp đồng" value="Hợp đồng làm việc không xác định thời hạn" />
               <Item label="Hệ số lương" value="4.98 (bậc 5/8)" mono />
               <Item label="Ngày hiệu lực" value="01/09/2023" mono />
               <Badge tone="success">Đang hiệu lực</Badge>
@@ -205,7 +247,7 @@ function Drawer({ employee, onClose }: { employee: Employee; onClose: () => void
               </div>
               <div className="flex items-center justify-between rounded-lg border border-line p-3">
                 <span className="text-[13px] text-muted">Đơn gần nhất</span>
-                <Badge tone="success">Đã duyệt · 02/09</Badge>
+                <Badge tone="success">Đã duyệt</Badge>
               </div>
             </div>
           )}

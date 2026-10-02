@@ -10,3 +10,6 @@ export * from "./training/index.js";
 export * from "./dashboard/index.js";
 export * from "./notification/index.js";
 export * from "./ai/index.js";
+export * from "./workload/index.js";
+export * from "./payroll/index.js";
+export * from "./executive/index.js";

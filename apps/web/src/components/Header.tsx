@@ -3,10 +3,14 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { NotificationDropdown } from "./NotificationDropdown";
+import { PayslipModal } from "./PayslipModal";
+import { ExecutiveResolutionsModal } from "./ExecutiveResolutionsModal";
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showPayslip, setShowPayslip] = useState(false);
+  const [showExecutive, setShowExecutive] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/95 backdrop-blur-md shadow-xs">
@@ -126,6 +130,12 @@ export function Header() {
                 Đào tạo & CC
               </a>
               <a
+                href="/workload"
+                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200 font-medium"
+              >
+                Giờ chuẩn
+              </a>
+              <a
                 href="/ai-assistant"
                 className="group flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-800 hover:from-purple-100 hover:to-indigo-100 border border-purple-200/50 transition-all duration-200 font-semibold shadow-2xs"
               >
@@ -149,6 +159,22 @@ export function Header() {
         <div className="flex items-center space-x-3">
           {isAuthenticated && user ? (
             <>
+              {/* Quick Actions for Upgraded Axes */}
+              <div className="hidden md:flex items-center space-x-2">
+                <button
+                  onClick={() => setShowPayslip(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all duration-200 cursor-pointer shadow-2xs"
+                >
+                  <span>💰</span> Phiếu lương
+                </button>
+                <button
+                  onClick={() => setShowExecutive(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 text-xs font-semibold transition-all duration-200 cursor-pointer shadow-2xs"
+                >
+                  <span>📜</span> Quyết định NĐ 30
+                </button>
+              </div>
+
               <NotificationDropdown />
               {/* User Identity Pill */}
               <div className="flex items-center space-x-2.5 pl-2 border-l border-slate-200">
@@ -185,6 +211,10 @@ export function Header() {
           )}
         </div>
       </div>
+
+      {/* Upgraded Modals */}
+      {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
+      {showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
     </header>
   );
 }
