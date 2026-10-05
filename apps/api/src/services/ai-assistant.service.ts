@@ -7,6 +7,8 @@ import {
   DraftProposal,
 } from "@bahau/contracts";
 import { AppError } from "../middlewares/error.middleware.js";
+import { LeaveLedgerService } from "./leave-ledger.service.js";
+import { WorkflowService } from "./workflow.service.js";
 
 export class AiAssistantService {
   /**
@@ -120,9 +122,21 @@ export class AiAssistantService {
       const p = input.draftPayload;
       const leaveType = p.leaveType || "ANNUAL";
       const totalDays = new Prisma.Decimal(p.totalDays || 1);
+      const numDays = Number(totalDays);
       const reason = p.reason || "Nghỉ phép thường niên (Tạo qua Trợ lý ảo AI)";
       const startDate = new Date(p.startDate || new Date(Date.now() + 24 * 60 * 60 * 1000));
       const endDate = new Date(p.endDate || startDate);
+      const targetYear = startDate.getFullYear();
+
+      // Kiểm tra số dư phép nếu là nghỉ phép năm
+      if (leaveType === "ANNUAL") {
+        const balance = await LeaveLedgerService.getBalance(employee.id, targetYear);
+        if (balance.remaining < numDays) {
+          return {
+            reply: `⚠️ Không thể khởi tạo đơn: Số dư phép năm ${targetYear} của Thầy/Cô không đủ (còn ${balance.remaining} ngày, nhưng yêu cầu ${numDays} ngày). Vui lòng điều chỉnh lại số ngày nghỉ.`,
+          };
+        }
+      }
 
       // Tạo đơn nghỉ phép thực tế
       const leaveRequest = await prisma.leaveRequest.create({
@@ -137,6 +151,20 @@ export class AiAssistantService {
         },
       });
 
+      // Tạm giữ số dư phép trên Sổ cái nếu là nghỉ phép năm
+      if (leaveType === "ANNUAL") {
+        await LeaveLedgerService.recordHold(employee.id, numDays, leaveRequest.id, targetYear);
+      }
+
+      // Kích hoạt chuỗi Workflow phê duyệt phân cấp cho Trưởng đơn vị
+      const wfInstanceId = await WorkflowService.startLeaveWorkflow(employee.id, leaveRequest.id, numDays);
+
+      // Cập nhật workflowInstanceId vào đơn nghỉ phép
+      await prisma.leaveRequest.update({
+        where: { id: leaveRequest.id },
+        data: { workflowInstanceId: wfInstanceId },
+      });
+
       // Tạo Outbox Event
       await prisma.outboxEvent.create({
         data: {
@@ -147,7 +175,7 @@ export class AiAssistantService {
             employeeEmail: user?.email,
             employeeName: employee.fullName,
             reason,
-            days: Number(totalDays),
+            days: numDays,
           },
           idempotencyKey: `AI-LEAVE-${leaveRequest.id}`,
           status: "PENDING",

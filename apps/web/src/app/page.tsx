@@ -1,44 +1,20 @@
 'use client'
 
-import { useState } from 'react'
-import type { Role } from '../data'
+import { useRouter } from 'next/navigation'
 import { Landing } from '../components/Landing'
-import { Login } from '../components/Login'
-import { Shell, type Page } from '../components/Shell'
-import { Profile } from '../components/Profile'
-import { Leave } from '../components/Leave'
-import { Approvals } from '../components/Approvals'
-import { OrgTree } from '../components/OrgTree'
-import { Employees } from '../components/Employees'
-import { Contracts } from '../components/Contracts'
+import { useAuth } from '../context/AuthContext'
 
-export default function App() {
-  const [view, setView] = useState<'landing' | 'login'>('landing')
-  const [role, setRole] = useState<Role | null>(null)
-  const [page, setPage] = useState<Page>('profile')
+export default function HomePage() {
+  const router = useRouter()
+  const { isAuthenticated } = useAuth()
 
-  if (!role) {
-    if (view === 'landing') return <Landing onEnter={() => setView('login')} />
-    return <Login onLogin={(r) => setRole(r)} onBack={() => setView('landing')} />
+  const handleEnter = () => {
+    if (isAuthenticated) {
+      router.push('/dashboard')
+    } else {
+      router.push('/login')
+    }
   }
 
-  return (
-    <Shell
-      role={role}
-      page={page}
-      onNavigate={setPage}
-      onRoleChange={setRole}
-      onLogout={() => {
-        setRole(null)
-        setView('landing')
-      }}
-    >
-      {page === 'profile' && <Profile role={role} />}
-      {page === 'leave' && <Leave />}
-      {page === 'inbox' && <Approvals />}
-      {page === 'org' && <OrgTree />}
-      {page === 'employees' && <Employees />}
-      {page === 'contracts' && <Contracts />}
-    </Shell>
-  )
+  return <Landing onEnter={handleEnter} />
 }

@@ -80,8 +80,12 @@ export class PayrollService {
     try {
       const quota = await WorkloadService.getEmployeeQuota(employee.id, `${year - 1}-${year}`);
       if (quota && quota.overtimeHours > 0) {
-        overtimeTeachingHours = Math.round((quota.overtimeHours / 10) * 10) / 10;
-        const hourlyRate = activeAssignment?.position?.code === "GIANG_VIEN_CHINH" ? 200000 : 160000;
+        overtimeTeachingHours = Math.round(quota.overtimeHours * 10) / 10;
+        const isSeniorOrProf =
+          employee.academicTitle === "PROFESSOR" ||
+          employee.academicTitle === "ASSOCIATE_PROFESSOR" ||
+          activeAssignment?.position?.code === "GIANG_VIEN_CHINH";
+        const hourlyRate = isSeniorOrProf ? 200000 : 160000;
         overtimeTeachingPay = Math.round(overtimeTeachingHours * hourlyRate);
       }
     } catch {
@@ -105,7 +109,7 @@ export class PayrollService {
     const unemploymentInsurance = Math.round(baseSalary * 0.01); // BHTN 1%
     const totalInsurance = socialInsurance + healthInsurance + unemploymentInsurance;
 
-    // 7. Thuế thu nhập cá nhân (giảm trừ gia cảnh bản thân 11.000.000đ)
+    // 7. Thuế thu nhập cá nhân (giảm trừ gia cảnh bản thân 11.000.000đ - Biểu lũy tiến 7 bậc)
     const personalDeduction = 11000000;
     const taxableIncome = Math.max(0, grossIncome - totalInsurance - personalDeduction);
     let personalIncomeTax = 0;
@@ -114,8 +118,16 @@ export class PayrollService {
         personalIncomeTax = Math.round(taxableIncome * 0.05);
       } else if (taxableIncome <= 10000000) {
         personalIncomeTax = Math.round(250000 + (taxableIncome - 5000000) * 0.1);
-      } else {
+      } else if (taxableIncome <= 18000000) {
         personalIncomeTax = Math.round(750000 + (taxableIncome - 10000000) * 0.15);
+      } else if (taxableIncome <= 32000000) {
+        personalIncomeTax = Math.round(1950000 + (taxableIncome - 18000000) * 0.2);
+      } else if (taxableIncome <= 52000000) {
+        personalIncomeTax = Math.round(4750000 + (taxableIncome - 32000000) * 0.25);
+      } else if (taxableIncome <= 80000000) {
+        personalIncomeTax = Math.round(9750000 + (taxableIncome - 52000000) * 0.3);
+      } else {
+        personalIncomeTax = Math.round(18150000 + (taxableIncome - 80000000) * 0.35);
       }
     }
 

@@ -34,61 +34,76 @@ export class LeaveService {
     }
 
     const employeeId = currentUser.employeeId;
+    const targetYear = startDate.getFullYear();
 
     // 1. Kiểm tra số dư phép nếu là nghỉ phép năm
     if (input.leaveType === "ANNUAL") {
-      const balance = await LeaveLedgerService.getBalance(employeeId);
+      const balance = await LeaveLedgerService.getBalance(employeeId, targetYear);
       if (balance.remaining < input.totalDays) {
         throw new AppError(
           422,
           "INSUFFICIENT_LEAVE_BALANCE",
-          `Số dư phép năm không đủ. Bạn còn ${balance.remaining} ngày nhưng xin nghỉ ${input.totalDays} ngày.`
+          `Số dư phép năm ${targetYear} không đủ. Bạn còn ${balance.remaining} ngày nhưng xin nghỉ ${input.totalDays} ngày.`
         );
       }
     }
 
     try {
-      // 2. Tạo bản ghi đơn nghỉ phép
-      const leave = await prisma.leaveRequest.create({
-        data: {
-          employeeId,
-          leaveType: input.leaveType as any,
-          startDate,
-          endDate,
-          totalDays: input.totalDays,
-          reason: input.reason,
-          substituteEmployeeId: input.substituteEmployeeId || null,
-          status: "PENDING",
-        },
-        include: {
-          employee: { select: { fullName: true, employeeCode: true } },
-          substituteEmployee: { select: { fullName: true } },
-        },
+      return await prisma.$transaction(async (tx) => {
+        // Re-verify balance inside transaction
+        if (input.leaveType === "ANNUAL") {
+          const balance = await LeaveLedgerService.getBalance(employeeId, targetYear);
+          if (balance.remaining < input.totalDays) {
+            throw new AppError(
+              422,
+              "INSUFFICIENT_LEAVE_BALANCE",
+              `Số dư phép năm ${targetYear} không đủ. Bạn còn ${balance.remaining} ngày nhưng xin nghỉ ${input.totalDays} ngày.`
+            );
+          }
+        }
+
+        // 2. Tạo bản ghi đơn nghỉ phép
+        const leave = await tx.leaveRequest.create({
+          data: {
+            employeeId,
+            leaveType: input.leaveType as any,
+            startDate,
+            endDate,
+            totalDays: input.totalDays,
+            reason: input.reason,
+            substituteEmployeeId: input.substituteEmployeeId || null,
+            status: "PENDING",
+          },
+          include: {
+            employee: { select: { fullName: true, employeeCode: true } },
+            substituteEmployee: { select: { fullName: true } },
+          },
+        });
+
+        // 3. Nếu là phép năm -> Ghi nhận TẠM GIỮ trên Sổ cái (HOLD)
+        if (input.leaveType === "ANNUAL") {
+          await LeaveLedgerService.recordHold(employeeId, input.totalDays, leave.id, targetYear);
+        }
+
+        // 4. Kích hoạt chuỗi Workflow phê duyệt phân cấp
+        const wfInstanceId = await WorkflowService.startLeaveWorkflow(employeeId, leave.id, input.totalDays);
+
+        return {
+          id: leave.id,
+          employeeId: leave.employeeId,
+          employeeName: leave.employee.fullName,
+          employeeCode: leave.employee.employeeCode,
+          leaveType: leave.leaveType as any,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          totalDays: Number(leave.totalDays),
+          reason: leave.reason,
+          substituteEmployeeName: leave.substituteEmployee?.fullName || null,
+          workflowInstanceId: wfInstanceId,
+          status: leave.status as any,
+          createdAt: leave.createdAt.toISOString(),
+        };
       });
-
-      // 3. Nếu là phép năm -> Ghi nhận TẠM GIỮ trên Sổ cái (HOLD)
-      if (input.leaveType === "ANNUAL") {
-        await LeaveLedgerService.recordHold(employeeId, input.totalDays, leave.id);
-      }
-
-      // 4. Kích hoạt chuỗi Workflow phê duyệt phân cấp
-      const wfInstanceId = await WorkflowService.startLeaveWorkflow(employeeId, leave.id, input.totalDays);
-
-      return {
-        id: leave.id,
-        employeeId: leave.employeeId,
-        employeeName: leave.employee.fullName,
-        employeeCode: leave.employee.employeeCode,
-        leaveType: leave.leaveType as any,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        totalDays: Number(leave.totalDays),
-        reason: leave.reason,
-        substituteEmployeeName: leave.substituteEmployee?.fullName || null,
-        workflowInstanceId: wfInstanceId,
-        status: leave.status as any,
-        createdAt: leave.createdAt.toISOString(),
-      };
     } catch (err: any) {
       if (err instanceof AppError) throw err;
       if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
@@ -209,6 +224,14 @@ export class LeaveService {
 
     if (!leave) {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy đơn nghỉ phép cần hủy.");
+    }
+
+    const isOwner = currentUser.employeeId === leave.employeeId;
+    const isHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_SYSADMIN"].includes(r)
+    );
+    if (!isOwner && !isHR) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền hủy đơn nghỉ phép của cán bộ khác.");
     }
 
     if (leave.status !== "PENDING") {
@@ -423,6 +446,14 @@ export class LeaveService {
 
     if (!trip) {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy đơn công tác cần hủy.");
+    }
+
+    const isOwner = currentUser.employeeId === trip.employeeId;
+    const isHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_SYSADMIN"].includes(r)
+    );
+    if (!isOwner && !isHR) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền hủy đơn công tác của cán bộ khác.");
     }
 
     if (trip.status !== "PENDING") {

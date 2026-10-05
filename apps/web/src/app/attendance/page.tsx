@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CheckCircle2, Lightbulb, Lock } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface AttendanceRecord {
@@ -340,7 +341,7 @@ export default function AttendancePersonalPage() {
       {period.isLocked ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-rose-900 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <span className="text-xl">🔒</span>
+            <Lock size={20} className="text-rose-700 shrink-0" />
             <div>
               <p className="text-sm font-bold">Kỳ công Tháng {month}/{year} ĐÃ KHÓA SỔ BẤT BIẾN</p>
               <p className="text-xs text-rose-700">
@@ -355,7 +356,7 @@ export default function AttendancePersonalPage() {
       ) : (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 text-emerald-900 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <span className="text-xl">🟢</span>
+            <CheckCircle2 size={20} className="text-emerald-700 shrink-0" />
             <div>
               <p className="text-sm font-bold">Kỳ công Tháng {month}/{year} ĐANG MỞ GHI NHẬN</p>
               <p className="text-xs text-emerald-700">
@@ -666,8 +667,9 @@ export default function AttendancePersonalPage() {
                 />
               </div>
 
-              <div className="rounded-lg bg-blue-50 p-3 text-slate-600 leading-relaxed text-[11px]">
-                💡 Đơn sau khi nộp sẽ được chuyển đến <strong>Trưởng đơn vị</strong> xác nhận, tiếp đó chuyển <strong>Phòng TCHC</strong> thẩm định cập nhật vào Bảng công tổng hợp.
+              <div className="rounded-lg bg-blue-50 p-3 text-slate-600 leading-relaxed text-[11px] flex items-start gap-1.5 border border-blue-200">
+                <Lightbulb size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                <span>Đơn sau khi nộp sẽ được chuyển đến <strong>Trưởng đơn vị</strong> xác nhận, tiếp đó chuyển <strong>Phòng TCHC</strong> thẩm định cập nhật vào Bảng công tổng hợp.</span>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">

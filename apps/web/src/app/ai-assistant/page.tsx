@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { BookOpen, Bot, CheckCircle2, FileText, Lightbulb, Pin, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface Message {
@@ -27,7 +28,7 @@ export default function AiAssistantPage() {
       id: "welcome",
       role: "assistant",
       content:
-        "Xin chào Thầy/Cô! Tôi là **Trợ lý ảo AI Quản trị Nhân sự BAHAU** của Trường Đại học Kiến trúc Đà Nẵng.\n\nTôi được huấn luyện trên hệ thống văn bản pháp quy, quy chế nội bộ của Nhà trường và có thể kết nối dữ liệu hồ sơ nhân sự của Thầy/Cô. Tôi có thể hỗ trợ Thầy/Cô:\n1. 🔍 **Tra cứu Quy chế & Định mức**: Giờ chuẩn giảng dạy KTS, nghỉ hè & nghỉ phép thường niên, nâng bậc lương định kỳ, tiêu chuẩn KPI.\n2. 📊 **Kiểm tra Số dư Cá nhân**: Số ngày phép năm còn lại, thời hạn hợp đồng, thời hạn chứng chỉ hành nghề.\n3. ✍️ **Soạn Thảo Đơn Nháp**: Tự động tạo đơn nghỉ phép, công tác có hộp xác nhận an toàn trước khi nộp.\n\nThầy/Cô có thể bấm vào các câu hỏi gợi ý bên dưới hoặc nhập câu hỏi trực tiếp!",
+        "Xin chào Thầy/Cô! Tôi là **Trợ lý ảo AI Quản trị Nhân sự BAHAU** của Trường Đại học Kiến trúc Đà Nẵng.\n\nTôi được huấn luyện trên hệ thống văn bản pháp quy, quy chế nội bộ của Nhà trường và có thể kết nối dữ liệu hồ sơ nhân sự của Thầy/Cô. Tôi có thể hỗ trợ Thầy/Cô:\n- **Tra cứu Quy chế & Định mức**: Giờ chuẩn giảng dạy KTS, nghỉ hè & nghỉ phép thường niên, nâng bậc lương định kỳ, tiêu chuẩn KPI.\n- **Kiểm tra Số dư Cá nhân**: Số ngày phép năm còn lại, thời hạn hợp đồng, thời hạn chứng chỉ hành nghề.\n- **Soạn Thảo Đơn Nháp**: Tự động tạo đơn nghỉ phép, công tác có hộp xác nhận an toàn trước khi nộp.\n\nThầy/Cô có thể bấm vào các câu hỏi gợi ý bên dưới hoặc nhập câu hỏi trực tiếp!",
       timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -165,7 +166,7 @@ export default function AiAssistantPage() {
         return m;
       })
     );
-    alert("🎉 Đơn xin nghỉ phép đã được nộp thành công vào luồng phê duyệt của Trưởng khoa!");
+    alert("Đơn xin nghỉ phép đã được nộp thành công vào luồng phê duyệt của Trưởng khoa.");
   };
 
   return (
@@ -175,7 +176,7 @@ export default function AiAssistantPage() {
       <div className="lg:col-span-1 space-y-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-3">
-            <span className="text-base">📚</span>
+            <BookOpen size={16} className="text-brand-600" />
             <h3 className="text-sm font-bold text-slate-900">Cơ Sở Tri Thức DAU</h3>
           </div>
           <p className="mt-2 text-xs text-slate-500">
@@ -235,8 +236,9 @@ export default function AiAssistantPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-900">
-          🔒 <b>Bảo mật thông tin:</b> AI Assistant hoạt động trong mạng nội bộ DAU, không chia sẻ dữ liệu nhân sự ra các dịch vụ ngoài trường.
+        <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-900 flex items-start gap-2">
+          <ShieldCheck size={16} className="text-purple-700 shrink-0 mt-0.5" />
+          <span><b>Bảo mật thông tin:</b> AI Assistant hoạt động trong mạng nội bộ DAU, không chia sẻ dữ liệu nhân sự ra các dịch vụ ngoài trường.</span>
         </div>
       </div>
 
@@ -245,8 +247,8 @@ export default function AiAssistantPage() {
         {/* Chat Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white">
           <div className="flex items-center space-x-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-xl font-bold">
-              🤖
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 font-bold">
+              <Bot size={22} className="text-amber-300" />
             </div>
             <div>
               <h2 className="text-base font-bold">Trợ Lý Ảo AI Quản Trị Nhân Sự DAU</h2>
@@ -286,8 +288,8 @@ export default function AiAssistantPage() {
                 {/* Thẻ trích dẫn văn bản pháp quy DAU */}
                 {m.sources && m.sources.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-200/60 text-xs">
-                    <p className="font-semibold text-slate-700 flex items-center space-x-1 mb-1.5">
-                      <span>📌</span>
+                    <p className="font-semibold text-slate-700 flex items-center space-x-1.5 mb-1.5">
+                      <Pin size={13} className="text-brand-600" />
                       <span>Văn bản trích dẫn đối chiếu:</span>
                     </p>
                     <div className="space-y-1.5">
@@ -311,8 +313,8 @@ export default function AiAssistantPage() {
                 {m.draftProposal && (
                   <div className="mt-4 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/80 p-4 text-xs text-amber-900">
                     <div className="flex items-center justify-between border-b border-amber-200 pb-2">
-                      <span className="font-bold flex items-center space-x-1 text-sm">
-                        <span>📝</span>
+                      <span className="font-bold flex items-center space-x-1.5 text-sm">
+                        <FileText size={15} className="text-amber-700" />
                         <span>Đề Xuất Đơn Nháp Chờ Xác Nhận</span>
                       </span>
                       <span
@@ -341,14 +343,14 @@ export default function AiAssistantPage() {
                           </button>
                           <button
                             onClick={() => handleConfirmDraft(m.id)}
-                            className="rounded-lg bg-emerald-700 px-4 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-800 transition"
+                            className="rounded-lg bg-emerald-700 px-4 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-800 transition flex items-center gap-1"
                           >
-                            ✅ Xác Nhận Gửi Đơn
+                            <CheckCircle2 size={13} /> Xác Nhận Gửi Đơn
                           </button>
                         </>
                       ) : (
                         <span className="text-xs text-emerald-700 font-bold flex items-center space-x-1">
-                          <span>✔</span>
+                          <CheckCircle2 size={13} />
                           <span>Đã ghi vào hàng đợi phê duyệt</span>
                         </span>
                       )}
@@ -370,7 +372,7 @@ export default function AiAssistantPage() {
         {/* Quick Prompts Suggestions */}
         <div className="border-t border-slate-100 bg-slate-50/60 px-6 py-2.5">
           <div className="flex items-center space-x-1 text-xs text-slate-500 mb-1.5">
-            <span>💡</span>
+            <Lightbulb size={13} className="text-amber-600" />
             <span>Gợi ý câu hỏi nhanh:</span>
           </div>
           <div className="flex flex-wrap gap-2">

@@ -150,7 +150,9 @@ export function Leave() {
             <div key={r.id} className="rounded-xl border border-line p-4 transition-all hover:border-brand-200">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-[13px] font-medium text-slate-500">{r.id}</span>
+                  <span className="font-mono text-[13px] font-medium text-slate-500">
+                    {r.id.length > 12 ? r.id.substring(0, 8).toUpperCase() : r.id}
+                  </span>
                   <Badge tone="info">{r.type}</Badge>
                   <span className="text-[13px] text-muted">
                     {r.from} → {r.to} · {r.days} ngày

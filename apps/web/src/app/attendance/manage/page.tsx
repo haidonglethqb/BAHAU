@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Lock, Unlock, Upload } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
 interface MonthlySummaryItem {
@@ -282,18 +283,29 @@ export default function AttendanceManagePage() {
                 : "bg-white border border-slate-300 text-slate-800 hover:bg-slate-50"
             }`}
           >
-            📥 Import Quẹt Thẻ (Lớp 1)
+            <Upload size={14} className="inline mr-1.5" />
+            <span>Import Quẹt Thẻ (Lớp 1)</span>
           </button>
 
           <button
             onClick={() => setShowLockModal(true)}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow transition ${
+            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow transition inline-flex items-center gap-1.5 ${
               period.isLocked
                 ? "bg-amber-600 text-white hover:bg-amber-700"
                 : "bg-rose-700 text-white hover:bg-rose-800"
             }`}
           >
-            {period.isLocked ? "🔓 Mở Khóa Kỳ Công" : "🔒 Chốt & Khóa Kỳ Công (Lớp 3)"}
+            {period.isLocked ? (
+              <>
+                <Unlock size={15} />
+                <span>Mở Khóa Kỳ Công</span>
+              </>
+            ) : (
+              <>
+                <Lock size={15} />
+                <span>Chốt & Khóa Kỳ Công (Lớp 3)</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -302,7 +314,7 @@ export default function AttendanceManagePage() {
       {period.isLocked && (
         <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-rose-900 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <span className="text-xl">🔒</span>
+            <Lock size={20} className="text-rose-700 shrink-0" />
             <div>
               <p className="text-sm font-bold">KỲ CÔNG THÁNG {month}/{year} ĐANG Ở TRẠNG THÁI KHÓA SỔ (IMMUTABLE)</p>
               <p className="text-xs text-rose-700 mt-0.5">

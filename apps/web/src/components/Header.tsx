@@ -1,218 +1,164 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
+import {
+  Banknote,
+  Building2,
+  ChevronRight,
+  LogOut,
+  ScrollText,
+  Sparkles,
+  User,
+} from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { NotificationDropdown } from "./NotificationDropdown";
 import { PayslipModal } from "./PayslipModal";
 import { ExecutiveResolutionsModal } from "./ExecutiveResolutionsModal";
+import { Avatar } from "./ui";
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPayslip, setShowPayslip] = useState(false);
   const [showExecutive, setShowExecutive] = useState(false);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/95 backdrop-blur-md shadow-xs">
+    <header className="sticky top-0 z-50 border-b border-line bg-surface/95 backdrop-blur-md shadow-2xs">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
         {/* Brand / Logo */}
         <div className="flex items-center space-x-3">
-          <a
+          <Link
             href="/"
-            className="group flex items-center space-x-3 transition-transform duration-200 hover:scale-[1.02]"
+            className="group flex items-center space-x-3 transition-transform duration-150"
           >
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-900 via-blue-950 to-indigo-950 font-black tracking-wider text-amber-400 shadow-md ring-2 ring-blue-900/10 group-hover:shadow-blue-900/20 transition-all">
-              DAU
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500 font-bold text-white shadow-xs">
+              <Building2 size={20} />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h1 className="text-base font-extrabold text-slate-900 tracking-tight">
+                <h1 className="text-sm sm:text-base font-extrabold text-brand-700 tracking-tight">
                   ĐH KIẾN TRÚC ĐÀ NẴNG
                 </h1>
                 {isAuthenticated ? (
                   <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200">
-                    CỔNG NỘI BỘ CBGV
+                    NỘI BỘ CBGV
                   </span>
                 ) : (
-                  <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-800 border border-blue-200/60">
-                    CỔNG THÔNG TIN ĐẠI HỌC
+                  <span className="inline-flex items-center rounded-md bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700 border border-brand-200">
+                    CỔNG THÔNG TIN
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 font-medium">
+              <p className="text-[11px] text-muted font-medium">
                 {isAuthenticated
                   ? "Hệ Thống Quản Trị Nhân Lực & Giảng Viên (BAHAU)"
                   : "Danang Architecture University — Portal"}
               </p>
             </div>
-          </a>
+          </Link>
         </div>
 
         {/* Dynamic Navigation Bar based on Auth status */}
-        <nav className="hidden lg:flex items-center space-x-1 xl:space-x-2 text-sm font-medium text-slate-600">
+        <nav className="hidden lg:flex items-center space-x-1 text-xs font-semibold text-muted">
           {!isAuthenticated ? (
             /* Public University Navigation */
             <>
-              <a
-                href="/"
-                className="px-3 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 font-semibold text-blue-900 transition-all duration-200"
-              >
+              <Link href="/" className="px-3 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 text-brand-600">
                 Trang Chủ
+              </Link>
+              <a href="/#about" className="px-3 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 transition-colors">
+                Giới Thiệu
               </a>
-              <a
-                href="/#about"
-                className="px-3 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                Giới Thiệu DAU
-              </a>
-              <a
-                href="/#faculties"
-                className="px-3 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
+              <a href="/#faculties" className="px-3 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 transition-colors">
                 Khoa & Đào Tạo
               </a>
-              <a
-                href="/#facilities"
-                className="px-3 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
+              <a href="/#facilities" className="px-3 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 transition-colors">
                 Cơ Sở Vật Chất
-              </a>
-              <a
-                href="/#news"
-                className="px-3 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                Tin Tức & Sự Kiện
               </a>
             </>
           ) : (
             /* Authenticated Faculty/Staff Intranet Navigation */
             <>
-              <a
-                href="/dashboard"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 font-semibold text-blue-900 transition-all duration-200"
-              >
+              <Link href="/dashboard" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 text-brand-600 font-bold">
                 Dashboard
-              </a>
-              <a
-                href="/employees"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                Hồ sơ CBGV
-              </a>
-              <a
-                href="/contracts"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
+              </Link>
+              <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                CBGV
+              </Link>
+              <Link href="/contracts" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Hợp đồng
-              </a>
-              <a
-                href="/leave"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
+              </Link>
+              <Link href="/leave" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Nghỉ phép
-              </a>
-              <a
-                href="/attendance"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
+              </Link>
+              <Link href="/attendance" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Chấm công
-              </a>
-              <a
-                href="/kpi"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                KPI
-              </a>
-              <a
-                href="/training"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                Đào tạo & CC
-              </a>
-              <a
-                href="/workload"
-                className="px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200 font-medium"
-              >
+              </Link>
+              <Link href="/workload" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Giờ chuẩn
-              </a>
-              <a
+              </Link>
+              <Link href="/approvals" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                Phê duyệt
+              </Link>
+              <Link
                 href="/ai-assistant"
-                className="group flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-800 hover:from-purple-100 hover:to-indigo-100 border border-purple-200/50 transition-all duration-200 font-semibold shadow-2xs"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"
               >
-                <span className="group-hover:scale-125 transition-transform duration-200">✨</span>
+                <Sparkles size={13} />
                 <span>AI Trợ lý</span>
-              </a>
-              <a
-                href="/approvals"
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg hover:text-blue-950 hover:bg-slate-100 transition-all duration-200"
-              >
-                <span>Phê duyệt</span>
-                <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-900 border border-amber-200">
-                  Inbox
-                </span>
-              </a>
+              </Link>
             </>
           )}
         </nav>
 
         {/* Right Side Controls */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3">
           {isAuthenticated && user ? (
             <>
-              {/* Quick Actions for Upgraded Axes */}
-              <div className="hidden md:flex items-center space-x-2">
+              <div className="hidden sm:flex items-center space-x-1.5">
                 <button
                   onClick={() => setShowPayslip(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all duration-200 cursor-pointer shadow-2xs"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold cursor-pointer shadow-2xs"
                 >
-                  <span>💰</span> Phiếu lương
+                  <Banknote size={14} /> Phiếu lương
                 </button>
                 <button
                   onClick={() => setShowExecutive(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 text-xs font-semibold transition-all duration-200 cursor-pointer shadow-2xs"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold cursor-pointer shadow-2xs"
                 >
-                  <span>📜</span> Quyết định NĐ 30
+                  <ScrollText size={14} /> QĐ NĐ 30
                 </button>
               </div>
 
               <NotificationDropdown />
-              {/* User Identity Pill */}
-              <div className="flex items-center space-x-2.5 pl-2 border-l border-slate-200">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-900 text-amber-400 font-bold text-xs shadow-xs">
-                  {user.fullName.split(" ").pop()?.charAt(0) || "U"}
-                </div>
-                <div className="hidden sm:block text-left">
-                  <p className="text-xs font-bold text-slate-800 leading-tight">
-                    {user.fullName}
-                  </p>
-                  <p className="text-[10px] text-slate-500 font-medium">
-                    {user.roleLabel}
-                  </p>
+
+              <div className="flex items-center space-x-2 pl-2 border-l border-line">
+                <Avatar name={user.fullName} size={32} />
+                <div className="hidden md:block text-left">
+                  <p className="text-xs font-bold text-ink leading-tight">{user.fullName}</p>
+                  <p className="text-[10px] text-muted">{user.roleLabel}</p>
                 </div>
                 <button
                   onClick={() => logout()}
                   title="Đăng xuất"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
                 >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                  </svg>
+                  <LogOut size={16} />
                 </button>
               </div>
             </>
           ) : (
-            <a
+            <Link
               href="/login"
-              className="group inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-900 to-indigo-900 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:from-blue-800 hover:to-indigo-800 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-xs sm:text-sm font-semibold text-white shadow-xs hover:bg-brand-600 transition-all cursor-pointer"
             >
               <span>Cổng Cán Bộ / Giảng Viên</span>
-              <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
-            </a>
+              <ChevronRight size={15} />
+            </Link>
           )}
         </div>
       </div>
 
-      {/* Upgraded Modals */}
       {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
       {showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
     </header>

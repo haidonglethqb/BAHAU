@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ExternalLink } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
 interface KpiCriterionItem {
@@ -695,9 +696,10 @@ export default function KpiManagePage() {
                           href={item.evidenceUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-indigo-600 hover:text-indigo-800 font-medium underline flex items-center gap-1"
+                          className="text-brand-600 hover:text-brand-800 font-medium underline flex items-center gap-1.5"
                         >
-                          🔗 Xem minh chứng đính kèm
+                          <ExternalLink size={13} />
+                          <span>Xem minh chứng đính kèm</span>
                         </a>
                       )}
                     </div>

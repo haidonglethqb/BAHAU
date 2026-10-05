@@ -408,12 +408,44 @@ export class WorkflowService {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại hoặc đã được xử lý.");
     }
 
-    // Kiểm tra quyền duyệt
+    // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
+    if (step.stepIndex !== step.instance.currentStepIndex) {
+      throw new AppError(
+        422,
+        "INVALID_STEP_ORDER",
+        `Không thể phê duyệt bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
+      );
+    }
+
+    // 2. Anti-Self-Approval: Không cho phép người nộp đơn tự duyệt bước của chính mình
+    if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Quy tắc Anti-Self-Approval: Bạn không được tự phê duyệt đơn của chính mình."
+      );
+    }
+
+    // 3. Kiểm tra quyền duyệt và Scope đơn vị
+    const isGlobalHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    );
     const isDirectApprover = currentUser.employeeId && step.approverEmployeeId === currentUser.employeeId;
     const hasRole = step.approverRoleCode && currentUser.roles.includes(step.approverRoleCode);
 
     if (!isDirectApprover && !hasRole) {
       throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền phê duyệt bước này.");
+    }
+
+    if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
+      const requesterAssignment = await prisma.employmentAssignment.findFirst({
+        where: { employeeId: step.instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
+      });
+      const requesterUnitId = requesterAssignment?.unitId;
+      const isManaged = requesterUnitId && currentUser.unitsManaged?.includes(requesterUnitId);
+      if (!isManaged) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền quản lý đơn vị của cán bộ này.");
+      }
     }
 
     // 1. Cập nhật bước hiện tại thành APPROVED
@@ -551,11 +583,44 @@ export class WorkflowService {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại hoặc đã được xử lý.");
     }
 
+    // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
+    if (step.stepIndex !== step.instance.currentStepIndex) {
+      throw new AppError(
+        422,
+        "INVALID_STEP_ORDER",
+        `Không thể từ chối bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
+      );
+    }
+
+    // 2. Anti-Self-Approval: Không cho phép người nộp đơn tự từ chối/xử lý bước của chính mình
+    if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Quy tắc Anti-Self-Approval: Bạn không được tự xử lý đơn của chính mình."
+      );
+    }
+
+    // 3. Kiểm tra quyền từ chối và Scope đơn vị
+    const isGlobalHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    );
     const isDirectApprover = currentUser.employeeId && step.approverEmployeeId === currentUser.employeeId;
     const hasRole = step.approverRoleCode && currentUser.roles.includes(step.approverRoleCode);
 
     if (!isDirectApprover && !hasRole) {
       throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền từ chối bước này.");
+    }
+
+    if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
+      const requesterAssignment = await prisma.employmentAssignment.findFirst({
+        where: { employeeId: step.instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
+      });
+      const requesterUnitId = requesterAssignment?.unitId;
+      const isManaged = requesterUnitId && currentUser.unitsManaged?.includes(requesterUnitId);
+      if (!isManaged) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền quản lý đơn vị của cán bộ này.");
+      }
     }
 
     // 1. Cập nhật bước thành REJECTED

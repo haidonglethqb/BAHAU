@@ -193,7 +193,7 @@ class ApiClient {
       const res = await this.request('/api/v1/leave/requests/my', { method: 'GET' })
       if (res.ok && Array.isArray(res.data)) {
         return res.data.map((r: any) => ({
-          id: r.id.substring(0, 12).toUpperCase(),
+          id: r.id,
           requester: r.employeeName || 'Cán bộ giảng viên',
           position: 'Giảng viên',
           unit: 'Khoa Kiến trúc',
@@ -284,8 +284,9 @@ class ApiClient {
   public employees = {
     getAll: async (): Promise<Employee[]> => {
       const res = await this.request('/api/v1/employees', { method: 'GET' })
-      if (res.ok && Array.isArray(res.data)) {
-        return res.data.map((emp: any) => ({
+      const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.items) ? res.data.items : null)
+      if (res.ok && list) {
+        return list.map((emp: any) => ({
           code: emp.employeeCode,
           name: emp.fullName,
           degree: emp.academicDegree || 'ThS',

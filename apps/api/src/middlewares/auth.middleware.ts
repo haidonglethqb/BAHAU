@@ -63,16 +63,18 @@ export function requirePermission(permissionCode: string) {
   };
 }
 
-export function requireRole(roleCode: string) {
+export function requireRole(roleCodes: string | string[]) {
+  const roles = Array.isArray(roleCodes) ? roleCodes : [roleCodes];
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       throw new AppError(401, "UNAUTHENTICATED", "Vui lòng đăng nhập để thực hiện thao tác này.");
     }
-    if (!req.user.roles.includes(roleCode)) {
+    const hasRole = roles.some((r) => req.user!.roles.includes(r));
+    if (!hasRole) {
       throw new AppError(
         403,
         "FORBIDDEN",
-        `Thao tác này chỉ dành cho vai trò '${roleCode}'.`
+        `Thao tác này chỉ dành cho vai trò: ${roles.join(", ")}.`
       );
     }
     next();

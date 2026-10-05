@@ -9,6 +9,11 @@ import { asyncHandler } from "../../middlewares/async.middleware.js";
 const router = Router();
 
 router.get("/payroll/my-payslip", requireAuth, asyncHandler(getMyPayslip));
-router.get("/payroll/period-summary", requireAuth, asyncHandler(getPeriodSummary));
+router.get(
+  "/payroll/period-summary",
+  requireAuth,
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_SYSADMIN"]),
+  asyncHandler(getPeriodSummary)
+);
 
 export default router;

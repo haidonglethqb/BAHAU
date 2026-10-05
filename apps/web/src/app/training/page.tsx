@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { Award, FileText, GraduationCap } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface CertificateItem {
@@ -266,15 +267,15 @@ export default function TrainingPersonalPage() {
     if (!alert) return null;
     switch (alert) {
       case "EXPIRED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-red-600 text-white shadow-sm">🔴 Đã quá hạn</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200"><span className="size-1.5 rounded-full bg-rose-600" /> Đã quá hạn</span>;
       case "CRITICAL_30":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-orange-100 text-orange-800 border border-orange-300 animate-pulse">🟠 Còn {days} ngày (Khẩn)</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200 animate-pulse"><span className="size-1.5 rounded-full bg-rose-600" /> Còn {days} ngày (Khẩn)</span>;
       case "WARNING_60":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-800 border border-amber-300">🟡 Còn {days} ngày</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-300"><span className="size-1.5 rounded-full bg-amber-500" /> Còn {days} ngày</span>;
       case "WARNING_90":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">🔵 Còn {days} ngày</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200"><span className="size-1.5 rounded-full bg-blue-500" /> Còn {days} ngày</span>;
       case "VALID":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Còn hạn ({days} ngày)</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"><span className="size-1.5 rounded-full bg-emerald-600" /> Còn hạn ({days} ngày)</span>;
       default:
         return null;
     }
@@ -389,23 +390,25 @@ export default function TrainingPersonalPage() {
         <nav className="flex space-x-8">
           <button
             onClick={() => setActiveTab("CERTIFICATES")}
-            className={`pb-4 px-1 border-b-2 font-medium text-sm transition ${
+            className={`pb-4 px-1 border-b-2 font-medium text-sm transition flex items-center gap-2 cursor-pointer ${
               activeTab === "CERTIFICATES"
-                ? "border-blue-900 text-blue-900 font-bold"
+                ? "border-brand-500 text-brand-700 font-bold"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             }`}
           >
-            📜 Chứng chỉ của tôi ({certificates.length})
+            <Award size={16} />
+            <span>Chứng chỉ của tôi ({certificates.length})</span>
           </button>
           <button
             onClick={() => setActiveTab("COURSES")}
-            className={`pb-4 px-1 border-b-2 font-medium text-sm transition ${
+            className={`pb-4 px-1 border-b-2 font-medium text-sm transition flex items-center gap-2 cursor-pointer ${
               activeTab === "COURSES"
-                ? "border-blue-900 text-blue-900 font-bold"
+                ? "border-brand-500 text-brand-700 font-bold"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             }`}
           >
-            🎓 Khóa Bồi dưỡng & Đào tạo ({courses.length})
+            <GraduationCap size={16} />
+            <span>Khóa Bồi dưỡng & Đào tạo ({courses.length})</span>
           </button>
         </nav>
       </div>
@@ -489,9 +492,10 @@ export default function TrainingPersonalPage() {
                         href={cert.fileUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-blue-700 hover:text-blue-900 font-medium underline flex items-center gap-1"
+                        className="text-brand-600 hover:text-brand-700 font-medium underline flex items-center gap-1.5"
                       >
-                        📄 Xem file scan / minh chứng
+                        <FileText size={13} />
+                        <span>Xem file scan / minh chứng</span>
                       </a>
                     ) : (
                       <span className="text-gray-400 italic">Chưa đính kèm file</span>

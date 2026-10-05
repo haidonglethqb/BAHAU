@@ -71,32 +71,37 @@ export class ContractService {
     const isGlobalHR = currentUser?.roles.some((r) =>
       ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
     );
-    const isEmployeeOnly =
-      currentUser?.roles.length === 1 && currentUser.roles[0] === "ROLE_EMPLOYEE";
 
-    if (isEmployeeOnly && currentUser.employeeId) {
-      where.employeeId = currentUser.employeeId;
-    } else if (!isGlobalHR && currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
-      // Quản lý đơn vị: Chỉ xem hợp đồng thuộc đơn vị mình hoặc đơn vị con
-      const allAllowedUnitIds = new Set<string>();
-      for (const unitId of currentUser.unitsManaged) {
-        const descendantIds = await UnitService.getDescendantUnitIds(unitId);
-        descendantIds.forEach((id) => allAllowedUnitIds.add(id));
-      }
+    if (!isGlobalHR) {
+      if (currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
+        // Quản lý đơn vị: Chỉ xem hợp đồng thuộc đơn vị mình hoặc đơn vị con
+        const allAllowedUnitIds = new Set<string>();
+        for (const unitId of currentUser.unitsManaged) {
+          const descendantIds = await UnitService.getDescendantUnitIds(unitId);
+          descendantIds.forEach((id) => allAllowedUnitIds.add(id));
+        }
 
-      where.employee = {
-        assignments: {
-          some: {
-            unitId: { in: Array.from(allAllowedUnitIds) },
-            status: "ACTIVE",
+        where.employee = {
+          assignments: {
+            some: {
+              unitId: { in: Array.from(allAllowedUnitIds) },
+              status: "ACTIVE",
+            },
           },
-        },
-      };
-    }
+        };
 
-    // 2. Bộ lọc cụ thể từ client
-    if (query.employeeId) {
-      where.employeeId = query.employeeId;
+        if (query.employeeId) {
+          where.employeeId = query.employeeId;
+        }
+      } else {
+        // Cán bộ thông thường: Bắt buộc chỉ xem hợp đồng của chính mình
+        where.employeeId = currentUser?.employeeId || "__UNAUTHORIZED__";
+      }
+    } else {
+      // Global HR có thể lọc theo bất kỳ employeeId nào
+      if (query.employeeId) {
+        where.employeeId = query.employeeId;
+      }
     }
 
     if (query.status) {

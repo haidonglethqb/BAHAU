@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { FileText } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
 interface CertificateAdminItem {
@@ -201,13 +202,13 @@ export default function TrainingManagePage() {
     if (!alert) return null;
     switch (alert) {
       case "EXPIRED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-red-600 text-white">🔴 Quá hạn</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200"><span className="size-1.5 rounded-full bg-rose-600" /> Quá hạn</span>;
       case "CRITICAL_30":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-orange-100 text-orange-800 border border-orange-300">🟠 Còn {days} ngày</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200"><span className="size-1.5 rounded-full bg-rose-600" /> Còn {days} ngày</span>;
       case "WARNING_60":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">🟡 Còn {days} ngày</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-amber-300"><span className="size-1.5 rounded-full bg-amber-500" /> Còn {days} ngày</span>;
       case "VALID":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Còn hạn</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"><span className="size-1.5 rounded-full bg-emerald-600" /> Còn hạn</span>;
       default:
         return null;
     }
@@ -405,9 +406,10 @@ export default function TrainingManagePage() {
                           href={cert.fileUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-700 hover:text-blue-900 text-xs font-medium underline flex items-center gap-1"
+                          className="text-brand-600 hover:text-brand-700 text-xs font-medium underline flex items-center gap-1.5"
                         >
-                          🔗 Xem bản scan
+                          <FileText size={13} />
+                          <span>Xem bản scan</span>
                         </a>
                       ) : (
                         <span className="text-xs text-gray-400 italic">Chưa có</span>
@@ -482,9 +484,10 @@ export default function TrainingManagePage() {
                     href={selectedCert.fileUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-indigo-700 hover:text-indigo-900 font-bold underline flex items-center gap-1"
+                    className="text-brand-600 hover:text-brand-800 font-bold underline flex items-center gap-1.5"
                   >
-                    📄 Mở tệp scan minh chứng để đối chiếu bản gốc ↗
+                    <FileText size={13} />
+                    <span>Mở tệp scan minh chứng để đối chiếu bản gốc ↗</span>
                   </a>
                 </div>
               )}

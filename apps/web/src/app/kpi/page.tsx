@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ExternalLink, Lock } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface KpiCriterionItem {
@@ -424,8 +425,9 @@ export default function KpiPersonalPage() {
             </>
           )}
           {isReadOnly && (
-            <span className="rounded-lg bg-white/20 px-4 py-2 text-xs font-semibold text-white">
-              🔒 Phiếu đang trong giai đoạn thẩm định, không thể chỉnh sửa
+            <span className="rounded-lg bg-white/20 px-4 py-2 text-xs font-semibold text-white flex items-center gap-1.5">
+              <Lock size={14} />
+              <span>Phiếu đang trong giai đoạn thẩm định, không thể chỉnh sửa</span>
             </span>
           )}
         </div>
@@ -513,9 +515,10 @@ export default function KpiPersonalPage() {
                             href={criterion.evidenceUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="mt-1 text-[11px] text-blue-600 hover:underline inline-block"
+                            className="mt-1 text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1"
                           >
-                            🔗 Xem tài liệu minh chứng đã tải lên ↗
+                            <ExternalLink size={12} />
+                            <span>Xem tài liệu minh chứng đã tải lên</span>
                           </a>
                         )}
                       </div>

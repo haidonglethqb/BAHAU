@@ -54,15 +54,7 @@ export class EmployeeService {
       ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
     );
 
-    if (query.unitId) {
-      // Lọc theo đơn vị cụ thể
-      where.assignments = {
-        some: {
-          unitId: query.unitId,
-          status: "ACTIVE",
-        },
-      };
-    } else if (!isGlobalHR && currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
+    if (!isGlobalHR && currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
       // Trưởng đơn vị: Chỉ thấy nhân sự thuộc các đơn vị mình quản lý hoặc đơn vị con
       const allAllowedUnitIds = new Set<string>();
       for (const unitId of currentUser.unitsManaged) {
@@ -70,9 +62,29 @@ export class EmployeeService {
         descendantIds.forEach((id) => allAllowedUnitIds.add(id));
       }
 
+      if (query.unitId) {
+        if (!allAllowedUnitIds.has(query.unitId)) {
+          throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem danh sách nhân sự của đơn vị này.");
+        }
+        where.assignments = {
+          some: {
+            unitId: query.unitId,
+            status: "ACTIVE",
+          },
+        };
+      } else {
+        where.assignments = {
+          some: {
+            unitId: { in: Array.from(allAllowedUnitIds) },
+            status: "ACTIVE",
+          },
+        };
+      }
+    } else if (query.unitId) {
+      // Global HR hoặc cán bộ tra cứu theo đơn vị
       where.assignments = {
         some: {
-          unitId: { in: Array.from(allAllowedUnitIds) },
+          unitId: query.unitId,
           status: "ACTIVE",
         },
       };

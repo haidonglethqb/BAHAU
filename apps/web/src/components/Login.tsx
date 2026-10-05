@@ -1,14 +1,59 @@
+'use client'
+
 import { useState } from 'react'
-import { ArrowLeft, Building2, Lock, Mail } from 'lucide-react'
+import { ArrowLeft, Building2, Lock, Mail, ShieldCheck } from 'lucide-react'
 import { ROLES, type Role } from '../data'
 import { Button } from './ui'
+import { useAuth } from '../context/AuthContext'
+import { useRouter } from 'next/navigation'
 
-export function Login({ onLogin, onBack }: { onLogin: (r: Role) => void; onBack?: () => void }) {
+export function Login({
+  onLogin,
+  onBack,
+}: {
+  onLogin?: (r: Role) => void
+  onBack?: () => void
+}) {
+  const router = useRouter()
+  const { loginAsRole } = useAuth()
   const [remember, setRemember] = useState(true)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleRoleSelect = (roleKey: Role) => {
+    loginAsRole(roleKey)
+    if (onLogin) {
+      onLogin(roleKey)
+    } else {
+      router.push('/dashboard')
+    }
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    // Map email or default to cbgv
+    let matchedRole: Role = 'cbgv'
+    if (email.includes('rector') || email.includes('dung.hd')) matchedRole = 'hieutruong'
+    else if (email.includes('hr') || email.includes('cuong.lm') || email.includes('tchc')) matchedRole = 'tchc'
+    else if (email.includes('admin') || email.includes('quantri')) matchedRole = 'admin'
+    else if (email.includes('dean') || email.includes('binh.tt') || email.includes('truongkhoa')) matchedRole = 'truongkhoa'
+
+    loginAsRole(matchedRole)
+    setTimeout(() => {
+      setLoading(false)
+      if (onLogin) {
+        onLogin(matchedRole)
+      } else {
+        router.push('/dashboard')
+      }
+    }, 400)
+  }
 
   return (
     <div className="grid min-h-screen lg:grid-cols-[45%_55%]">
-      {/* Left — brand column */}
+      {/* Left — Brand Column */}
       <div className="relative hidden overflow-hidden bg-brand-500 lg:block select-none">
         <div
           className="absolute inset-0 opacity-[0.12]"
@@ -40,27 +85,40 @@ export function Login({ onLogin, onBack }: { onLogin: (r: Role) => void; onBack?
             </div>
           </div>
           <div>
-            <div className="mb-3 font-mono text-[12px] tracking-widest text-ochre-500">HỆ THỐNG QUẢN TRỊ NHÂN SỰ</div>
-            <h1 className="text-[52px] font-bold leading-none">BAHAU</h1>
+            <div className="mb-3 font-mono text-[12px] tracking-widest text-ochre-500 font-bold">
+              HỆ THỐNG QUẢN TRỊ NHÂN SỰ
+            </div>
+            <h1 className="text-[52px] font-bold leading-none tracking-tight">BAHAU</h1>
             <p className="mt-6 max-w-sm text-[15px] leading-relaxed text-brand-100">
               Nền tảng quản lý nhân sự thông minh cho toàn trường — từ hồ sơ cá nhân đến điều hành cấp Ban Giám hiệu.
             </p>
           </div>
-          <div className="font-mono text-[13px] tracking-wide text-brand-200">Sáng tạo — Trách nhiệm — Nhân văn</div>
+          <div className="font-mono text-[13px] tracking-wide text-brand-200 flex items-center gap-2">
+            <ShieldCheck size={16} />
+            <span>Sáng tạo — Trách nhiệm — Nhân văn</span>
+          </div>
         </div>
       </div>
 
-      {/* Right — form column */}
+      {/* Right — Form Column */}
       <div className="flex items-center justify-center bg-canvas px-6 py-12">
         <div className="w-full max-w-[420px]">
-          {onBack && (
+          {onBack ? (
             <button
               onClick={onBack}
-              className="mb-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink"
+              className="mb-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink cursor-pointer"
+            >
+              <ArrowLeft size={15} /> Về trang chủ
+            </button>
+          ) : (
+            <button
+              onClick={() => router.push('/')}
+              className="mb-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink cursor-pointer"
             >
               <ArrowLeft size={15} /> Về trang chủ
             </button>
           )}
+
           <div className="mb-8 flex items-center gap-3 lg:hidden">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-brand-500 text-white">
               <Building2 size={22} />
@@ -68,24 +126,32 @@ export function Login({ onLogin, onBack }: { onLogin: (r: Role) => void; onBack?
             <span className="text-2xl font-bold text-brand-500">BAHAU</span>
           </div>
 
-          <div className="rounded-2xl border border-line bg-surface p-8 shadow-[0_4px_12px_-2px_rgba(0,0,0,0.06)]">
+          <div className="rounded-2xl border border-line bg-surface p-8 shadow-xs">
             <div className="mb-6">
               <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 ring-1 ring-brand-200">
                 <Building2 size={20} className="text-brand-500" />
               </div>
               <h2 className="text-[22px] font-bold text-ink">Đăng nhập hệ thống</h2>
-              <p className="mt-1 text-[14px] text-muted">Sử dụng tài khoản công tác để tiếp tục.</p>
+              <p className="mt-1 text-[13px] text-muted">Sử dụng tài khoản công tác (@dau.edu.vn) để tiếp tục.</p>
             </div>
 
-            <form
-              className="space-y-4"
-              onSubmit={(e) => {
-                e.preventDefault()
-                onLogin('cbgv')
-              }}
-            >
-              <Field label="Email công tác" icon={<Mail size={16} />} placeholder="hoten@dau.edu.vn" type="email" />
-              <Field label="Mật khẩu" icon={<Lock size={16} />} placeholder="••••••••" type="password" />
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <Field
+                label="Email công tác"
+                icon={<Mail size={16} />}
+                placeholder="hoten@dau.edu.vn"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Field
+                label="Mật khẩu"
+                icon={<Lock size={16} />}
+                placeholder="••••••••"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
               <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-muted">
                 <input
                   type="checkbox"
@@ -95,19 +161,21 @@ export function Login({ onLogin, onBack }: { onLogin: (r: Role) => void; onBack?
                 />
                 Ghi nhớ đăng nhập trên thiết bị này
               </label>
-              <Button className="w-full" type="submit">
+              <Button className="w-full" type="submit" loading={loading}>
                 Đăng nhập
               </Button>
             </form>
 
             <div className="mt-7 border-t border-line pt-5">
-              <div className="mb-3 font-mono text-[11px] tracking-wider text-muted">DEMO — ĐĂNG NHẬP NHANH THEO VAI TRÒ</div>
+              <div className="mb-3 font-mono text-[10px] font-bold uppercase tracking-wider text-muted">
+                DEMO — ĐĂNG NHẬP NHANH THEO VAI TRÒ
+              </div>
               <div className="flex flex-wrap gap-2">
                 {ROLES.map((r) => (
                   <button
                     key={r.id}
-                    onClick={() => onLogin(r.id)}
-                    className="rounded-full border border-line bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition-colors duration-150 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-500"
+                    onClick={() => handleRoleSelect(r.id)}
+                    className="rounded-full border border-line bg-white px-3 py-1.5 text-[12px] font-medium text-slate-700 transition-colors duration-150 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-600 cursor-pointer shadow-2xs"
                   >
                     {r.label}
                   </button>
@@ -122,7 +190,11 @@ export function Login({ onLogin, onBack }: { onLogin: (r: Role) => void; onBack?
   )
 }
 
-function Field({ label, icon, ...props }: { label: string; icon: React.ReactNode } & React.InputHTMLAttributes<HTMLInputElement>) {
+function Field({
+  label,
+  icon,
+  ...props
+}: { label: string; icon: React.ReactNode } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-[13px] font-medium text-ink">{label}</span>

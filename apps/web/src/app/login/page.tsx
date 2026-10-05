@@ -7,7 +7,7 @@ export default function LoginPage() {
   const router = useRouter()
   return (
     <Login
-      onLogin={() => router.push('/profile')}
+      onLogin={() => router.push('/dashboard')}
       onBack={() => router.push('/')}
     />
   )
