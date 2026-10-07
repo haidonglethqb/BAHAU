@@ -1,8 +1,13 @@
 import { prisma } from "@bahau/database";
+import { PkiService } from "./pki.service.js";
+import { PdfExportService } from "./pdf-export.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
 import type {
   SalaryIncrementCandidateDto,
   OfficialResolutionResponse,
   GenerateResolutionInput,
+  SignedResolutionResponse,
+  ResolutionVerificationResponse,
 } from "@bahau/contracts";
 
 export class ExecutiveService {
@@ -234,5 +239,63 @@ export class ExecutiveService {
       recipients,
       fullFormattedDocument: documentText,
     };
+  }
+
+  // Kho lưu trữ văn bản quyết định đã ký số trong phiên làm việc
+  private static resolutionsStore = new Map<string, SignedResolutionResponse>();
+
+  /**
+   * Ký số điện tử vào văn bản quyết định và sinh mã QR Code tra cứu
+   */
+  public static async signResolution(
+    doc: OfficialResolutionResponse
+  ): Promise<SignedResolutionResponse> {
+    const signature = PkiService.signResolution(doc);
+    const verificationUrl = `http://localhost:3000/verify/${encodeURIComponent(doc.resolutionNumber)}`;
+    const qrCodeDataUrl = await PdfExportService.generateQrDataUrl(verificationUrl);
+
+    const signedDoc: SignedResolutionResponse = {
+      ...doc,
+      signature,
+      verificationUrl,
+      qrCodeDataUrl,
+    };
+
+    this.resolutionsStore.set(doc.resolutionNumber, signedDoc);
+    return signedDoc;
+  }
+
+  /**
+   * Lấy văn bản quyết định đã lưu
+   */
+  public static getResolutionByNumber(resolutionNumber: string): SignedResolutionResponse | null {
+    return this.resolutionsStore.get(resolutionNumber) || null;
+  }
+
+  /**
+   * Xác thực tính toàn vẹn và chữ ký số của văn bản quyết định (Public Verification)
+   */
+  public static verifyResolutionByNumber(
+    resolutionNumber: string
+  ): ResolutionVerificationResponse {
+    const doc = this.resolutionsStore.get(resolutionNumber);
+    if (!doc || !doc.signature) {
+      throw new AppError(
+        404,
+        "NOT_FOUND",
+        `Không tìm thấy quyết định số ${resolutionNumber} trong kho lưu trữ văn thư điện tử Nhà trường.`
+      );
+    }
+
+    return PkiService.verifyResolution(doc, doc.signature);
+  }
+
+  /**
+   * Xuất file PDF A4 chuẩn Nghị định 30 có chữ ký số và mã QR
+   */
+  public static async exportResolutionPdf(
+    doc: SignedResolutionResponse
+  ): Promise<Uint8Array> {
+    return await PdfExportService.generateResolutionPdf(doc);
   }
 }

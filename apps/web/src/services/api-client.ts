@@ -372,6 +372,42 @@ class ApiClient {
         body: JSON.stringify(data),
       })
     },
+
+    signResolution: async (resolution: any) => {
+      return await this.request('/api/v1/executive/sign-resolution', {
+        method: 'POST',
+        body: JSON.stringify(resolution),
+      })
+    },
+
+    exportPdf: async (resolution: any): Promise<Blob | null> => {
+      try {
+        const url = `${this.baseUrl}/api/v1/executive/export-pdf`
+        const headers = new Headers({
+          'Content-Type': 'application/json',
+        })
+        const sessionId = this.getSessionId()
+        if (sessionId) {
+          headers.set('Authorization', `Bearer ${sessionId}`)
+        }
+        const res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(resolution),
+        })
+        if (!res.ok) return null
+        return await res.blob()
+      } catch (e) {
+        console.error('[ApiClient] Failed to export PDF:', e)
+        return null
+      }
+    },
+
+    verifyResolution: async (resolutionNumber: string) => {
+      return await this.request(`/api/v1/executive/verify/${encodeURIComponent(resolutionNumber)}`, {
+        method: 'GET',
+      })
+    },
   }
 }
 

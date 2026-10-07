@@ -53,6 +53,7 @@ export const ResolutionArticleSchema = z.object({
 });
 
 export const OfficialResolutionResponseSchema = z.object({
+  id: z.string().optional(),
   resolutionNumber: z.string(),
   organizationName: z.string().default("TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG"),
   signDate: z.string(),
@@ -66,3 +67,48 @@ export const OfficialResolutionResponseSchema = z.object({
 });
 
 export type OfficialResolutionResponse = z.infer<typeof OfficialResolutionResponseSchema>;
+
+// =============================================================================
+// DIGITAL SIGNATURE & VERIFICATION SCHEMAS (LUẬT GIAO DỊCH ĐIỆN TỬ & NĐ 130/2018)
+// =============================================================================
+
+export const DigitalSignatureInfoSchema = z.object({
+  signerName: z.string().default("GS.TS. Nguyễn Hiệu Trưởng"),
+  signerPosition: z.string().default("Hiệu trưởng"),
+  organization: z.string().default("Trường Đại học Kiến trúc Đà Nẵng"),
+  certificateSerial: z.string(),
+  signatureAlgorithm: z.string().default("SHA256withRSA"),
+  signatureValue: z.string(),
+  signedAt: z.string(),
+  documentHash: z.string(),
+  isInstitutionalSealApplied: z.boolean().default(true),
+});
+
+export type DigitalSignatureInfo = z.infer<typeof DigitalSignatureInfoSchema>;
+
+export const SignedResolutionResponseSchema = OfficialResolutionResponseSchema.extend({
+  signature: DigitalSignatureInfoSchema.optional(),
+  verificationUrl: z.string().optional(),
+  qrCodeDataUrl: z.string().optional(),
+});
+
+export type SignedResolutionResponse = z.infer<typeof SignedResolutionResponseSchema>;
+
+export const ResolutionVerificationResponseSchema = z.object({
+  isValid: z.boolean(),
+  isTampered: z.boolean(),
+  resolutionNumber: z.string(),
+  organizationName: z.string(),
+  title: z.string(),
+  signDate: z.string(),
+  signerName: z.string(),
+  signerPosition: z.string(),
+  certificateSerial: z.string(),
+  signedAt: z.string(),
+  documentHash: z.string(),
+  verificationUrl: z.string(),
+  message: z.string(),
+});
+
+export type ResolutionVerificationResponse = z.infer<typeof ResolutionVerificationResponseSchema>;
+

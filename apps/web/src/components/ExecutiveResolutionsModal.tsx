@@ -5,10 +5,14 @@ import {
   Award,
   CheckCircle2,
   Copy,
+  Download,
+  ExternalLink,
   FileSignature,
   FileText,
   Loader2,
+  QrCode,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Users,
   X,
@@ -55,7 +59,10 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
   const [selectedCandidate, setSelectedCandidate] = useState<any>(null)
   const [resolution, setResolution] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [isSigning, setIsSigning] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchCandidates = async () => {
@@ -74,6 +81,7 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
   const handleGenerateResolution = async (candidate: any) => {
     setSelectedCandidate(candidate)
     setLoading(true)
+    setExportError(null)
     try {
       const res = await apiClient.executive.generateResolution({
         type: 'SALARY_PROMOTION',
@@ -98,6 +106,59 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
       // Fallback
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSignResolution = async () => {
+    if (!resolution) return
+    setIsSigning(true)
+    setExportError(null)
+    try {
+      const res = await apiClient.executive.signResolution(resolution)
+      if (res.ok && res.data) {
+        setResolution(res.data)
+      } else {
+        setExportError(res.error || 'Ký số thất bại. Vui lòng kiểm tra chứng thư số.')
+      }
+    } catch (err: any) {
+      setExportError(err?.message || 'Có lỗi xảy ra khi ký số PKI')
+    } finally {
+      setIsSigning(false)
+    }
+  }
+
+  const handleExportPdf = async () => {
+    if (!resolution) return
+    setIsExporting(true)
+    setExportError(null)
+    try {
+      let currentRes = resolution
+      if (!currentRes.signature) {
+        const signRes = await apiClient.executive.signResolution(currentRes)
+        if (signRes.ok && signRes.data) {
+          currentRes = signRes.data
+          setResolution(currentRes)
+        }
+      }
+
+      const blob = await apiClient.executive.exportPdf(currentRes)
+      if (blob) {
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        const cleanNum = (currentRes.resolutionNumber || 'QD').replace(/[\/\\]/g, '-')
+        a.download = `Quyet-Dinh-${cleanNum}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+      } else {
+        setExportError('Không thể tạo file PDF. Vui lòng thử lại.')
+      }
+    } catch (err: any) {
+      setExportError(err?.message || 'Lỗi khi kết xuất file PDF')
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -200,23 +261,114 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
           {/* Generated Resolution Preview */}
           {resolution && (
             <div className="rounded-xl border border-brand-200 bg-slate-50/50 p-6 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <FileText size={18} className="text-brand-600" />
                   <h4 className="text-[15px] font-bold text-ink">
                     Văn bản Quyết định Hành chính chuẩn Nghị định 30/2020/NĐ-CP
                   </h4>
+                  {resolution.signature ? (
+                    <Badge tone="success" className="ml-1">Đã ký số PKI</Badge>
+                  ) : (
+                    <Badge tone="ochre" className="ml-1">Dự thảo chưa ký</Badge>
+                  )}
                 </div>
-                <div className="flex gap-2">
+
+                {/* Actions */}
+                <div className="flex flex-wrap items-center gap-2">
                   <Button variant="outline" size="sm" onClick={handleCopy}>
                     {copied ? <CheckCircle2 size={14} className="text-emerald-600" /> : <Copy size={14} />}
-                    {copied ? 'Đã sao chép' : 'Sao chép văn bản'}
+                    {copied ? 'Đã sao chép' : 'Sao chép'}
+                  </Button>
+
+                  {!resolution.signature ? (
+                    <Button
+                      size="sm"
+                      className="bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-sm"
+                      onClick={handleSignResolution}
+                      disabled={isSigning}
+                    >
+                      {isSigning ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                      {isSigning ? 'Đang ký số...' : 'Ký số Hiệu trưởng'}
+                    </Button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1">
+                      <CheckCircle2 size={14} /> Chữ ký hợp lệ
+                    </span>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={handleExportPdf}
+                    disabled={isExporting}
+                  >
+                    {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    {isExporting ? 'Đang kết xuất...' : 'Tải PDF Quyết định (NĐ 30)'}
                   </Button>
                 </div>
               </div>
 
+              {exportError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
+                  {exportError}
+                </div>
+              )}
+
+              {/* Digital Seal Stamp & QR Verification Card */}
+              {resolution.signature && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-xl border border-red-200 bg-red-50/50 p-4">
+                  {/* Institutional Seal Graphic */}
+                  <div className="md:col-span-2 flex items-center gap-4">
+                    <div className="relative flex h-24 w-24 shrink-0 flex-col items-center justify-center rounded-full border-2 border-dashed border-red-600 bg-white p-2 text-center text-red-700 shadow-sm">
+                      <div className="absolute inset-1 rounded-full border border-red-300 opacity-60 pointer-events-none"></div>
+                      <span className="text-[7.5px] font-extrabold uppercase tracking-tighter">BỘ GIÁO DỤC & ĐÀO TẠO</span>
+                      <span className="text-[8px] font-black uppercase text-red-600">ĐH KIẾN TRÚC ĐÀ NẴNG</span>
+                      <span className="mt-0.5 rounded bg-red-600 px-1 py-0.5 text-[7px] font-bold text-white uppercase">ĐÃ KÝ SỐ</span>
+                    </div>
+                    <div className="space-y-1 text-[12px]">
+                      <div className="flex items-center gap-1.5 font-bold text-red-700">
+                        <ShieldCheck size={16} className="text-red-600" />
+                        <span>Văn bản đã được ký số điện tử hợp lệ</span>
+                      </div>
+                      <div className="text-slate-600 space-y-0.5">
+                        <p><span className="font-semibold text-slate-700">Người ký:</span> {resolution.signature.signerName} ({resolution.signature.signerPosition})</p>
+                        <p><span className="font-semibold text-slate-700">Cơ quan:</span> {resolution.signature.organization}</p>
+                        <p><span className="font-semibold text-slate-700">Thời gian:</span> {resolution.signature.signedAt}</p>
+                        <p className="font-mono text-[11px] text-slate-500">
+                          <span className="font-semibold">Serial:</span> {resolution.signature.certificateSerial} &bull; <span className="font-semibold">Thuật toán:</span> {resolution.signature.signatureAlgorithm}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* QR Code Verification Preview */}
+                  <div className="flex flex-col items-center justify-center border-t md:border-t-0 md:border-l border-red-200 pl-0 md:pl-4 pt-3 md:pt-0">
+                    {resolution.qrCodeDataUrl ? (
+                      <img
+                        src={resolution.qrCodeDataUrl}
+                        alt="QR Code Xác thực Quyết định"
+                        className="h-20 w-20 rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-slate-300 bg-white">
+                        <QrCode size={36} className="text-slate-400" />
+                      </div>
+                    )}
+                    <a
+                      href={`/verify/${encodeURIComponent(resolution.resolutionNumber)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-brand-600 hover:text-brand-800 hover:underline"
+                    >
+                      Tra cứu xác thực <ExternalLink size={12} />
+                    </a>
+                  </div>
+                </div>
+              )}
+
               {/* Resolution Box Styled Like Official Document */}
-              <div className="rounded-xl border border-slate-300 bg-white p-6 shadow-inner font-mono text-[12px] leading-relaxed text-slate-800 whitespace-pre-wrap max-h-[380px] overflow-y-auto">
+              <div className="rounded-xl border border-slate-300 bg-white p-6 shadow-inner font-mono text-[12px] leading-relaxed text-slate-800 whitespace-pre-wrap max-h-[360px] overflow-y-auto">
                 {resolution.fullFormattedDocument}
               </div>
             </div>
