@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Download,
   FileSpreadsheet,
+  Loader2,
   Printer,
   ShieldCheck,
   X,
@@ -18,6 +19,7 @@ interface PayslipModalProps {
 }
 
 export function PayslipModal({ onClose }: { onClose: () => void }) {
+  const [downloading, setDownloading] = useState(false)
   const [payslip, setPayslip] = useState<any>({
     month: 9,
     year: 2026,
@@ -30,6 +32,10 @@ export function PayslipModal({ onClose }: { onClose: () => void }) {
     leadershipAllowance: 0,
     seniorityAllowance: 699192,
     pedagogicalAllowance: 3495960,
+    standardWorkDays: 22,
+    actualWorkDays: 21,
+    unpaidLeaveDays: 1,
+    workDaysDeduction: 529691,
     kpiRanking: 'A',
     kpiBonusCoefficient: 1.3,
     kpiExtraIncome: 5200000,
@@ -187,9 +193,38 @@ export function PayslipModal({ onClose }: { onClose: () => void }) {
           <span className="text-[11px] text-muted flex items-center gap-1">
             <ShieldCheck size={14} className="text-emerald-600" /> Ký số bởi Kế toán trưởng DAU
           </span>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={downloading}
+              onClick={async () => {
+                setDownloading(true)
+                try {
+                  const blob = await apiClient.payroll.exportPayslipPdf(
+                    payslip.employeeId || 'my',
+                    payslip.month,
+                    payslip.year
+                  )
+                  if (blob) {
+                    const url = window.URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `Phieu-Luong-${payslip.employeeCode || 'CBGV'}-T${payslip.month}-${payslip.year}.pdf`
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    window.URL.revokeObjectURL(url)
+                  }
+                } finally {
+                  setDownloading(false)
+                }
+              }}
+            >
+              {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+              Tải PDF
+            </Button>
             <Button variant="outline" onClick={() => window.print()}>
-              <Printer size={15} /> In phiếu lương
+              <Printer size={15} /> In
             </Button>
             <Button onClick={onClose}>Đóng</Button>
           </div>

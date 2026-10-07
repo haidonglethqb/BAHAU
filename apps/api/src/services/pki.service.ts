@@ -92,6 +92,29 @@ export class PkiService {
   }
 
   /**
+   * Ký số bất kỳ chuỗi dữ liệu nào bằng RSA-2048 / SHA-256 (ví dụ: Quyết toán kỳ lương)
+   */
+  public static signData(text: string): {
+    signatureValue: string;
+    documentHash: string;
+    certificateSerial: string;
+    signedAt: string;
+  } {
+    const { privateKey } = this.getKeyPair();
+    const documentHash = this.computeHash(text);
+    const signer = crypto.createSign("SHA256");
+    signer.update(text, "utf8");
+    signer.end();
+    const signatureValue = signer.sign(privateKey, "base64");
+    return {
+      signatureValue,
+      documentHash,
+      certificateSerial: this.rectorCertSerial,
+      signedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Kiểm tra tính hợp lệ và nguyên vẹn của chữ ký số (Chống can thiệp sửa đổi)
    */
   public static verifyResolution(

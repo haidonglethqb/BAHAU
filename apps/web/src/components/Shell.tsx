@@ -77,6 +77,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/employees', label: 'Danh bạ CBGV', icon: <Users size={18} /> },
       { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} /> },
+      { href: '/payroll', label: 'Bảng lương Toàn trường', icon: <Banknote size={18} /> },
       { href: '/approvals', label: 'Hộp thư phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox' },
       { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
     ],

@@ -347,6 +347,58 @@ class ApiClient {
         method: 'GET',
       })
     },
+
+    getPayrollTable: async (params?: { month?: number; year?: number; unitName?: string; search?: string }) => {
+      const month = params?.month || 9
+      const year = params?.year || 2026
+      let query = `month=${month}&year=${year}`
+      if (params?.unitName) query += `&unitName=${encodeURIComponent(params.unitName)}`
+      if (params?.search) query += `&search=${encodeURIComponent(params.search)}`
+      return await this.request(`/api/v1/payroll/table?${query}`, {
+        method: 'GET',
+      })
+    },
+
+    calculatePeriod: async (month = 9, year = 2026, recalculate = false) => {
+      return await this.request('/api/v1/payroll/calculate', {
+        method: 'POST',
+        body: JSON.stringify({ month, year, recalculate }),
+      })
+    },
+
+    submitPeriod: async (month = 9, year = 2026) => {
+      return await this.request('/api/v1/payroll/submit', {
+        method: 'POST',
+        body: JSON.stringify({ month, year }),
+      })
+    },
+
+    approvePeriod: async (month = 9, year = 2026, pkiSignature?: string) => {
+      return await this.request('/api/v1/payroll/approve', {
+        method: 'POST',
+        body: JSON.stringify({ month, year, pkiSignature }),
+      })
+    },
+
+    exportPayslipPdf: async (employeeId = 'my', month = 9, year = 2026): Promise<Blob | null> => {
+      try {
+        const url = `${this.baseUrl}/api/v1/payroll/payslip/${encodeURIComponent(employeeId)}/pdf?month=${month}&year=${year}`
+        const headers = new Headers()
+        const sessionId = this.getSessionId()
+        if (sessionId) {
+          headers.set('Authorization', `Bearer ${sessionId}`)
+        }
+        const res = await fetch(url, {
+          method: 'GET',
+          headers,
+        })
+        if (!res.ok) return null
+        return await res.blob()
+      } catch (e) {
+        console.error('[ApiClient] Failed to export payslip PDF:', e)
+        return null
+      }
+    },
   }
 
   // ===========================================================================
