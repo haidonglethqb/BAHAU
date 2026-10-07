@@ -26,7 +26,8 @@
     "test:upgrades": "node tests/business-upgrades-endpoints.test.mjs",
     "test:pki": "node tests/digital-signature-pdf.test.mjs",
     "test:payroll": "node tests/payroll-engine.test.mjs",
-    "test:phases": "node tests/leave-workflow-endpoints.test.mjs && node tests/contract-events-endpoints.test.mjs && node tests/attendance-endpoints.test.mjs && node tests/kpi-endpoints.test.mjs && node tests/training-endpoints.test.mjs && node tests/dashboard-ai-endpoints.test.mjs && node tests/business-upgrades-endpoints.test.mjs && node tests/security-verification.test.mjs && node tests/digital-signature-pdf.test.mjs && node tests/payroll-engine.test.mjs"
+    "test:kpi-academic": "node tests/kpi-council-academic.test.mjs",
+    "test:phases": "node tests/leave-workflow-endpoints.test.mjs && node tests/contract-events-endpoints.test.mjs && node tests/attendance-endpoints.test.mjs && node tests/kpi-endpoints.test.mjs && node tests/training-endpoints.test.mjs && node tests/dashboard-ai-endpoints.test.mjs && node tests/business-upgrades-endpoints.test.mjs && node tests/security-verification.test.mjs && node tests/digital-signature-pdf.test.mjs && node tests/payroll-engine.test.mjs && node tests/kpi-council-academic.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

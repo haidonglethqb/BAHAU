@@ -37,6 +37,71 @@ export const KpiRankingEnum = z.enum([
 
 export type KpiRanking = z.infer<typeof KpiRankingEnum>;
 
+/**
+ * Danh hiệu Thi đua Năm học theo Luật Thi đua, Khen thưởng 2022
+ * và Quy chế Thi đua - Khen thưởng Trường Đại học Kiến trúc Đà Nẵng
+ */
+export const AcademicHonorTitleEnum = z.enum([
+  "NONE",                     // Không đạt danh hiệu thi đua
+  "LAO_DONG_TIEN_TIEN",       // Lao động tiên tiến (>= 70đ, HTT nhiệm vụ trở lên)
+  "CHIEN_SI_THI_DUA_CO_SO",   // Chiến sĩ thi đua cơ sở (>= 90đ, HTXS nhiệm vụ + sáng kiến/đồ án, khống chế <= 15%)
+  "CHIEN_SI_THI_DUA_CAP_BO",  // Chiến sĩ thi đua cấp Bộ (3 năm liên tục đạt CSTĐCS)
+  "BANG_KHEN_BO_TRUONG",      // Bằng khen của Bộ trưởng Bộ GD&ĐT / Bộ Xây dựng
+]);
+
+export type AcademicHonorTitle = z.infer<typeof AcademicHonorTitleEnum>;
+
+/**
+ * 3 Trụ Cột Học thuật Đại học theo Thông tư 20/2020/TT-BGDĐT & NĐ 90/2020/NĐ-CP
+ */
+export const AcademicPillarCategoryEnum = z.enum([
+  "TEACHING",   // Trụ cột I: Đào tạo & Giảng dạy Studio (Tối đa 50 điểm)
+  "RESEARCH",   // Trụ cột II: NCKH & Sáng tác Kiến trúc (Tối đa 35 điểm)
+  "SERVICE",    // Trụ cột III: Phục vụ Cộng đồng & Quản trị Đoàn thể (Tối đa 15 điểm)
+]);
+
+export type AcademicPillarCategory = z.infer<typeof AcademicPillarCategoryEnum>;
+
+// =============================================================================
+// COUNCIL VOTING RECORD & PILLAR BREAKDOWN SCHEMAS
+// =============================================================================
+
+export const CouncilVotingRecordSchema = z.object({
+  votesYes: z.number().int(),
+  votesNo: z.number().int(),
+  totalVoters: z.number().int(),
+  approvalRatio: z.number(), // Tỷ lệ % tán thành (0 - 100)
+  proposedHonorTitle: AcademicHonorTitleEnum,
+  initiativeSummary: z.string().nullable().optional(),
+  councilMeetingDate: z.string().nullable().optional(),
+  votedAt: z.string().optional(),
+});
+
+export type CouncilVotingRecord = z.infer<typeof CouncilVotingRecordSchema>;
+
+export const AcademicPillarBreakdownDtoSchema = z.object({
+  teaching: z.object({
+    score: z.number(),
+    maxScore: z.number(),
+    quotaHours: z.number().optional(),
+    actualHours: z.number().optional(),
+    overtimeHours: z.number().optional(),
+  }),
+  research: z.object({
+    score: z.number(),
+    maxScore: z.number(),
+    papersCount: z.number().optional(),
+    projectsCount: z.number().optional(),
+  }),
+  service: z.object({
+    score: z.number(),
+    maxScore: z.number(),
+    activitiesCount: z.number().optional(),
+  }),
+});
+
+export type AcademicPillarBreakdownDto = z.infer<typeof AcademicPillarBreakdownDtoSchema>;
+
 // =============================================================================
 // DTO SCHEMAS
 // =============================================================================
@@ -50,6 +115,7 @@ export const KpiCriterionDtoSchema = z.object({
   description: z.string().nullable().optional(),
   maxScore: z.number(),
   weight: z.number(),
+  pillar: AcademicPillarCategoryEnum.optional(),
 });
 
 export type KpiCriterionDto = z.infer<typeof KpiCriterionDtoSchema>;
@@ -78,6 +144,9 @@ export const KpiPeriodDtoSchema = z.object({
   totalEvaluations: z.number().optional(),
   submittedCount: z.number().optional(),
   finalizedCount: z.number().optional(),
+  isPkiSigned: z.boolean().optional(),
+  pkiSignature: z.string().nullable().optional(),
+  pkiSignedAt: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -88,6 +157,7 @@ export const KpiEvaluationItemDtoSchema = z.object({
   criterionId: z.string().uuid(),
   criterionName: z.string().optional(),
   category: z.string().optional(),
+  pillar: AcademicPillarCategoryEnum.optional(),
   maxScore: z.number().optional(),
   selfScore: z.number().nullable().optional(),
   managerScore: z.number().nullable().optional(),
@@ -115,10 +185,21 @@ export const KpiEvaluationDtoSchema = z.object({
   managerEmployeeId: z.string().uuid().nullable().optional(),
   managerName: z.string().nullable().optional(),
   status: KpiEvaluationStatusEnum,
+  // Điểm tổng quát
   totalSelfScore: z.number().nullable().optional(),
   totalManagerScore: z.number().nullable().optional(),
   totalFinalScore: z.number().nullable().optional(),
   ranking: KpiRankingEnum.nullable().optional(),
+  // Điểm 3 Trụ cột học thuật (Academic Pillars)
+  teachingScore: z.number().nullable().optional(),
+  researchScore: z.number().nullable().optional(),
+  serviceScore: z.number().nullable().optional(),
+  // Thi đua khen thưởng & Hội đồng biểu quyết
+  honorTitle: AcademicHonorTitleEnum.nullable().optional(),
+  councilVote: CouncilVotingRecordSchema.nullable().optional(),
+  pkiSignature: z.string().nullable().optional(),
+  pkiSignedAt: z.string().nullable().optional(),
+  // Nhận xét
   managerComment: z.string().nullable().optional(),
   councilComment: z.string().nullable().optional(),
   submittedAt: z.string().nullable().optional(),
@@ -133,9 +214,31 @@ export const KpiEvaluationDetailDtoSchema = z.object({
   evaluation: KpiEvaluationDtoSchema,
   template: KpiTemplateDtoSchema,
   items: z.array(KpiEvaluationItemDtoSchema),
+  pillarBreakdown: AcademicPillarBreakdownDtoSchema.optional(),
 });
 
 export type KpiEvaluationDetailDto = z.infer<typeof KpiEvaluationDetailDtoSchema>;
+
+export const CouncilSummaryReportDtoSchema = z.object({
+  periodId: z.string().uuid(),
+  periodName: z.string(),
+  academicYear: z.string(),
+  totalFaculty: z.number(),
+  excellentCount: z.number(),
+  goodCount: z.number(),
+  satisfactoryCount: z.number(),
+  unsatisfactoryCount: z.number(),
+  laoDongTienTienCount: z.number(),
+  chienSiThiDuaCoSoCount: z.number(),
+  cstcRatio: z.number(),
+  isCstcRatioCompliant: z.boolean(),
+  isPkiSigned: z.boolean(),
+  pkiSignature: z.string().nullable().optional(),
+  pkiSignedAt: z.string().nullable().optional(),
+  evaluations: z.array(KpiEvaluationDtoSchema).optional(),
+});
+
+export type CouncilSummaryReportDto = z.infer<typeof CouncilSummaryReportDtoSchema>;
 
 // =============================================================================
 // INPUT REQUEST SCHEMAS
@@ -179,19 +282,39 @@ export const ScoreManagerEvaluationSchema = z.object({
 
 export type ScoreManagerEvaluationInput = z.infer<typeof ScoreManagerEvaluationSchema>;
 
+export const CouncilVoteInputSchema = z.object({
+  votesYes: z.coerce.number().int().min(0, "Số phiếu tán thành không được âm"),
+  totalVoters: z.coerce.number().int().min(1, "Tổng số thành viên hội đồng tối thiểu là 1"),
+  proposedHonorTitle: AcademicHonorTitleEnum,
+  initiativeSummary: z.string().optional().nullable(),
+  councilMeetingDate: z.string().optional().nullable(),
+});
+
+export type CouncilVoteInput = z.infer<typeof CouncilVoteInputSchema>;
+
 export const FinalizeCouncilEvaluationSchema = z.object({
   finalScore: z.coerce.number().min(0).max(100, "Điểm tổng kết cuối cùng phải từ 0 đến 100"),
   ranking: KpiRankingEnum,
+  honorTitle: AcademicHonorTitleEnum.optional().nullable(),
   councilComment: z.string().optional().nullable(),
 });
 
 export type FinalizeCouncilEvaluationInput = z.infer<typeof FinalizeCouncilEvaluationSchema>;
+
+export const FinalizePeriodWithPkiInputSchema = z.object({
+  signerEmployeeId: z.string().uuid().optional(),
+  signerName: z.string().optional(),
+  notes: z.string().optional().nullable(),
+});
+
+export type FinalizePeriodWithPkiInput = z.infer<typeof FinalizePeriodWithPkiInputSchema>;
 
 export const KpiFilterQuerySchema = z.object({
   periodId: z.string().uuid().optional(),
   unitId: z.string().uuid().optional(),
   targetType: KpiTargetTypeEnum.optional(),
   ranking: KpiRankingEnum.optional(),
+  honorTitle: AcademicHonorTitleEnum.optional(),
   status: KpiEvaluationStatusEnum.optional(),
   search: z.string().optional(),
 });

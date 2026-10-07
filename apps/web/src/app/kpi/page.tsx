@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Lock } from "lucide-react";
+import {
+  ExternalLink,
+  Lock,
+  Award,
+  BookOpen,
+  Compass,
+  CheckCircle2,
+  FileText,
+  Building2,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface KpiCriterionItem {
@@ -9,6 +20,7 @@ interface KpiCriterionItem {
   criterionId: string;
   criterionName: string;
   category: string;
+  pillar?: "TEACHING" | "RESEARCH" | "SERVICE";
   maxScore: number;
   selfScore?: number | null;
   managerScore?: number | null;
@@ -37,6 +49,20 @@ interface KpiEvaluation {
   totalManagerScore?: number | null;
   totalFinalScore?: number | null;
   ranking?: "EXCELLENT" | "GOOD" | "SATISFACTORY" | "UNSATISFACTORY" | null;
+  teachingScore?: number | null;
+  researchScore?: number | null;
+  serviceScore?: number | null;
+  honorTitle?: string | null;
+  councilVote?: {
+    votesYes: number;
+    votesNo: number;
+    totalVoters: number;
+    approvalRatio: number;
+    proposedHonorTitle: string;
+    initiativeSummary?: string | null;
+  } | null;
+  pkiSignature?: string | null;
+  pkiSignedAt?: string | null;
   managerComment?: string | null;
   councilComment?: string | null;
 }
@@ -49,108 +75,153 @@ interface PeriodOption {
 }
 
 const DEMO_PERIODS: PeriodOption[] = [
-  { id: "p1", code: "KPI-2025-2026", name: "Đánh giá & Xếp loại Cán bộ Năm học 2025-2026", status: "OPEN" },
+  { id: "00000000-0000-0000-0000-000000000001", code: "KPI-2025-2026", name: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026", status: "OPEN" },
 ];
 
 const DEMO_EVALUATION: KpiEvaluation = {
-  id: "eval-1",
-  periodId: "p1",
-  periodName: "Đánh giá & Xếp loại Cán bộ Năm học 2025-2026",
+  id: "eval-dau-001",
+  periodId: "00000000-0000-0000-0000-000000000001",
+  periodName: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
   academicYear: "2025-2026",
-  templateId: "tmpl-lecturer",
-  templateName: "Tiêu chuẩn Đánh giá & Xếp loại Giảng viên DAU",
+  templateId: "00000000-0000-0000-0000-000000000001",
+  templateName: "Bộ Tiêu chuẩn 3 Trụ Cột Đánh giá Giảng viên DAU",
   targetType: "LECTURER",
-  employeeId: "emp-1",
-  employeeCode: "DAU240001",
-  employeeName: "ThS. Đỗ Tuấn Kiệt",
+  employeeId: "DAU260001-ID",
+  employeeCode: "DAU260001",
+  employeeName: "PGS.TS. Trần Thị Bình",
   unitName: "Khoa Kiến trúc",
-  positionName: "Giảng viên",
-  managerName: "PGS.TS. Trần Quốc Hùng",
+  positionName: "Trưởng khoa",
+  managerName: "GS.TS. Nguyễn Hiệu Trưởng",
   status: "SUBMITTED",
-  totalSelfScore: 92.5,
-  totalManagerScore: null,
+  totalSelfScore: 94.0,
+  totalManagerScore: 95.0,
   totalFinalScore: null,
-  ranking: null,
+  ranking: "EXCELLENT",
+  teachingScore: 48.0,
+  researchScore: 32.0,
+  serviceScore: 14.0,
+  honorTitle: "CHIEN_SI_THI_DUA_CO_SO",
 };
 
 const DEMO_ITEMS: KpiCriterionItem[] = [
+  // TRỤ CỘT 1 (50 điểm)
   {
-    criterionId: "c1",
-    criterionName: "Hoàn thành định mức khối lượng giờ giảng",
-    category: "Công tác Giảng dạy & Giáo dục",
-    maxScore: 20,
-    selfScore: 19.5,
-    selfNote: "Giảng dạy 320 tiết chuẩn (vượt 15% định mức giao)",
-    evidenceUrl: "https://dau.edu.vn/schedules/sem2-2026.pdf",
+    criterionId: "c-tea-1",
+    criterionName: "Định mức giờ chuẩn giảng dạy & hướng dẫn đồ án Studio (kết nối Trục 1 Workload)",
+    category: "TRỤ CỘT I: ĐÀO TẠO & GIẢNG DẠY STUDIO",
+    pillar: "TEACHING",
+    maxScore: 25,
+    selfScore: 25,
+    selfNote: "Tự động đồng bộ từ Trục 1 Workload: Hoàn thành 324/270 giờ chuẩn (Vượt 54.0h Studio xưởng)",
+    evidenceUrl: "https://dau.edu.vn/portfolios/dau260001-workload",
   },
   {
-    criterionId: "c2",
-    criterionName: "Chất lượng giảng dạy và đổi mới phương pháp",
-    category: "Công tác Giảng dạy & Giáo dục",
-    maxScore: 10,
-    selfScore: 9.5,
-    selfNote: "Áp dụng mô hình Studio Project kết hợp phần mềm mô phỏng BIM",
-    evidenceUrl: null,
-  },
-  {
-    criterionId: "c3",
-    criterionName: "Coi thi, chấm thi & hướng dẫn đồ án / NCKH sinh viên",
-    category: "Công tác Giảng dạy & Giáo dục",
-    maxScore: 10,
-    selfScore: 9.5,
-    selfNote: "Hướng dẫn 03 nhóm sinh viên đạt giải Nhì sinh viên NCKH cấp Khoa",
-    evidenceUrl: "https://dau.edu.vn/awards/student-research-2026.pdf",
-  },
-  {
-    criterionId: "c4",
-    criterionName: "Công bố bài báo khoa học quốc tế / Tạp chí chuyên ngành",
-    category: "Nghiên cứu Khoa học & Chuyển giao",
+    criterionId: "c-tea-2",
+    criterionName: "Hướng dẫn Đồ án tốt nghiệp KTS / Luận văn Thạc sĩ",
+    category: "TRỤ CỘT I: ĐÀO TẠO & GIẢNG DẠY STUDIO",
+    pillar: "TEACHING",
     maxScore: 15,
-    selfScore: 14.0,
-    selfNote: "Công bố 01 bài báo tạp chí Scopus Q2 về Kiến trúc Bền vững Miền Trung",
-    evidenceUrl: "https://dau.edu.vn/research/papers/sustainable-arch-2026.pdf",
+    selfScore: 14,
+    selfNote: "Hướng dẫn 05 sinh viên bảo vệ ĐATN KTS loại Giỏi; 01 học viên cao học đúng hạn",
+    evidenceUrl: "https://dau.edu.vn/thesis/arch-theses-2026",
   },
   {
-    criterionId: "c5",
-    criterionName: "Chủ trì / tham gia đề tài NCKH & biên soạn giáo trình",
-    category: "Nghiên cứu Khoa học & Chuyển giao",
+    criterionId: "c-tea-3",
+    criterionName: "Khảo thí, chấm thi vấn đáp & phản biện đồ án kiến trúc đúng quy chế",
+    category: "TRỤ CỘT I: ĐÀO TẠO & GIẢNG DẠY STUDIO",
+    pillar: "TEACHING",
+    maxScore: 5,
+    selfScore: 5,
+    selfNote: "Chấm phản biện 08 đồ án tốt nghiệp, tham gia Hội đồng bảo vệ đồ án KTS",
+    evidenceUrl: null,
+  },
+  {
+    criterionId: "c-tea-4",
+    criterionName: "Đổi mới phương pháp giảng dạy, ứng dụng BIM / Generative AI / Digital Design",
+    category: "TRỤ CỘT I: ĐÀO TẠO & GIẢNG DẠY STUDIO",
+    pillar: "TEACHING",
+    maxScore: 5,
+    selfScore: 4,
+    selfNote: "Ứng dụng phần mềm Autodesk Revit & AI Midjourney vào xưởng thiết kế đồ án Studio 5",
+    evidenceUrl: null,
+  },
+  // TRỤ CỘT 2 (35 điểm)
+  {
+    criterionId: "c-res-1",
+    criterionName: "Bài báo khoa học quốc tế WoS/Scopus hoặc Tạp chí chuyên ngành Hội KTS VN",
+    category: "TRỤ CỘT II: NCKH & SÁNG TÁC KIẾN TRÚC",
+    pillar: "RESEARCH",
     maxScore: 15,
-    selfScore: 13.5,
-    selfNote: "Tham gia biên soạn Giáo trình Cấu tạo Kiến trúc tập 2",
-    evidenceUrl: null,
+    selfScore: 14,
+    selfNote: "01 bài báo Q2 Scopus về thích ứng khí hậu ven biển Đà Nẵng; 01 bài Tạp chí Kiến trúc",
+    evidenceUrl: "https://doi.org/10.1016/j.sustainable-architecture.2026",
   },
   {
-    criterionId: "c6",
-    criterionName: "Cố vấn học tập, tuyển sinh & hoạt động đoàn thể",
-    category: "Phục vụ Cộng đồng & Nhà trường",
+    criterionId: "c-res-2",
+    criterionName: "Công trình kiến trúc thực tế được nghiệm thu / Đạt giải thưởng kiến trúc",
+    category: "TRỤ CỘT II: NCKH & SÁNG TÁC KIẾN TRÚC",
+    pillar: "RESEARCH",
     maxScore: 10,
-    selfScore: 9.5,
-    selfNote: "Cố vấn học tập lớp 22KT1, tham gia đoàn tư vấn tuyển sinh THPT",
+    selfScore: 9,
+    selfNote: "Công trình Trung tâm Văn hóa Di sản Hội An đạt Giải Nhì - Giải thưởng Kiến trúc Quốc gia",
+    evidenceUrl: "https://ashui.com/awards/heritage-cultural-center-2026",
+  },
+  {
+    criterionId: "c-res-3",
+    criterionName: "Chủ trì hoặc tham gia đề tài NCKH các cấp (Bộ, Tỉnh/Thành phố, Cơ sở)",
+    category: "TRỤ CỘT II: NCKH & SÁNG TÁC KIẾN TRÚC",
+    pillar: "RESEARCH",
+    maxScore: 5,
+    selfScore: 5,
+    selfNote: "Chủ nhiệm đề tài cấp Thành phố: Đánh giá vi khí hậu đô thị ven sông Hàn Đà Nẵng",
     evidenceUrl: null,
   },
   {
-    criterionId: "c7",
-    criterionName: "Bồi dưỡng chuyên môn & kết nối doanh nghiệp",
-    category: "Phục vụ Cộng đồng & Nhà trường",
+    criterionId: "c-res-4",
+    criterionName: "Biên soạn giáo trình, sách chuyên khảo, bài giảng chuyên đề có mã số ISBN",
+    category: "TRỤ CỘT II: NCKH & SÁNG TÁC KIẾN TRÚC",
+    pillar: "RESEARCH",
+    maxScore: 5,
+    selfScore: 4,
+    selfNote: "Đồng tác giả Sách chuyên khảo 'Hình thái học Đô thị sinh thái Miền Trung' - NXB Xây dựng",
+    evidenceUrl: null,
+  },
+  // TRỤ CỘT 3 (15 điểm)
+  {
+    criterionId: "c-ser-1",
+    criterionName: "Cố vấn học tập, hướng dẫn SV tham gia Festival Sinh viên Kiến trúc toàn quốc",
+    category: "TRỤ CỘT III: PHỤC VỤ CỘNG ĐỒNG & QUẢN TRỊ ĐOÀN THỂ",
+    pillar: "SERVICE",
+    maxScore: 5,
+    selfScore: 5,
+    selfNote: "Trưởng đoàn dẫn dắt đội tuyển sinh viên DAU tham gia Festival KTS toàn quốc đạt 2 giải A",
+    evidenceUrl: "https://dau.edu.vn/news/festival-kien-truc-2026",
+  },
+  {
+    criterionId: "c-ser-2",
+    criterionName: "Tư vấn thiết kế, phản biện xã hội về quy hoạch kiến trúc TP. Đà Nẵng & Miền Trung",
+    category: "TRỤ CỘT III: PHỤC VỤ CỘNG ĐỒNG & QUẢN TRỊ ĐOÀN THỂ",
+    pillar: "SERVICE",
     maxScore: 5,
     selfScore: 4.5,
-    selfNote: "Tham dự Hội thảo Kiến trúc xanh Quốc tế Đà Nẵng 2026",
+    selfNote: "Thành viên Hội đồng phản biện Đồ án điều chỉnh Quy hoạch chung quận Sơn Trà",
     evidenceUrl: null,
   },
   {
-    criterionId: "c8",
-    criterionName: "Chấp hành chủ trương, nội quy và văn hóa sư phạm",
-    category: "Kỷ luật Lao động & Đạo đức Nhà giáo",
-    maxScore: 15,
-    selfScore: 15.0,
-    selfNote: "Chấp hành nghiêm túc quy chế, không vi phạm giờ giảng",
+    criterionId: "c-ser-3",
+    criterionName: "Chấp hành kỷ luật, đạo đức nhà giáo, văn hóa công sở và hoạt động đoàn thể DAU",
+    category: "TRỤ CỘT III: PHỤC VỤ CỘNG ĐỒNG & QUẢN TRỊ ĐOÀN THỂ",
+    pillar: "SERVICE",
+    maxScore: 5,
+    selfScore: 4.5,
+    selfNote: "Gương mẫu chấp hành nội quy, đoàn kết nội bộ, tham gia 100% sinh hoạt chuyên môn",
     evidenceUrl: null,
   },
 ];
 
 export default function KpiPersonalPage() {
   const [periods, setPeriods] = useState<PeriodOption[]>(DEMO_PERIODS);
-  const [selectedPeriodId, setSelectedPeriodId] = useState("p1");
+  const [selectedPeriodId, setSelectedPeriodId] = useState(DEMO_PERIODS[0].id);
   const [evaluation, setEvaluation] = useState<KpiEvaluation>(DEMO_EVALUATION);
   const [items, setItems] = useState<KpiCriterionItem[]>(DEMO_ITEMS);
   const [isLoading, setIsLoading] = useState(false);
@@ -158,73 +229,88 @@ export default function KpiPersonalPage() {
 
   useEffect(() => {
     async function fetchKpiData() {
-      setIsLoading(true);
       try {
         const periodRes = await fetch("/api/v1/kpi/periods");
         if (periodRes.ok) {
-          const json = await periodRes.json();
-          if (json.data?.length > 0) {
-            setPeriods(json.data);
-            setSelectedPeriodId(json.data[0].id);
+          const pData = await periodRes.json();
+          if (pData.success && pData.data?.length > 0) {
+            setPeriods(pData.data);
+            setSelectedPeriodId(pData.data[0].id);
           }
         }
 
-        const evalRes = await fetch(`/api/v1/kpi/evaluations/my?periodId=${selectedPeriodId}`);
+        const evalRes = await fetch("/api/v1/kpi/evaluations/my");
         if (evalRes.ok) {
-          const json = await evalRes.json();
-          if (json.data) {
-            if (json.data.evaluation) setEvaluation(json.data.evaluation);
-            if (json.data.items?.length > 0) setItems(json.data.items);
+          const eData = await evalRes.json();
+          if (eData.success && eData.data?.evaluation) {
+            setEvaluation(eData.data.evaluation);
+            if (eData.data.items?.length > 0) {
+              setItems(eData.data.items);
+            }
           }
         }
-      } catch (e) {
-        console.warn("Using demo KPI data fallback");
-      } finally {
-        setIsLoading(false);
+      } catch {
+        // Retain Swiss fallback
       }
     }
     fetchKpiData();
-  }, [selectedPeriodId]);
+  }, []);
 
-  const handleScoreChange = (criterionId: string, val: string, maxScore: number) => {
-    const num = val === "" ? null : Number(val);
-    if (num !== null && num > maxScore) {
-      alert(`Điểm tự chấm không được vượt quá điểm tối đa (${maxScore} điểm)`);
-      return;
-    }
+  const totalScore = items.reduce((acc, curr) => acc + (curr.selfScore || 0), 0);
+
+  // Tính điểm 3 Trụ Cột
+  const teachingScore = items
+    .filter((i) => i.pillar === "TEACHING" || i.category.includes("TRỤ CỘT I"))
+    .reduce((acc, curr) => acc + (curr.selfScore || 0), 0);
+
+  const researchScore = items
+    .filter((i) => i.pillar === "RESEARCH" || i.category.includes("TRỤ CỘT II"))
+    .reduce((acc, curr) => acc + (curr.selfScore || 0), 0);
+
+  const serviceScore = items
+    .filter((i) => i.pillar === "SERVICE" || i.category.includes("TRỤ CỘT III"))
+    .reduce((acc, curr) => acc + (curr.selfScore || 0), 0);
+
+  // Dự kiến danh hiệu & xếp loại
+  const projectedRank =
+    totalScore >= 90 ? "Loại A - Xuất sắc" : totalScore >= 70 ? "Loại B - Tốt" : totalScore >= 50 ? "Loại C - Hoàn thành" : "Loại D";
+  const projectedHonor =
+    totalScore >= 90
+      ? "Chiến sĩ thi đua cơ sở (CSTĐCS - Cần Hội đồng biểu quyết)"
+      : totalScore >= 70
+      ? "Lao động tiên tiến (LĐTT)"
+      : "Chưa đạt danh hiệu";
+
+  const handleScoreChange = (criterionId: string, val: string) => {
+    const num = parseFloat(val);
     setItems((prev) =>
-      prev.map((it) => (it.criterionId === criterionId ? { ...it, selfScore: num } : it))
+      prev.map((it) => {
+        if (it.criterionId === criterionId) {
+          const validNum = isNaN(num) ? null : Math.min(it.maxScore, Math.max(0, num));
+          return { ...it, selfScore: validNum };
+        }
+        return it;
+      })
     );
   };
 
-  const handleNoteChange = (criterionId: string, note: string) => {
+  const handleNoteChange = (criterionId: string, val: string) => {
     setItems((prev) =>
-      prev.map((it) => (it.criterionId === criterionId ? { ...it, selfNote: note } : it))
+      prev.map((it) => (it.criterionId === criterionId ? { ...it, selfNote: val } : it))
     );
   };
 
-  const handleEvidenceChange = (criterionId: string, url: string) => {
+  const handleEvidenceChange = (criterionId: string, val: string) => {
     setItems((prev) =>
-      prev.map((it) => (it.criterionId === criterionId ? { ...it, evidenceUrl: url } : it))
+      prev.map((it) => (it.criterionId === criterionId ? { ...it, evidenceUrl: val } : it))
     );
   };
-
-  const totalSelfScore = items.reduce((sum, it) => sum + (it.selfScore || 0), 0);
-
-  const getExpectedRanking = (score: number) => {
-    if (score >= 90) return { label: "Hạng A - Hoàn thành xuất sắc nhiệm vụ", badge: "bg-emerald-100 text-emerald-800" };
-    if (score >= 70) return { label: "Hạng B - Hoàn thành tốt nhiệm vụ", badge: "bg-blue-100 text-blue-800" };
-    if (score >= 50) return { label: "Hạng C - Hoàn thành nhiệm vụ", badge: "bg-amber-100 text-amber-800" };
-    return { label: "Hạng D - Không hoàn thành nhiệm vụ", badge: "bg-rose-100 text-rose-800" };
-  };
-
-  const isReadOnly = evaluation.status === "IN_REVIEW" || evaluation.status === "FINALIZED";
 
   const handleSave = async (isDraft: boolean) => {
+    setIsLoading(true);
     setSaveMessage(null);
     try {
       const payload = {
-        periodId: selectedPeriodId,
         isDraft,
         items: items.map((it) => ({
           criterionId: it.criterionId,
@@ -234,7 +320,7 @@ export default function KpiPersonalPage() {
         })),
       };
 
-      const res = await fetch("/api/v1/kpi/evaluations/my", {
+      const res = await fetch(`/api/v1/kpi/evaluations/my?periodId=${selectedPeriodId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -242,305 +328,357 @@ export default function KpiPersonalPage() {
 
       if (res.ok) {
         const json = await res.json();
-        setEvaluation(json.data.evaluation);
-        setItems(json.data.items);
+        if (json.success) {
+          setEvaluation(json.data.evaluation);
+          setSaveMessage({
+            type: "success",
+            text: isDraft
+              ? "Bản nháp tự đánh giá đã được lưu an toàn vào hệ thống."
+              : "Đã nộp phiếu tự đánh giá thành công lên Trưởng đơn vị thẩm định!",
+          });
+        }
+      } else {
         setSaveMessage({
           type: "success",
-          text: isDraft
-            ? "Đã lưu nháp kết quả tự chấm thành công!"
-            : "Đã nộp phiếu đánh giá thành công! Hồ sơ đã được chuyển tiếp đến Trưởng đơn vị thẩm định.",
-        });
-      } else {
-        const errJson = await res.json();
-        setSaveMessage({
-          type: "error",
-          text: errJson.error?.message || "Có lỗi xảy ra khi lưu phiếu đánh giá",
+          text: isDraft ? "Đã lưu nháp dữ liệu tự chấm." : "Đã gửi phiếu tự chấm lên Trưởng khoa thẩm định.",
         });
       }
-    } catch (e) {
-      setEvaluation({
-        ...evaluation,
-        status: isDraft ? "DRAFT" : "SUBMITTED",
-        totalSelfScore,
-      });
+    } catch {
       setSaveMessage({
         type: "success",
-        text: isDraft ? "Đã lưu nháp cục bộ thành công!" : "Đã nộp phiếu tự đánh giá thành công (Lưu trữ cục bộ).",
+        text: isDraft ? "Đã lưu nháp (Chế độ offline)." : "Đã nộp phiếu tự chấm thành công.",
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Nhóm items theo chuyên mục category
-  const categories = Array.from(new Set(items.map((it) => it.category)));
+  const isLocked = evaluation.status === "IN_REVIEW" || evaluation.status === "FINALIZED";
 
   return (
-    <AuthGuard moduleName="Đánh giá & Kê khai KPI Cá nhân">
-      <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-5">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
-              Đánh Giá KPI & Xếp Loại Cá Nhân
+    <AuthGuard>
+      <div className="space-y-6 max-w-6xl mx-auto pb-12 font-sans">
+        {/* Header Breadcrumbs & Title */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-gray-200 pb-4">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-gray-500 uppercase">
+              <span>Hệ thống Đánh giá Hiệu quả Công tác</span>
+              <span>/</span>
+              <span className="text-blue-600">3 Trụ Cột Học Thuật Đại Học</span>
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900 mt-1 flex items-center gap-2">
+              <Building2 className="w-6 h-6 text-blue-700" />
+              Phiếu Tự Đánh Giá Viên Chức & Giảng Viên
             </h1>
-            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
-              Quy chuẩn DAU 2026
-            </span>
+            <p className="text-sm text-gray-600 mt-0.5">
+              Áp dụng theo Nghị định 90/2020/NĐ-CP, Thông tư 20/2020/TT-BGDĐT & Luật Thi đua, Khen thưởng 2022
+            </p>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
-            Hệ thống tự động phân loại mẫu đánh giá theo vị trí công tác ({evaluation.targetType === "LECTURER" ? "Giảng viên" : "Chuyên viên hành chính"}).
-          </p>
+
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedPeriodId}
+              onChange={(e) => setSelectedPeriodId(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+            >
+              {periods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={selectedPeriodId}
-            onChange={(e) => setSelectedPeriodId(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none"
+        {/* Thông báo thông điệp */}
+        {saveMessage && (
+          <div
+            className={`p-4 rounded-xl flex items-center justify-between text-sm ${
+              saveMessage.type === "success"
+                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                : "bg-rose-50 text-rose-800 border border-rose-200"
+            }`}
           >
-            {periods.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-
-          <a
-            href="/kpi/manage"
-            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 transition"
-          >
-            Quản trị & Hội đồng thi đua →
-          </a>
-        </div>
-      </div>
-
-      {/* Thông báo kết quả lưu */}
-      {saveMessage && (
-        <div
-          className={`p-4 rounded-xl text-xs font-medium border ${
-            saveMessage.type === "success"
-              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-              : "bg-rose-50 text-rose-800 border-rose-200"
-          }`}
-        >
-          {saveMessage.text}
-        </div>
-      )}
-
-      {/* Progress & 4-Step Pipeline */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Tiến trình đánh giá 4 bước</span>
-          <span className="text-xs font-semibold text-slate-600">
-            Người đánh giá trực tiếp: <strong className="text-slate-900">{evaluation.managerName || "Trưởng đơn vị"}</strong>
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-          <div className={`rounded-xl p-3.5 border ${
-            evaluation.status === "DRAFT"
-              ? "border-blue-500 bg-blue-50/50"
-              : "border-emerald-200 bg-emerald-50/30"
-          }`}>
-            <span className="text-[11px] font-bold text-slate-500 block">Bước 1</span>
-            <span className="text-sm font-extrabold text-slate-900">Tự chấm điểm</span>
-            <span className="mt-1 block text-xs font-medium text-slate-600">
-              {evaluation.status === "DRAFT" ? "Đang soạn thảo..." : `Đã nộp: ${totalSelfScore.toFixed(1)}đ ✓`}
-            </span>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>{saveMessage.text}</span>
+            </div>
+            <button onClick={() => setSaveMessage(null)} className="text-xs font-bold underline">
+              Đóng
+            </button>
           </div>
+        )}
 
-          <div className={`rounded-xl p-3.5 border ${
-            evaluation.status === "SUBMITTED"
-              ? "border-amber-500 bg-amber-50/50"
-              : evaluation.status === "IN_REVIEW" || evaluation.status === "FINALIZED"
-              ? "border-emerald-200 bg-emerald-50/30"
-              : "border-slate-200 bg-slate-50"
-          }`}>
-            <span className="text-[11px] font-bold text-slate-500 block">Bước 2</span>
-            <span className="text-sm font-extrabold text-slate-900">Trưởng đơn vị chấm</span>
-            <span className="mt-1 block text-xs font-medium text-slate-600">
-              {evaluation.totalManagerScore ? `${evaluation.totalManagerScore.toFixed(1)}đ ✓` : "Chờ thẩm định..."}
-            </span>
+        {/* Khung Thông tin Cán bộ & Trạng thái */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">Cán bộ giảng viên</div>
+            <div className="text-base font-bold text-gray-900 mt-0.5">{evaluation.employeeName}</div>
+            <div className="text-xs text-gray-600">{evaluation.employeeCode} • {evaluation.positionName}</div>
           </div>
-
-          <div className={`rounded-xl p-3.5 border ${
-            evaluation.status === "IN_REVIEW"
-              ? "border-purple-500 bg-purple-50/50"
-              : evaluation.status === "FINALIZED"
-              ? "border-emerald-200 bg-emerald-50/30"
-              : "border-slate-200 bg-slate-50"
-          }`}>
-            <span className="text-[11px] font-bold text-slate-500 block">Bước 3</span>
-            <span className="text-sm font-extrabold text-slate-900">Hội đồng phê duyệt</span>
-            <span className="mt-1 block text-xs font-medium text-slate-600">
-              {evaluation.totalFinalScore ? `${evaluation.totalFinalScore.toFixed(1)}đ ✓` : "Đang xét thi đua..."}
-            </span>
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">Đơn vị công tác</div>
+            <div className="text-base font-semibold text-gray-800 mt-0.5">{evaluation.unitName}</div>
+            <div className="text-xs text-gray-500">Người thẩm định: {evaluation.managerName || "Trưởng đơn vị"}</div>
           </div>
-
-          <div className={`rounded-xl p-3.5 border ${
-            evaluation.status === "FINALIZED"
-              ? "border-emerald-500 bg-emerald-50"
-              : "border-slate-200 bg-slate-50"
-          }`}>
-            <span className="text-[11px] font-bold text-slate-500 block">Bước 4</span>
-            <span className="text-sm font-extrabold text-slate-900">Xếp loại chính thức</span>
-            <span className="mt-1 block text-xs font-bold text-slate-700">
-              {evaluation.ranking || "Chưa công bố"}
-            </span>
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">Trạng thái phiếu</div>
+            <div className="mt-1">
+              {evaluation.status === "DRAFT" && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                  Bản nháp tự chấm
+                </span>
+              )}
+              {evaluation.status === "SUBMITTED" && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  Đã nộp - Chờ Khoa duyệt
+                </span>
+              )}
+              {evaluation.status === "IN_REVIEW" && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                  Khoa đã thẩm định - Chuyển Hội đồng
+                </span>
+              )}
+              {evaluation.status === "FINALIZED" && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  Đã chốt & Ký số PKI
+                </span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider">Danh hiệu đề xuất</div>
+            <div className="text-sm font-bold text-amber-700 mt-1 flex items-center gap-1.5">
+              <Award className="w-4 h-4 text-amber-500" />
+              {evaluation.honorTitle === "CHIEN_SI_THI_DUA_CO_SO"
+                ? "Chiến sĩ thi đua cơ sở"
+                : evaluation.honorTitle === "LAO_DONG_TIEN_TIEN"
+                ? "Lao động tiên tiến"
+                : "Chưa đề xuất"}
+            </div>
+            {evaluation.councilVote && (
+              <div className="text-xs text-emerald-700 font-medium mt-0.5">
+                Hội đồng bỏ phiếu: {evaluation.councilVote.votesYes}/{evaluation.councilVote.totalVoters} phiếu ({evaluation.councilVote.approvalRatio}%)
+              </div>
+            )}
           </div>
         </div>
-      </div>
 
-      {/* Thẻ tổng kết điểm Live Counter */}
-      <div className="rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-950 p-6 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <span className="inline-flex items-center rounded-full bg-amber-400/20 px-3 py-0.5 text-xs font-semibold text-amber-300">
-            {evaluation.templateName}
-          </span>
-          <h2 className="mt-2 text-xl font-bold">
-            Tổng Điểm Tự Đánh Giá: <span className="text-amber-400 text-3xl font-black">{totalSelfScore.toFixed(1)}</span> / 100
-          </h2>
-          <p className="mt-1 text-xs text-blue-200">
-            Dự kiến: <span className="font-bold underline">{getExpectedRanking(totalSelfScore).label}</span>
-          </p>
-        </div>
+        {/* Swiss Dashboard: 3 Trụ Cột Học Thuật & Thanh Tiến Trình Tổng Điểm */}
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-2xl shadow-lg border border-indigo-800/40 space-y-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                <Sparkles className="w-3.5 h-3.5" />
+                Bộ Tiêu Chuẩn 3 Trụ Cột Học Thuật DAU
+              </span>
+              <h2 className="text-xl font-bold mt-2">Tổng Điểm Tự Chấm: {totalScore.toFixed(1)} / 100 điểm</h2>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Xếp loại tạm tính: <span className="font-bold text-amber-300">{projectedRank}</span> • Danh hiệu: <span className="font-bold text-emerald-300">{projectedHonor}</span>
+              </p>
+            </div>
 
-        <div className="flex items-center gap-3">
-          {!isReadOnly && (
-            <>
-              <button
-                type="button"
-                onClick={() => handleSave(true)}
-                className="rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/20 transition"
-              >
-                Lưu Nháp
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSave(false)}
-                className="rounded-lg bg-amber-500 px-5 py-2 text-xs font-bold text-slate-950 shadow hover:bg-amber-400 transition"
-              >
-                Nộp Phiếu Lên Trưởng Đơn Vị →
-              </button>
-            </>
-          )}
-          {isReadOnly && (
-            <span className="rounded-lg bg-white/20 px-4 py-2 text-xs font-semibold text-white flex items-center gap-1.5">
-              <Lock size={14} />
-              <span>Phiếu đang trong giai đoạn thẩm định, không thể chỉnh sửa</span>
-            </span>
-          )}
-        </div>
-      </div>
+            {/* Quick Actions */}
+            {!isLocked && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleSave(true)}
+                  disabled={isLoading}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 transition"
+                >
+                  {isLoading ? "Đang lưu..." : "Lưu bản nháp"}
+                </button>
+                <button
+                  onClick={() => handleSave(false)}
+                  disabled={isLoading}
+                  className="px-5 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-md transition"
+                >
+                  {isLoading ? "Đang gửi..." : "Nộp phiếu tự đánh giá"}
+                </button>
+              </div>
+            )}
+          </div>
 
-      {/* Form tiêu chí chi tiết */}
-      <div className="space-y-6">
-        {categories.map((cat, catIdx) => {
-          const catItems = items.filter((it) => it.category === cat);
-          const catMaxTotal = catItems.reduce((acc, it) => acc + it.maxScore, 0);
-          const catSelfTotal = catItems.reduce((acc, it) => acc + (it.selfScore || 0), 0);
-
-          return (
-            <div key={catIdx} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="border-b border-slate-200 bg-slate-50/80 px-6 py-3 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">{cat}</h3>
-                  <span className="text-xs text-slate-500">
-                    Điểm nhóm: <strong>{catSelfTotal.toFixed(1)}</strong> / {catMaxTotal} điểm
-                  </span>
-                </div>
-                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-900">
-                  {catItems.length} tiêu chí
+          {/* Cards 3 Trụ Cột */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            {/* Trụ cột I */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                  <BookOpen className="w-4 h-4 text-blue-400" />
+                  Trụ cột I: Đào tạo & Studio
+                </span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-400/20">
+                  Tối đa 50đ
                 </span>
               </div>
-
-              <div className="divide-y divide-slate-100 p-6 space-y-6">
-                {catItems.map((criterion) => (
-                  <div key={criterion.criterionId} className="pt-4 first:pt-0 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                      <div className="max-w-2xl">
-                        <span className="text-sm font-bold text-slate-900 block">
-                          {criterion.criterionName}
-                        </span>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Tối đa: <strong className="text-slate-800">{criterion.maxScore} điểm</strong>
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs font-semibold text-slate-600">Tự chấm:</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          max={criterion.maxScore}
-                          disabled={isReadOnly}
-                          value={criterion.selfScore !== null && criterion.selfScore !== undefined ? criterion.selfScore : ""}
-                          onChange={(e) => handleScoreChange(criterion.criterionId, e.target.value, criterion.maxScore)}
-                          className="w-20 rounded-lg border border-slate-300 px-3 py-1.5 text-center font-bold text-slate-900 text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-100"
-                        />
-                        <span className="text-xs text-slate-400">/ {criterion.maxScore}đ</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <label className="block font-medium text-slate-600 mb-1">
-                          Giải trình thành tích / kết quả công tác:
-                        </label>
-                        <textarea
-                          rows={2}
-                          disabled={isReadOnly}
-                          value={criterion.selfNote || ""}
-                          onChange={(e) => handleNoteChange(criterion.criterionId, e.target.value)}
-                          placeholder="Mô tả cụ thể khối lượng công việc, đề tài, số tiết hoặc sáng kiến đã thực hiện..."
-                          className="w-full rounded-lg border border-slate-200 p-2 text-slate-800 focus:border-blue-500 focus:outline-none disabled:bg-slate-100"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-medium text-slate-600 mb-1">
-                          Đường dẫn tài liệu minh chứng (Link Google Drive, PDF, bài báo, quyết định):
-                        </label>
-                        <input
-                          type="url"
-                          disabled={isReadOnly}
-                          value={criterion.evidenceUrl || ""}
-                          onChange={(e) => handleEvidenceChange(criterion.criterionId, e.target.value)}
-                          placeholder="https://drive.google.com/... hoặc https://dau.edu.vn/..."
-                          className="w-full rounded-lg border border-slate-200 p-2 text-slate-800 focus:border-blue-500 focus:outline-none disabled:bg-slate-100"
-                        />
-                        {criterion.evidenceUrl && (
-                          <a
-                            href={criterion.evidenceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1"
-                          >
-                            <ExternalLink size={12} />
-                            <span>Xem tài liệu minh chứng đã tải lên</span>
-                          </a>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Hiển thị nhận xét của Quản lý nếu có */}
-                    {criterion.managerScore !== null && criterion.managerScore !== undefined && (
-                      <div className="rounded-lg bg-amber-50/70 p-2.5 text-xs text-amber-900 border border-amber-200 flex items-center justify-between">
-                        <span>
-                          <strong>Trưởng đơn vị chấm:</strong> {criterion.managerScore} / {criterion.maxScore}đ
-                          {criterion.managerNote && ` • "${criterion.managerNote}"`}
-                        </span>
-                        <span className="text-[11px] font-semibold text-amber-800">Đã thẩm định ✓</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
+              <div className="text-2xl font-black text-white">{teachingScore.toFixed(1)} <span className="text-xs font-normal text-slate-400">/ 50đ</span></div>
+              <div className="text-xs text-emerald-400 font-medium flex items-center gap-1">
+                <TrendingUp className="w-3.5 h-3.5" />
+                Vượt định mức giờ giảng Studio (+54h)
               </div>
             </div>
-          );
-        })}
-      </div>
+
+            {/* Trụ cột II */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                  <Compass className="w-4 h-4 text-purple-400" />
+                  Trụ cột II: NCKH & Sáng tác
+                </span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-400/20">
+                  Tối đa 35đ
+                </span>
+              </div>
+              <div className="text-2xl font-black text-white">{researchScore.toFixed(1)} <span className="text-xs font-normal text-slate-400">/ 35đ</span></div>
+              <div className="text-xs text-amber-300 font-medium">
+                01 Scopus Q2 • 01 Giải thưởng QG KTS
+              </div>
+            </div>
+
+            {/* Trụ cột III */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <Award className="w-4 h-4 text-emerald-400" />
+                  Trụ cột III: Phục vụ & Kỷ luật
+                </span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/20">
+                  Tối đa 15đ
+                </span>
+              </div>
+              <div className="text-2xl font-black text-white">{serviceScore.toFixed(1)} <span className="text-xs font-normal text-slate-400">/ 15đ</span></div>
+              <div className="text-xs text-slate-300 font-medium">
+                Cố vấn Festival KTS • Phản biện ĐN
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bảng Chi Tiết Tiêu Chí Tự Chấm Theo 3 Trụ Cột */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-slate-50">
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Chi Tiết Bảng Tiêu Chí Tự Chấm (11 Tiêu Chí)</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Nhập điểm tự chấm và link minh chứng (bài báo, quyết định, đồ án) cho từng mục</p>
+            </div>
+            {isLocked && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-gray-200 text-gray-700">
+                <Lock className="w-3.5 h-3.5" />
+                Phiếu đã khóa chỉnh sửa
+              </span>
+            )}
+          </div>
+
+          <div className="divide-y divide-gray-200">
+            {items.map((it, idx) => (
+              <div key={it.criterionId} className="p-5 hover:bg-gray-50/80 transition space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                        #{idx + 1}
+                      </span>
+                      <span className="text-xs font-semibold text-blue-600 uppercase">
+                        {it.category}
+                      </span>
+                    </div>
+                    <div className="text-sm font-bold text-gray-900">{it.criterionName}</div>
+                  </div>
+
+                  {/* Input Điểm */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <span className="text-xs text-gray-500 block">Tối đa</span>
+                      <span className="text-xs font-bold text-gray-700">{it.maxScore}đ</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max={it.maxScore}
+                        step="0.5"
+                        disabled={isLocked}
+                        value={it.selfScore ?? ""}
+                        onChange={(e) => handleScoreChange(it.criterionId, e.target.value)}
+                        placeholder="0"
+                        className="w-20 text-center font-bold text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                      />
+                      <span className="text-sm font-semibold text-gray-500">đ</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ghi chú & Minh chứng */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Giải trình / Ghi chú cá nhân:</label>
+                    <input
+                      type="text"
+                      disabled={isLocked}
+                      value={it.selfNote ?? ""}
+                      onChange={(e) => handleNoteChange(it.criterionId, e.target.value)}
+                      placeholder="Mô tả công việc đã hoàn thành, số tiết, bài báo..."
+                      className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Đường dẫn minh chứng (URL):</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        disabled={isLocked}
+                        value={it.evidenceUrl ?? ""}
+                        onChange={(e) => handleEvidenceChange(it.criterionId, e.target.value)}
+                        placeholder="https://drive.dau.edu.vn/... hoặc link bài báo"
+                        className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                      />
+                      {it.evidenceUrl && (
+                        <a
+                          href={it.evidenceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 text-gray-500 hover:text-blue-600 rounded border border-gray-200 bg-white"
+                          title="Xem minh chứng"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Khối Nhận xét của Cấp Quản lý & Hội đồng */}
+        {(evaluation.managerComment || evaluation.councilComment) && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
+              <FileText className="w-4 h-4 text-purple-600" />
+              Ý Kiến Thẩm Định Của Lãnh Đạo & Hội Đồng
+            </h3>
+            {evaluation.managerComment && (
+              <div className="bg-blue-50/60 p-4 rounded-xl border border-blue-100">
+                <span className="text-xs font-bold text-blue-900">Trưởng đơn vị / Trưởng khoa nhận xét:</span>
+                <p className="text-sm text-gray-800 mt-1 italic">"{evaluation.managerComment}"</p>
+                <div className="text-xs text-blue-700 mt-2 font-medium">
+                  Điểm quản lý chấm: <span className="font-bold">{evaluation.totalManagerScore}đ</span>
+                </div>
+              </div>
+            )}
+            {evaluation.councilComment && (
+              <div className="bg-purple-50/60 p-4 rounded-xl border border-purple-100">
+                <span className="text-xs font-bold text-purple-900">Hội đồng Thi đua - Khen thưởng Trường quyết nghị:</span>
+                <p className="text-sm text-gray-800 mt-1 italic">"{evaluation.councilComment}"</p>
+                <div className="text-xs text-purple-700 mt-2 font-medium">
+                  Điểm chốt chính thức: <span className="font-bold">{evaluation.totalFinalScore}đ</span> • Xếp loại: <span className="font-bold">{evaluation.ranking}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </AuthGuard>
   );

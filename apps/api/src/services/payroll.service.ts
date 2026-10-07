@@ -14,7 +14,27 @@ import type {
 const BASE_SALARY_RATE = 2340000; // Mức lương cơ sở hiện hành 2.340.000 VNĐ từ 01/07/2024 theo NĐ 73/2024/NĐ-CP
 const BASE_KPI_FUND_PER_CAPITA = 4000000; // Định mức quỹ thu nhập tăng thêm theo KPI / người / tháng
 
-export const DEFAULT_FACULTY_MEMBERS = [
+export interface FacultyMemberRecord {
+  id: string;
+  employeeId: string;
+  employeeCode: string;
+  fullName: string;
+  employeeName: string;
+  departmentName: string;
+  academicTitle: string;
+  positionName: string;
+  positionCode: string;
+  salaryCoefficient: number;
+  hireYear: number;
+  kpiRanking: "A" | "B" | "C" | "D";
+  dependentCount: number;
+  standardWorkDays: number;
+  actualWorkDays: number;
+  unpaidLeaveDays: number;
+  overtimeTeachingHours: number;
+}
+
+export const DEFAULT_FACULTY_MEMBERS: FacultyMemberRecord[] = [
   {
     id: "DAU260001-ID",
     employeeId: "DAU260001-ID",
@@ -27,7 +47,7 @@ export const DEFAULT_FACULTY_MEMBERS = [
     positionCode: "TRUONG_KHOA",
     salaryCoefficient: 6.78,
     hireYear: 2014,
-    kpiRanking: "A" as const,
+    kpiRanking: "A",
     dependentCount: 1,
     standardWorkDays: 22,
     actualWorkDays: 22,
@@ -115,6 +135,24 @@ export const DEFAULT_FACULTY_MEMBERS = [
 export class PayrollService {
   // Kho lưu trữ các kỳ lương đã tính toán trong bộ nhớ
   private static periodsStore = new Map<string, PayrollPeriodDetailDto>();
+
+  /**
+   * Cập nhật xếp loại KPI của cán bộ từ phân hệ KPI & Thi đua
+   */
+  public static updateFacultyKpiRanking(
+    employeeIdOrCode: string,
+    ranking: "A" | "B" | "C" | "D"
+  ): void {
+    const member = DEFAULT_FACULTY_MEMBERS.find(
+      (m) =>
+        m.employeeId === employeeIdOrCode ||
+        m.employeeCode === employeeIdOrCode ||
+        m.id === employeeIdOrCode
+    );
+    if (member) {
+      member.kpiRanking = ranking;
+    }
+  }
 
   /**
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)

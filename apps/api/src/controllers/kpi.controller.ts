@@ -30,7 +30,7 @@ export async function createPeriod(req: Request, res: Response): Promise<void> {
 }
 
 export async function getTemplates(req: Request, res: Response): Promise<void> {
-  const targetType = req.query["targetType"] ? String(req.query["targetType"]) as any : undefined;
+  const targetType = req.query["targetType"] ? (String(req.query["targetType"]) as any) : undefined;
   const data = await KpiService.getTemplates(targetType);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 
@@ -116,4 +116,62 @@ export async function finalizeEvaluation(req: Request, res: Response): Promise<v
       requestId,
     },
   });
+}
+
+export async function recordCouncilVote(req: Request, res: Response): Promise<void> {
+  const id = String(req.params["id"]);
+  const data = await KpiService.recordCouncilVote(id, req.body, req.user!);
+  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+
+  res.status(200).json({
+    success: true,
+    data,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId,
+    },
+  });
+}
+
+export async function finalizeWithPki(req: Request, res: Response): Promise<void> {
+  const periodId = String(req.params["id"]);
+  const data = await KpiService.finalizeWithPki(periodId, req.body, req.user!);
+  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+
+  res.status(200).json({
+    success: true,
+    data,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId,
+    },
+  });
+}
+
+export async function getCouncilSummary(req: Request, res: Response): Promise<void> {
+  const periodId = String(req.params["id"]);
+  const data = await KpiService.getCouncilSummary(periodId, req.user!);
+  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+
+  res.status(200).json({
+    success: true,
+    data,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId,
+    },
+  });
+}
+
+export async function exportCouncilReportPdf(req: Request, res: Response): Promise<void> {
+  const periodId = String(req.params["id"]);
+  const unitId = req.query["unitId"] ? String(req.query["unitId"]) : undefined;
+  const pdfBytes = await KpiService.exportCouncilReportPdf(periodId, unitId);
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="Bien-Ban-Binh-Bau-Thi-Dua-${periodId}.pdf"`
+  );
+  res.status(200).send(Buffer.from(pdfBytes));
 }
