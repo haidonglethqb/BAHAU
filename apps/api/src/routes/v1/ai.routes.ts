@@ -3,6 +3,8 @@ import { AiController } from "../../controllers/ai.controller.js";
 import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
 import { asyncHandler } from "../../middlewares/async.middleware.js";
 
+import { aiRateLimiter } from "../../middlewares/rate-limit.middleware.js";
+
 const router = Router();
 
 // ============================================================================
@@ -14,6 +16,7 @@ router.post(
   "/ai/chat",
   requireAuth,
   requirePermission("ai:chat"),
+  aiRateLimiter,
   asyncHandler(AiController.chat)
 );
 

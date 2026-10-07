@@ -297,6 +297,11 @@ export class WorkflowService {
                 select: {
                   fullName: true,
                   employeeCode: true,
+                  assignments: {
+                    where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+                    select: { unitId: true },
+                    take: 1,
+                  },
                 },
               },
             },
@@ -305,8 +310,27 @@ export class WorkflowService {
         orderBy: { createdAt: "desc" },
       });
 
-      // Chỉ lấy bước ứng với currentStepIndex của instance
-      const validSteps = steps.filter((s) => s.stepIndex === s.instance.currentStepIndex);
+      const isGlobalHR = currentUser.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      );
+
+      // Lọc bước hợp lệ: đúng thứ tự, và KHÔNG phải đơn của chính mình (Anti-Self-Approval)
+      let validSteps = steps.filter(
+        (s) =>
+          s.stepIndex === s.instance.currentStepIndex &&
+          (!userEmployeeId || s.instance.requesterEmployeeId !== userEmployeeId)
+      );
+
+      // Nếu người duyệt là Trưởng đơn vị (và không phải HR toàn trường), chỉ duyệt đơn của đơn vị mình
+      if (!isGlobalHR && currentUser.roles.includes("ROLE_UNIT_HEAD")) {
+        const managedUnits = new Set(currentUser.unitsManaged || []);
+        validSteps = validSteps.filter((s) => {
+          if (s.approverEmployeeId && s.approverEmployeeId === userEmployeeId) return true;
+          if (s.approverRoleCode !== "ROLE_UNIT_HEAD") return true;
+          const reqUnitId = s.instance.requesterEmployee?.assignments?.[0]?.unitId;
+          return reqUnitId ? managedUnits.has(reqUnitId) : false;
+        });
+      }
 
       return validSteps.map((s) => ({
         stepId: s.id,
@@ -353,6 +377,31 @@ export class WorkflowService {
 
       if (!instance) {
         throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy tiến trình phê duyệt.");
+      }
+
+      // Kiểm tra quyền hạn truy cập tiến trình phê duyệt (Chống IDOR)
+      const isRequester = currentUser.employeeId && currentUser.employeeId === instance.requesterEmployeeId;
+      const isGlobalHR = currentUser.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      );
+      const isStepApprover = instance.steps.some(
+        (s) =>
+          (s.approverEmployeeId && s.approverEmployeeId === currentUser.employeeId) ||
+          (s.approverRoleCode && currentUser.roles.includes(s.approverRoleCode))
+      );
+
+      let isRequesterUnitHead = false;
+      if (currentUser.unitsManaged && currentUser.unitsManaged.length > 0) {
+        const requesterAssignment = await prisma.employmentAssignment.findFirst({
+          where: { employeeId: instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
+        });
+        if (requesterAssignment?.unitId && currentUser.unitsManaged.includes(requesterAssignment.unitId)) {
+          isRequesterUnitHead = true;
+        }
+      }
+
+      if (!isRequester && !isGlobalHR && !isStepApprover && !isRequesterUnitHead) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin quy trình phê duyệt này.");
       }
 
       return {

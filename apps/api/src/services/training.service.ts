@@ -294,6 +294,15 @@ export class TrainingService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy chứng chỉ yêu cầu thẩm định");
     }
 
+    // Anti-Self-Approval: Không cho phép cán bộ tự thẩm định/phê duyệt chứng chỉ của chính mình
+    if (certificate.employeeId === verifierEmployeeId) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Quy tắc Anti-Self-Approval: Bạn không được tự thẩm định chứng chỉ của chính mình."
+      );
+    }
+
     const updated = await prisma.certificate.update({
       where: { id: certificateId },
       data: {

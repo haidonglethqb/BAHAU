@@ -174,13 +174,23 @@ export class LeaveService {
         throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy đơn nghỉ phép yêu cầu.");
       }
 
-      // Kiểm tra quyền xem
+      // Kiểm tra quyền xem (Chống IDOR & Cross-Unit Data Exposure)
       const isOwner = leave.employeeId === currentUser.employeeId;
-      const isHR = currentUser.roles.some((r) =>
-        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_SYSADMIN"].includes(r)
+      const isGlobalHR = currentUser.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
       );
 
-      if (!isOwner && !isHR) {
+      let isUnitHeadOfEmployee = false;
+      if (currentUser.roles.includes("ROLE_UNIT_HEAD") && currentUser.unitsManaged && currentUser.unitsManaged.length > 0) {
+        const assignment = await prisma.employmentAssignment.findFirst({
+          where: { employeeId: leave.employeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
+        });
+        if (assignment?.unitId && currentUser.unitsManaged.includes(assignment.unitId)) {
+          isUnitHeadOfEmployee = true;
+        }
+      }
+
+      if (!isOwner && !isGlobalHR && !isUnitHeadOfEmployee) {
         throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin đơn này.");
       }
 
@@ -398,11 +408,21 @@ export class LeaveService {
       }
 
       const isOwner = trip.employeeId === currentUser.employeeId;
-      const isHR = currentUser.roles.some((r) =>
-        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_SYSADMIN"].includes(r)
+      const isGlobalHR = currentUser.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
       );
 
-      if (!isOwner && !isHR) {
+      let isUnitHeadOfEmployee = false;
+      if (currentUser.roles.includes("ROLE_UNIT_HEAD") && currentUser.unitsManaged && currentUser.unitsManaged.length > 0) {
+        const assignment = await prisma.employmentAssignment.findFirst({
+          where: { employeeId: trip.employeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
+        });
+        if (assignment?.unitId && currentUser.unitsManaged.includes(assignment.unitId)) {
+          isUnitHeadOfEmployee = true;
+        }
+      }
+
+      if (!isOwner && !isGlobalHR && !isUnitHeadOfEmployee) {
         throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin chuyến công tác này.");
       }
 

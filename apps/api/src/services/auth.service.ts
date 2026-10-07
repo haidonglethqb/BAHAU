@@ -55,7 +55,16 @@ export class AuthService {
       );
     }
 
+    // Hash giả định chuẩn Argon2 để chống tấn công Timing Attack / User Enumeration
+    const DUMMY_HASH =
+      "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHRzb21lc2FsdA$R9yHn92D40wE9dO3zP12v6b4X1K7Y1p5N3k6L8v0Q1c";
+
     if (!user || user.status !== "ACTIVE") {
+      try {
+        await verify(DUMMY_HASH, plainPassword);
+      } catch {
+        // Nuốt lỗi hash không khớp
+      }
       throw new AppError(401, "UNAUTHENTICATED", "Email hoặc mật khẩu không chính xác.");
     }
 

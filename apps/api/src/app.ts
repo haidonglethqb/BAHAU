@@ -13,10 +13,35 @@ export function createApp(): Express {
   // Security headers
   app.use(helmet());
 
-  // CORS
+  // CORS whitelist configuration (OWASP Compliant)
+  const allowedOrigins = process.env["CORS_ALLOWED_ORIGINS"]
+    ? process.env["CORS_ALLOWED_ORIGINS"].split(",").map((s) => s.trim())
+    : [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+      ];
+
   app.use(
     cors({
-      origin: true,
+      origin: (origin, callback) => {
+        // Cho phép các yêu cầu nội bộ hoặc không có Origin header (Postman, server-to-server)
+        if (!origin) return callback(null, true);
+
+        const isExplicitlyAllowed = allowedOrigins.includes(origin);
+        const isLocalDev =
+          process.env["NODE_ENV"] !== "production" &&
+          (/^http:\/\/localhost(:\d+)?$/.test(origin) ||
+            /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin));
+
+        if (isExplicitlyAllowed || isLocalDev) {
+          return callback(null, true);
+        }
+
+        // Từ chối origin không được tin cậy
+        return callback(null, false);
+      },
       credentials: true,
     })
   );

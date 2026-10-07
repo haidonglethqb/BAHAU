@@ -57,6 +57,14 @@ export const CreateAssignmentInputSchema = z.object({
 
 export type CreateAssignmentInput = z.infer<typeof CreateAssignmentInputSchema>;
 
+export const ConvertWorkloadInputSchema = z.object({
+  workloadType: WorkloadTypeEnum,
+  rawHours: z.number().min(0, "Số giờ phải lớn hơn hoặc bằng 0").max(10000, "Số giờ không hợp lệ"),
+  studentCount: z.number().int().min(0).max(1000).optional().default(30),
+});
+
+export type ConvertWorkloadInput = z.infer<typeof ConvertWorkloadInputSchema>;
+
 // =============================================================================
 // QUOTA & WORKLOAD SCHEMAS
 // =============================================================================
