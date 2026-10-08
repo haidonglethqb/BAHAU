@@ -13,3 +13,4 @@ export * from "./ai/index.js";
 export * from "./workload/index.js";
 export * from "./payroll/index.js";
 export * from "./executive/index.js";
+export * from "./tenure/index.js";

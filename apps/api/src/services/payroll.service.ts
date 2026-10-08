@@ -155,6 +155,34 @@ export class PayrollService {
   }
 
   /**
+   * Cập nhật Chức danh nghề nghiệp và Hệ số lương khi được Bổ nhiệm chức danh GS/PGS/GVC/GVCC
+   */
+  public static updateFacultyCareerClass(
+    employeeIdOrCode: string,
+    newCareerClass: string,
+    newSalaryCoeff: number,
+    newAcademicRank?: string
+  ): void {
+    const member = DEFAULT_FACULTY_MEMBERS.find(
+      (m) =>
+        m.employeeId === employeeIdOrCode ||
+        m.employeeCode === employeeIdOrCode ||
+        m.id === employeeIdOrCode
+    );
+    if (member) {
+      member.salaryCoefficient = newSalaryCoeff;
+      if (newAcademicRank && newAcademicRank !== "NONE") {
+        member.academicTitle = newAcademicRank;
+      }
+      if (newCareerClass === "SENIOR_LECTURER") {
+        member.positionName = "Giảng viên cao cấp";
+      } else if (newCareerClass === "PRINCIPAL_LECTURER") {
+        member.positionName = "Giảng viên chính";
+      }
+    }
+  }
+
+  /**
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)
    */
   public static calculatePit(taxableIncome: number): number {

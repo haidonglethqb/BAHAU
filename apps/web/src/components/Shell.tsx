@@ -27,6 +27,7 @@ import {
   Users,
   Wallet,
   X,
+  Award,
 } from 'lucide-react'
 import { useAuth, ROLE_USER_MAP } from '../context/AuthContext'
 import type { Role } from '../data'
@@ -70,6 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/workload', label: 'Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
       { href: '/training', label: 'Đào tạo & Chứng chỉ', icon: <GraduationCap size={18} /> },
       { href: '/kpi', label: 'Đánh giá KPI', icon: <TrendingUp size={18} /> },
+      { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} /> },
     ],
   },
   {

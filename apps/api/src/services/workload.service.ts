@@ -8,6 +8,12 @@ import type {
 } from "@bahau/contracts";
 
 export class WorkloadService {
+  private static promotedSeniorEmployees = new Set<string>();
+
+  public static markAsSeniorOrProf(employeeIdOrCode: string): void {
+    this.promotedSeniorEmployees.add(employeeIdOrCode);
+  }
+
   /**
    * Tính toán định mức giờ giảng pháp định và tỷ lệ miễn giảm kiêm nhiệm theo TT 20/2020/TT-BGDĐT
    */
@@ -18,12 +24,20 @@ export class WorkloadService {
     reductionReason: string;
     hourlyRate: number;
   } {
-    const academicTitle = employee.academicTitle;
+    const academicTitle = employee?.academicTitle;
+    const isPromoted =
+      this.promotedSeniorEmployees.has(employee?.id) ||
+      this.promotedSeniorEmployees.has(employee?.employeeCode);
+
     const isSeniorOrProf =
+      isPromoted ||
       academicTitle === "PROFESSOR" ||
       academicTitle === "ASSOCIATE_PROFESSOR" ||
-      employee.assignments?.some((a: any) =>
-        a.position?.code === "GIANG_VIEN_CHINH"
+      employee?.careerClass === "SENIOR_LECTURER" ||
+      employee?.careerClass === "PRINCIPAL_LECTURER" ||
+      employee?.assignments?.some((a: any) =>
+        a.position?.code === "GIANG_VIEN_CHINH" ||
+        a.position?.code === "GIANG_VIEN_CAO_CAP"
       );
 
     // Định mức giờ chuẩn giảng dạy và NCKH
