@@ -183,6 +183,43 @@ export class PayrollService {
   }
 
   /**
+   * Khởi tạo hồ sơ lương và ngạch bậc cho Giảng viên mới trúng tuyển tập sự (Nghị định 115/2020/NĐ-CP)
+   */
+  public static registerProbationaryFaculty(candidate: {
+    employeeId: string;
+    employeeCode: string;
+    fullName: string;
+    departmentName: string;
+    degree: "MASTER" | "DOCTOR";
+    salaryCoefficient: number;
+  }): void {
+    const existing = DEFAULT_FACULTY_MEMBERS.find(
+      (f) => f.employeeId === candidate.employeeId || f.employeeCode === candidate.employeeCode
+    );
+    if (!existing) {
+      DEFAULT_FACULTY_MEMBERS.push({
+        id: candidate.employeeId,
+        employeeId: candidate.employeeId,
+        employeeCode: candidate.employeeCode,
+        fullName: candidate.fullName,
+        employeeName: candidate.fullName,
+        departmentName: candidate.departmentName,
+        academicTitle: candidate.degree,
+        positionName: "Giảng viên tập sự",
+        positionCode: "GIANG_VIEN_TAP_SU",
+        salaryCoefficient: candidate.salaryCoefficient,
+        hireYear: 2026,
+        kpiRanking: "B",
+        dependentCount: 0,
+        standardWorkDays: 22,
+        actualWorkDays: 22,
+        unpaidLeaveDays: 0,
+        overtimeTeachingHours: 0,
+      });
+    }
+  }
+
+  /**
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)
    */
   public static calculatePit(taxableIncome: number): number {

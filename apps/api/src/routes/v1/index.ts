@@ -16,6 +16,7 @@ import workloadRoutes from "./workload.routes.js";
 import payrollRoutes from "./payroll.routes.js";
 import executiveRoutes from "./executive.routes.js";
 import tenureRoutes from "./tenure.routes.js";
+import recruitmentRoutes from "./recruitment.routes.js";
 
 const router = Router();
 
@@ -36,5 +37,6 @@ router.use(workloadRoutes);
 router.use(payrollRoutes);
 router.use(executiveRoutes);
 router.use(tenureRoutes);
+router.use(recruitmentRoutes);
 
 export default router;

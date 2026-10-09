@@ -9,9 +9,14 @@ import type {
 
 export class WorkloadService {
   private static promotedSeniorEmployees = new Set<string>();
+  private static probationaryEmployees = new Set<string>();
 
   public static markAsSeniorOrProf(employeeIdOrCode: string): void {
     this.promotedSeniorEmployees.add(employeeIdOrCode);
+  }
+
+  public static registerProbationaryFaculty(employeeIdOrCode: string): void {
+    this.probationaryEmployees.add(employeeIdOrCode);
   }
 
   /**
@@ -67,6 +72,18 @@ export class WorkloadService {
         reductionPercentage = 20;
         reductionReasons.push("Miễn giảm 20% do kiêm nhiệm Phụ trách đơn vị");
       }
+    }
+
+    // Kiểm tra chế độ tập sự theo Nghị định 115/2020/NĐ-CP (Miễn giảm 50% định mức giờ giảng)
+    const isProbation =
+      employee?.isProbation ||
+      employee?.positionCode === "GIANG_VIEN_TAP_SU" ||
+      this.probationaryEmployees.has(employee?.id) ||
+      this.probationaryEmployees.has(employee?.employeeCode);
+
+    if (isProbation && reductionPercentage < 50) {
+      reductionPercentage = 50;
+      reductionReasons.push("Miễn giảm 50% định mức giờ giảng dạy cho Giảng viên tập sự (Nghị định 115/2020/NĐ-CP)");
     }
 
     return {
