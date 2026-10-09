@@ -219,6 +219,18 @@ export class PayrollService {
     }
   }
 
+  // Quản lý thu nhập Nhuận bút Tác giả & Thù lao Đề tài NCKH chuyển giao
+  private static allocatedRoyalties = new Map<string, number>();
+
+  public static addRoyaltyPayment(employeeIdOrCode: string, amount: number): void {
+    const current = this.allocatedRoyalties.get(employeeIdOrCode) || 0;
+    this.allocatedRoyalties.set(employeeIdOrCode, current + amount);
+  }
+
+  public static getRoyaltyPayment(employeeIdOrCode: string): number {
+    return this.allocatedRoyalties.get(employeeIdOrCode) || 0;
+  }
+
   /**
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)
    */

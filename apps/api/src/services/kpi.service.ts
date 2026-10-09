@@ -215,6 +215,18 @@ export class KpiService {
   private static inMemoryEvaluations = new Map<string, KpiEvaluationDto>();
   private static inMemoryPeriodSigned = new Map<string, { signature: string; signedAt: string }>();
 
+  // Tích lũy điểm Trụ cột II từ Đề tài NCKH & Dự án tư vấn thiết kế đã nghiệm thu
+  private static accumulatedRdPoints = new Map<string, number>();
+
+  public static addResearchKpiPoints(employeeIdOrCode: string, points: number): void {
+    const current = this.accumulatedRdPoints.get(employeeIdOrCode) || 0;
+    this.accumulatedRdPoints.set(employeeIdOrCode, current + points);
+  }
+
+  public static getResearchKpiPoints(employeeIdOrCode: string): number {
+    return this.accumulatedRdPoints.get(employeeIdOrCode) || 0;
+  }
+
   static {
     // Khởi tạo các đánh giá mẫu đại học chuẩn DAU
     const mockList: KpiEvaluationDto[] = [

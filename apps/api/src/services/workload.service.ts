@@ -19,6 +19,18 @@ export class WorkloadService {
     this.probationaryEmployees.add(employeeIdOrCode);
   }
 
+  // Quản lý giờ NCKH & Dự án tư vấn thiết kế quy đổi bù trừ định mức
+  private static accumulatedRdHours = new Map<string, number>();
+
+  public static addResearchHours(employeeIdOrCode: string, hours: number): void {
+    const current = this.accumulatedRdHours.get(employeeIdOrCode) || 0;
+    this.accumulatedRdHours.set(employeeIdOrCode, current + hours);
+  }
+
+  public static getResearchHours(employeeIdOrCode: string): number {
+    return this.accumulatedRdHours.get(employeeIdOrCode) || 0;
+  }
+
   /**
    * Tính toán định mức giờ giảng pháp định và tỷ lệ miễn giảm kiêm nhiệm theo TT 20/2020/TT-BGDĐT
    */
