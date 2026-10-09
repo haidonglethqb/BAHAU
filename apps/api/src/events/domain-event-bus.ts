@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { DomainEvent, DomainEventMetadata } from "@bahau/contracts";
+import { OutboxService } from "../services/outbox.service.js";
 
 export type DomainEventHandler<T = any> = (event: DomainEvent<T>) => Promise<void> | void;
 
@@ -55,11 +56,14 @@ export class DomainEventBus {
    * Tự động lưu vào Event Store để phục vụ Audit Trail và Event Replay
    */
   public async publish<T = any>(event: DomainEvent<T>): Promise<void> {
-    // 1. Lưu vào Event Store
+    // 1. Lưu vào Event Store & Persistent Outbox Audit
     this.eventStore.push(event);
     if (this.eventStore.length > this.maxStoreSize) {
       this.eventStore.shift();
     }
+    try {
+      OutboxService.recordDomainEvent(event).catch(() => {});
+    } catch {}
 
     // 2. Kích hoạt toàn bộ Subscribers đã đăng ký
     const registeredHandlers = this.handlers.get(event.name) || [];
@@ -95,11 +99,14 @@ export class DomainEventBus {
    * Phát sự kiện đồng bộ hoàn toàn (Sync Publish)
    */
   public publishSync<T = any>(event: DomainEvent<T>): void {
-    // 1. Lưu vào Event Store
+    // 1. Lưu vào Event Store & Persistent Outbox Audit
     this.eventStore.push(event);
     if (this.eventStore.length > this.maxStoreSize) {
       this.eventStore.shift();
     }
+    try {
+      OutboxService.recordDomainEvent(event).catch(() => {});
+    } catch {}
 
     // 2. Kích hoạt toàn bộ Subscribers đã đăng ký
     const registeredHandlers = this.handlers.get(event.name) || [];
