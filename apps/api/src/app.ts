@@ -6,9 +6,14 @@ import { requestIdMiddleware } from "./middlewares/request-id.middleware.js";
 import { authenticate } from "./middlewares/auth.middleware.js";
 import { notFoundHandler, errorHandler } from "./middlewares/error.middleware.js";
 import v1Router from "./routes/v1/index.js";
+import { initEventSubscribers } from "./events/index.js";
 
 export function createApp(): Express {
+  // Khởi tạo Decoupled Event-Driven Bus & Subscribers
+  initEventSubscribers();
+
   const app = express();
+
 
   // Security headers
   app.use(helmet());

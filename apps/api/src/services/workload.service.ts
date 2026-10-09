@@ -19,6 +19,21 @@ export class WorkloadService {
     this.probationaryEmployees.add(employeeIdOrCode);
   }
 
+  public static isPromotedSenior(employeeIdOrCode: string): boolean {
+    return this.promotedSeniorEmployees.has(employeeIdOrCode);
+  }
+
+  public static isProbationary(employeeIdOrCode: string): boolean {
+    return this.probationaryEmployees.has(employeeIdOrCode);
+  }
+
+  public static getTeachingNormHours(employeeIdOrCode: string): number {
+    const isSenior = this.promotedSeniorEmployees.has(employeeIdOrCode);
+    const base = isSenior ? 216 : 270;
+    const isProbation = this.probationaryEmployees.has(employeeIdOrCode);
+    return isProbation ? Math.round(base * 0.5) : base;
+  }
+
   // Quản lý giờ NCKH & Dự án tư vấn thiết kế quy đổi bù trừ định mức
   private static accumulatedRdHours = new Map<string, number>();
 

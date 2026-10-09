@@ -154,6 +154,15 @@ export class PayrollService {
     }
   }
 
+  public static getFacultyMember(employeeIdOrCode: string) {
+    return DEFAULT_FACULTY_MEMBERS.find(
+      (m) =>
+        m.employeeId === employeeIdOrCode ||
+        m.employeeCode === employeeIdOrCode ||
+        m.id === employeeIdOrCode
+    );
+  }
+
   /**
    * Cập nhật Chức danh nghề nghiệp và Hệ số lương khi được Bổ nhiệm chức danh GS/PGS/GVC/GVCC
    */

@@ -7,7 +7,7 @@ import { PkiService } from "./pki.service.js";
 import { PayrollService } from "./payroll.service.js";
 import { WorkloadService } from "./workload.service.js";
 import { KpiService } from "./kpi.service.js";
-import type {
+import {
   PostgradStudentDto,
   CreatePostgradStudentInput,
   ScheduleDefenseCouncilInput,
@@ -16,13 +16,16 @@ import type {
   PostgradFilterQuery,
   CouncilMemberScore,
   SupervisorInfo,
+  DOMAIN_EVENTS,
 } from "@bahau/contracts";
+import { DomainEventBus, initEventSubscribers } from "../events/index.js";
 
 export class PostgradService {
   // Kho lưu trữ trong bộ nhớ đảm bảo 100% tính sẵn sàng độc lập (Zero-crash Resilience)
   private static students = new Map<string, PostgradStudentDto>();
 
   static {
+    initEventSubscribers();
     // Khởi tạo các học viên cao học & nghiên cứu sinh mẫu chuẩn DAU
     const sampleStudents: PostgradStudentDto[] = [
       {
@@ -394,7 +397,8 @@ export class PostgradService {
    */
   public static awardDegreeWithPki(
     id: string,
-    input: AwardPostgradDegreeWithPkiInput
+    input: AwardPostgradDegreeWithPkiInput,
+    _currentUser?: any
   ): { student: PostgradStudentDto; pkiSignature: string; resolutionNumber: string; signedAt: string } {
     const student = this.getStudentById(id);
 
@@ -434,30 +438,42 @@ export class PostgradService {
     this.students.set(id, updated);
 
     // =========================================================================
-    // TRIPLE-COUPLING ENGINE (TT 18/2021 & TT 23/2021/TT-BGDĐT)
+    // DECOUPLED EVENT-DRIVEN ENGINE: Publish POSTGRAD_DEGREE_AWARDED
+    // Kích hoạt đồng thời Payroll, Workload và KPI thông qua DomainEventBus
     // =========================================================================
-
-    // 1. Coupling vào PayrollService: Rót thù lao Hội đồng chấm luận văn cho 5 thành viên
-    if (student.defenseMembers && student.defenseMembers.length > 0) {
-      for (const m of student.defenseMembers) {
-        if (m.honorariumAmount > 0) {
-          PayrollService.addPostgradCouncilHonorarium(m.employeeCode, m.honorariumAmount);
-          PayrollService.addPostgradCouncilHonorarium(m.employeeId, m.honorariumAmount);
+    DomainEventBus.getInstance().publishSync(
+      DomainEventBus.createEvent(
+        DOMAIN_EVENTS.POSTGRAD_DEGREE_AWARDED,
+        student.id,
+        {
+          studentId: student.id,
+          studentCode: student.studentCode,
+          fullName: student.fullName,
+          degreeLevel: student.degreeLevel,
+          thesisTitle: student.thesisTitle,
+          resolutionNumber,
+          signedAt: signResult.signedAt,
+          supervisors: student.supervisors.map((s) => ({
+            employeeId: s.employeeId,
+            employeeCode: s.employeeCode,
+            role: s.role,
+            convertedHours: s.convertedHours,
+            kpiPoints: s.kpiPoints,
+          })),
+          defenseMembers: (student.defenseMembers || []).map((m) => ({
+            employeeId: m.employeeId,
+            employeeCode: m.employeeCode,
+            role: m.role,
+            honorariumAmount: m.honorariumAmount,
+          })),
+        },
+        {
+          actorId: _currentUser?.id,
+          actorRole: _currentUser?.role,
+          source: "BAHAU_POSTGRAD_SERVICE",
         }
-      }
-    }
-
-    // 2. Coupling vào WorkloadService & KpiService cho Cán bộ hướng dẫn
-    for (const sup of student.supervisors) {
-      if (sup.convertedHours > 0) {
-        WorkloadService.addSupervisionHours(sup.employeeCode, sup.convertedHours);
-        WorkloadService.addSupervisionHours(sup.employeeId, sup.convertedHours);
-      }
-      if (sup.kpiPoints > 0) {
-        KpiService.addSupervisionKpiPoints(sup.employeeCode, sup.kpiPoints);
-        KpiService.addSupervisionKpiPoints(sup.employeeId, sup.kpiPoints);
-      }
-    }
+      )
+    );
 
     return {
       student: updated,

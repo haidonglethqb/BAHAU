@@ -6,20 +6,23 @@ import { AppError } from "../middlewares/error.middleware.js";
 import { PkiService } from "./pki.service.js";
 import { PayrollService } from "./payroll.service.js";
 import { WorkloadService } from "./workload.service.js";
-import type {
+import {
   RecruitmentCandidateDto,
   CreateCandidateApplicationInput,
   ScoreRound1Input,
   ScoreRound2Input,
   ApproveRecruitmentWithPkiInput,
   RecruitmentFilterQuery,
+  DOMAIN_EVENTS,
 } from "@bahau/contracts";
+import { DomainEventBus, initEventSubscribers } from "../events/index.js";
 
 export class RecruitmentService {
   // Kho lưu trữ trong bộ nhớ đảm bảo 100% tính sẵn sàng độc lập (Zero-crash Resilience)
   private static candidates = new Map<string, RecruitmentCandidateDto>();
 
   static {
+    initEventSubscribers();
     // Khởi tạo các ứng viên mẫu đại học chuẩn DAU
     const sampleCandidates: RecruitmentCandidateDto[] = [
       {
@@ -361,19 +364,31 @@ export class RecruitmentService {
     candidate.pkiSignedAt = signatureResult.signedAt;
     candidate.updatedAt = new Date().toISOString();
 
-    // 1. Tự động đồng bộ ngạch bậc sang PayrollService
-    PayrollService.registerProbationaryFaculty({
-      employeeId: `${appointedEmployeeCode}-ID`,
-      employeeCode: appointedEmployeeCode,
-      fullName: candidate.fullName,
-      departmentName: candidate.targetDepartment,
-      degree: candidate.degree,
-      salaryCoefficient: probationSalaryCoeff,
-    });
-
-    // 2. Tự động áp dụng giảm 50% định mức giờ giảng sang WorkloadService
-    WorkloadService.registerProbationaryFaculty(`${appointedEmployeeCode}-ID`);
-    WorkloadService.registerProbationaryFaculty(appointedEmployeeCode);
+    // Phát Domain Event để Decouple sang PayrollService và WorkloadService
+    DomainEventBus.getInstance().publishSync(
+      DomainEventBus.createEvent(
+        DOMAIN_EVENTS.CANDIDATE_APPOINTED,
+        candidate.id,
+        {
+          candidateId: candidate.id,
+          candidateCode: candidate.candidateCode,
+          fullName: candidate.fullName,
+          degree: candidate.degree,
+          targetDepartment: candidate.targetDepartment,
+          appointedEmployeeCode,
+          probationSalaryCoeff,
+          isProbation: true,
+          quotaReductionPercentage: 50,
+          resolutionNumber,
+          signedAt: signatureResult.signedAt,
+        },
+        {
+          actorId: _currentUser?.id,
+          actorRole: _currentUser?.role,
+          source: "BAHAU_RECRUITMENT_SERVICE",
+        }
+      )
+    );
 
     this.candidates.set(candidate.id, candidate);
     return candidate;

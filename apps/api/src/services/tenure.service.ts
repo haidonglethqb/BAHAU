@@ -6,7 +6,7 @@ import { AppError } from "../middlewares/error.middleware.js";
 import { PkiService } from "./pki.service.js";
 import { PayrollService, DEFAULT_FACULTY_MEMBERS } from "./payroll.service.js";
 import { WorkloadService } from "./workload.service.js";
-import type {
+import {
   TenureApplicationDto,
   CreateTenureApplicationInput,
   TenureCouncilVoteInput,
@@ -15,13 +15,16 @@ import type {
   ScientificWorkItem,
   AcademicRankTitle,
   CareerClassTitle,
+  DOMAIN_EVENTS,
 } from "@bahau/contracts";
+import { DomainEventBus, initEventSubscribers } from "../events/index.js";
 
 export class TenureService {
   // Kho lưu trữ trong bộ nhớ đảm bảo 100% tính sẵn sàng độc lập (Zero-crash Resilience)
   private static applications = new Map<string, TenureApplicationDto>();
 
   static {
+    initEventSubscribers();
     // Khởi tạo các hồ sơ mẫu tiêu biểu của Trường ĐH Kiến trúc Đà Nẵng
     const sampleApplications: TenureApplicationDto[] = [
       {
@@ -575,17 +578,30 @@ export class TenureService {
     app.pkiSignedAt = signatureResult.signedAt;
     app.updatedAt = new Date().toISOString();
 
-    // 1. Tự động đồng bộ sang PayrollService
-    PayrollService.updateFacultyCareerClass(
-      app.employeeId,
-      app.targetCareerClass,
-      newSalaryCoeff,
-      app.targetAcademicRank
+    // Phát Domain Event để Decouple sang PayrollService và WorkloadService
+    DomainEventBus.getInstance().publishSync(
+      DomainEventBus.createEvent(
+        DOMAIN_EVENTS.TENURE_APPOINTED,
+        app.id,
+        {
+          employeeId: app.employeeId,
+          employeeCode: app.employeeCode,
+          fullName: app.employeeName,
+          newAcademicTitle: app.targetCareerClass,
+          newSalaryCoefficient: newSalaryCoeff,
+          newTeachingNormHours: 216,
+          overtimeCompRate: 200000,
+          academicRank: app.targetAcademicRank,
+          resolutionNumber,
+          signedAt: signatureResult.signedAt,
+        },
+        {
+          actorId: _currentUser?.id,
+          actorRole: _currentUser?.role,
+          source: "BAHAU_TENURE_SERVICE",
+        }
+      )
     );
-
-    // 2. Tự động chuyển đổi định mức giảng dạy sang WorkloadService (Senior / Prof: 216h định mức, 200.000đ/h thù lao)
-    WorkloadService.markAsSeniorOrProf(app.employeeId);
-    WorkloadService.markAsSeniorOrProf(app.employeeCode);
 
     this.applications.set(app.id, app);
     return app;

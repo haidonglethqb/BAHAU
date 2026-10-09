@@ -7,7 +7,7 @@ import { PkiService } from "./pki.service.js";
 import { PayrollService } from "./payroll.service.js";
 import { WorkloadService } from "./workload.service.js";
 import { KpiService } from "./kpi.service.js";
-import type {
+import {
   RdProjectDto,
   CreateRdProjectInput,
   ReviewRdProjectInput,
@@ -15,13 +15,16 @@ import type {
   ApproveRdWithPkiInput,
   RdProjectFilterQuery,
   RdTeamMember,
+  DOMAIN_EVENTS,
 } from "@bahau/contracts";
+import { DomainEventBus, initEventSubscribers } from "../events/index.js";
 
 export class RdService {
   // Kho lưu trữ trong bộ nhớ đảm bảo 100% tính sẵn sàng độc lập (Zero-crash Resilience)
   private static projects = new Map<string, RdProjectDto>();
 
   static {
+    initEventSubscribers();
     // Khởi tạo các đề tài & dự án tư vấn thiết kế mẫu chuẩn DAU
     const sampleProjects: RdProjectDto[] = [
       {
@@ -371,7 +374,8 @@ export class RdService {
    */
   public static approveAndSignWithPki(
     id: string,
-    input: ApproveRdWithPkiInput
+    input: ApproveRdWithPkiInput,
+    _currentUser?: any
   ): { project: RdProjectDto; pkiSignature: string; resolutionNumber: string; signedAt: string } {
     const project = this.getProjectById(id);
 
@@ -412,27 +416,42 @@ export class RdService {
     this.projects.set(id, updated);
 
     // =========================================================================
-    // TRIPLE-COUPLING ENGINE (Nghị định 109/2022/NĐ-CP & TT 03/2023/TT-BGDĐT)
+    // DECOUPLED EVENT-DRIVEN ENGINE: Publish RD_PROJECT_APPROVED
+    // Kích hoạt đồng thời Payroll, Workload và KPI thông qua DomainEventBus
     // =========================================================================
-    for (const member of project.members) {
-      // 1. Coupling vào PayrollService: Rót nhuận bút vào thu nhập tháng
-      if (member.allocatedAmount > 0) {
-        PayrollService.addRoyaltyPayment(member.employeeCode, member.allocatedAmount);
-        PayrollService.addRoyaltyPayment(member.employeeId, member.allocatedAmount);
-      }
-
-      // 2. Coupling vào WorkloadService: Quy đổi giờ NCKH bù trừ định mức pháp định
-      if (member.convertedResearchHours > 0) {
-        WorkloadService.addResearchHours(member.employeeCode, member.convertedResearchHours);
-        WorkloadService.addResearchHours(member.employeeId, member.convertedResearchHours);
-      }
-
-      // 3. Coupling vào KpiService: Cộng điểm Trụ cột II (NCKH & Sáng tác Kiến trúc)
-      const isLead = member.role === "PRINCIPAL_INVESTIGATOR" || member.role === "LEAD_ARCHITECT";
-      const kpiPoints = isLead ? 35 : 20;
-      KpiService.addResearchKpiPoints(member.employeeCode, kpiPoints);
-      KpiService.addResearchKpiPoints(member.employeeId, kpiPoints);
-    }
+    DomainEventBus.getInstance().publishSync(
+      DomainEventBus.createEvent(
+        DOMAIN_EVENTS.RD_PROJECT_APPROVED,
+        project.id,
+        {
+          projectId: project.id,
+          projectCode: project.projectCode,
+          title: project.title,
+          contractValue: project.contractValue,
+          royaltyFundAmount: project.royaltyFundAmount,
+          resolutionNumber,
+          signedAt: signResult.signedAt,
+          members: project.members.map((m) => {
+            const isLead =
+              m.role === "PRINCIPAL_INVESTIGATOR" || m.role === "LEAD_ARCHITECT";
+            return {
+              employeeId: m.employeeId,
+              employeeCode: m.employeeCode,
+              fullName: m.fullName,
+              role: m.role,
+              allocatedAmount: m.allocatedAmount || 0,
+              convertedResearchHours: m.convertedResearchHours || 0,
+              kpiPoints: isLead ? 35 : 20,
+            };
+          }),
+        },
+        {
+          actorId: _currentUser?.id,
+          actorRole: _currentUser?.role,
+          source: "BAHAU_RD_SERVICE",
+        }
+      )
+    );
 
     return {
       project: updated,

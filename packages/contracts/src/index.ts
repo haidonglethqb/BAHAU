@@ -17,3 +17,4 @@ export * from "./tenure/index.js";
 export * from "./recruitment/index.js";
 export * from "./rd/index.js";
 export * from "./postgrad/index.js";
+export * from "./events/index.js";
