@@ -18,6 +18,7 @@ import executiveRoutes from "./executive.routes.js";
 import tenureRoutes from "./tenure.routes.js";
 import recruitmentRoutes from "./recruitment.routes.js";
 import rdRoutes from "./rd.routes.js";
+import postgradRoutes from "./postgrad.routes.js";
 
 const router = Router();
 
@@ -40,5 +41,6 @@ router.use(executiveRoutes);
 router.use(tenureRoutes);
 router.use(recruitmentRoutes);
 router.use(rdRoutes);
+router.use(postgradRoutes);
 
 export default router;

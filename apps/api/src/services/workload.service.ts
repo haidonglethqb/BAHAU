@@ -31,6 +31,18 @@ export class WorkloadService {
     return this.accumulatedRdHours.get(employeeIdOrCode) || 0;
   }
 
+  // Quản lý giờ chuẩn hướng dẫn Nghiên cứu sinh & Luận văn Thạc sĩ (TT 20/2020)
+  private static accumulatedSupervisionHours = new Map<string, number>();
+
+  public static addSupervisionHours(employeeIdOrCode: string, hours: number): void {
+    const current = this.accumulatedSupervisionHours.get(employeeIdOrCode) || 0;
+    this.accumulatedSupervisionHours.set(employeeIdOrCode, current + hours);
+  }
+
+  public static getSupervisionHours(employeeIdOrCode: string): number {
+    return this.accumulatedSupervisionHours.get(employeeIdOrCode) || 0;
+  }
+
   /**
    * Tính toán định mức giờ giảng pháp định và tỷ lệ miễn giảm kiêm nhiệm theo TT 20/2020/TT-BGDĐT
    */

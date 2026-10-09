@@ -227,6 +227,18 @@ export class KpiService {
     return this.accumulatedRdPoints.get(employeeIdOrCode) || 0;
   }
 
+  // Tích lũy điểm Trụ cột I & II từ hướng dẫn Luận văn Thạc sĩ & Nghiên cứu sinh
+  private static accumulatedSupervisionPoints = new Map<string, number>();
+
+  public static addSupervisionKpiPoints(employeeIdOrCode: string, points: number): void {
+    const current = this.accumulatedSupervisionPoints.get(employeeIdOrCode) || 0;
+    this.accumulatedSupervisionPoints.set(employeeIdOrCode, current + points);
+  }
+
+  public static getSupervisionKpiPoints(employeeIdOrCode: string): number {
+    return this.accumulatedSupervisionPoints.get(employeeIdOrCode) || 0;
+  }
+
   static {
     // Khởi tạo các đánh giá mẫu đại học chuẩn DAU
     const mockList: KpiEvaluationDto[] = [

@@ -30,6 +30,7 @@ import {
   Award,
   UserPlus,
   Compass,
+  BookMarked,
 } from 'lucide-react'
 import { useAuth, ROLE_USER_MAP } from '../context/AuthContext'
 import type { Role } from '../data'
@@ -76,6 +77,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} /> },
       { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} /> },
       { href: '/rd', label: 'NCKH & Nhuận Bút Thiết Kế', icon: <Compass size={18} /> },
+      { href: '/postgraduate', label: 'Đào tạo Sau Đại học', icon: <BookMarked size={18} /> },
     ],
   },
   {

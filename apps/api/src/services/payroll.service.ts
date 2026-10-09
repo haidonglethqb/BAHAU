@@ -231,6 +231,18 @@ export class PayrollService {
     return this.allocatedRoyalties.get(employeeIdOrCode) || 0;
   }
 
+  // Quản lý thù lao Hội đồng chấm bảo vệ Luận văn Thạc sĩ & Luận án Tiến sĩ
+  private static postgradHonorariums = new Map<string, number>();
+
+  public static addPostgradCouncilHonorarium(employeeIdOrCode: string, amount: number): void {
+    const current = this.postgradHonorariums.get(employeeIdOrCode) || 0;
+    this.postgradHonorariums.set(employeeIdOrCode, current + amount);
+  }
+
+  public static getPostgradCouncilHonorarium(employeeIdOrCode: string): number {
+    return this.postgradHonorariums.get(employeeIdOrCode) || 0;
+  }
+
   /**
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)
    */
