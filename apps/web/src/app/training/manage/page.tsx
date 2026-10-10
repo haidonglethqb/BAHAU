@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { FileText } from "lucide-react";
+import { FileText, CheckCircle2, XCircle, Clock, AlertTriangle, X } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
 interface CertificateAdminItem {
@@ -186,11 +186,11 @@ export default function TrainingManagePage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "VERIFIED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">✓ Đã thẩm định</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200"><CheckCircle2 size={12} /> Đã thẩm định</span>;
       case "PENDING":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200 animate-pulse">⏳ Chờ duyệt</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200 animate-pulse"><Clock size={12} /> Chờ duyệt</span>;
       case "REJECTED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 border border-red-200">✕ Từ chối</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 border border-red-200"><XCircle size={12} /> Từ chối</span>;
       case "EXPIRED":
         return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-300">Quá hạn</span>;
       default:
@@ -247,11 +247,11 @@ export default function TrainingManagePage() {
           }`}
         >
           <div className="flex items-center gap-2">
-            <span className="text-lg">{message.type === "success" ? "✓" : "⚠️"}</span>
+            {message.type === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
             <p className="text-sm font-medium">{message.text}</p>
           </div>
-          <button onClick={() => setMessage(null)} className="text-sm text-gray-400 hover:text-gray-600">
-            ✕
+          <button onClick={() => setMessage(null)} className="text-sm text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100">
+            <X size={16} />
           </button>
         </div>
       )}
@@ -282,7 +282,10 @@ export default function TrainingManagePage() {
             <span className="text-2xl font-bold text-red-700">{expiredCount}</span>
             <span className="text-xs text-red-600 font-medium">chứng chỉ</span>
           </div>
-          <p className="mt-2 text-xs text-red-600 font-medium">⚠️ Đã hết hạn hành nghề</p>
+          <p className="mt-2 text-xs text-red-600 font-medium flex items-center gap-1">
+            <AlertTriangle size={12} />
+            <span>Đã hết hạn hành nghề</span>
+          </p>
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -446,9 +449,9 @@ export default function TrainingManagePage() {
               </div>
               <button
                 onClick={() => setSelectedCert(null)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 
@@ -506,7 +509,7 @@ export default function TrainingManagePage() {
                     onChange={() => setVerifyDecision("VERIFIED")}
                     className="text-indigo-600 focus:ring-indigo-500"
                   />
-                  <span className="text-sm font-semibold text-emerald-700">✓ Xác nhận Hợp lệ (VERIFIED)</span>
+                  <span className="text-sm font-semibold text-emerald-700 flex items-center gap-1.5"><CheckCircle2 size={15} /> Xác nhận Hợp lệ (VERIFIED)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -517,7 +520,7 @@ export default function TrainingManagePage() {
                     onChange={() => setVerifyDecision("REJECTED")}
                     className="text-red-600 focus:ring-red-500"
                   />
-                  <span className="text-sm font-semibold text-red-700">✕ Từ chối / Yêu cầu bổ sung (REJECTED)</span>
+                  <span className="text-sm font-semibold text-red-700 flex items-center gap-1.5"><XCircle size={15} /> Từ chối / Yêu cầu bổ sung (REJECTED)</span>
                 </label>
               </div>
 

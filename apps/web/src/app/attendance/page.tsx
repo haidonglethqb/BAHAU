@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Lightbulb, Lock } from "lucide-react";
+import { CheckCircle2, Lightbulb, Lock, XCircle, X } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface AttendanceRecord {
@@ -427,8 +427,15 @@ export default function AttendancePersonalPage() {
             <span className="text-2xl font-black text-blue-900">{summary.totalPayableDays}</span>
             <span className="text-xs text-blue-700">ngày</span>
           </div>
-          <span className="mt-1 block text-[11px] font-semibold text-blue-700">
-            {summary.isFinalized ? "Đã chốt lương ✓" : "Tạm tính"}
+          <span className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-blue-700">
+            {summary.isFinalized ? (
+              <>
+                <CheckCircle2 size={12} />
+                <span>Đã chốt lương</span>
+              </>
+            ) : (
+              "Tạm tính"
+            )}
           </span>
         </div>
       </div>
@@ -571,13 +578,15 @@ export default function AttendancePersonalPage() {
                         </span>
                       )}
                       {a.status === "APPROVED" && (
-                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                          Đã chấp thuận ✓
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                          <CheckCircle2 size={12} />
+                          <span>Đã chấp thuận</span>
                         </span>
                       )}
                       {a.status === "REJECTED" && (
-                        <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">
-                          Từ chối ✕
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">
+                          <XCircle size={12} />
+                          <span>Từ chối</span>
                         </span>
                       )}
                     </td>
@@ -604,7 +613,7 @@ export default function AttendancePersonalPage() {
                 onClick={() => setShowModal(false)}
                 className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 

@@ -63,7 +63,9 @@ export function registerPayrollSubscribers(): void {
       for (const member of payload.members) {
         if (member.allocatedAmount > 0) {
           PayrollService.addRoyaltyPayment(member.employeeCode, member.allocatedAmount);
-          PayrollService.addRoyaltyPayment(member.employeeId, member.allocatedAmount);
+          if (member.employeeId && member.employeeId !== member.employeeCode) {
+            PayrollService.addRoyaltyPayment(member.employeeId, member.allocatedAmount);
+          }
         }
       }
     }
@@ -78,7 +80,9 @@ export function registerPayrollSubscribers(): void {
         for (const member of payload.defenseMembers) {
           if (member.honorariumAmount > 0) {
             PayrollService.addPostgradCouncilHonorarium(member.employeeCode, member.honorariumAmount);
-            PayrollService.addPostgradCouncilHonorarium(member.employeeId, member.honorariumAmount);
+            if (member.employeeId && member.employeeId !== member.employeeCode) {
+              PayrollService.addPostgradCouncilHonorarium(member.employeeId, member.honorariumAmount);
+            }
           }
         }
       }

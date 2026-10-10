@@ -46,7 +46,9 @@ export function registerWorkloadSubscribers(): void {
       for (const member of payload.members) {
         if (member.convertedResearchHours > 0) {
           WorkloadService.addResearchHours(member.employeeCode, member.convertedResearchHours);
-          WorkloadService.addResearchHours(member.employeeId, member.convertedResearchHours);
+          if (member.employeeId && member.employeeId !== member.employeeCode) {
+            WorkloadService.addResearchHours(member.employeeId, member.convertedResearchHours);
+          }
         }
       }
     }
@@ -60,7 +62,9 @@ export function registerWorkloadSubscribers(): void {
       for (const supervisor of payload.supervisors) {
         if (supervisor.convertedHours > 0) {
           WorkloadService.addSupervisionHours(supervisor.employeeCode, supervisor.convertedHours);
-          WorkloadService.addSupervisionHours(supervisor.employeeId, supervisor.convertedHours);
+          if (supervisor.employeeId && supervisor.employeeId !== supervisor.employeeCode) {
+            WorkloadService.addSupervisionHours(supervisor.employeeId, supervisor.convertedHours);
+          }
         }
       }
     }

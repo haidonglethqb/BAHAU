@@ -25,7 +25,9 @@ export function registerKpiSubscribers(): void {
           member.role === "LEAD_ARCHITECT";
         const points = member.kpiPoints || (isLead ? 35 : 20);
         KpiService.addResearchKpiPoints(member.employeeCode, points);
-        KpiService.addResearchKpiPoints(member.employeeId, points);
+        if (member.employeeId && member.employeeId !== member.employeeCode) {
+          KpiService.addResearchKpiPoints(member.employeeId, points);
+        }
       }
     }
   );
@@ -38,7 +40,9 @@ export function registerKpiSubscribers(): void {
       for (const supervisor of payload.supervisors) {
         if (supervisor.kpiPoints > 0) {
           KpiService.addSupervisionKpiPoints(supervisor.employeeCode, supervisor.kpiPoints);
-          KpiService.addSupervisionKpiPoints(supervisor.employeeId, supervisor.kpiPoints);
+          if (supervisor.employeeId && supervisor.employeeId !== supervisor.employeeCode) {
+            KpiService.addSupervisionKpiPoints(supervisor.employeeId, supervisor.kpiPoints);
+          }
         }
       }
     }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import { ArrowRight, X } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
 interface EmployeeDetail {
@@ -448,7 +449,7 @@ export default function EmployeeDetailPage({ params }: { params: Promise<{ id: s
                           Từ: <strong>{ev.fromUnitName}</strong> ({ev.fromPositionName || "—"})
                         </div>
                       )}
-                      {ev.fromUnitName && ev.toUnitName && <span className="text-blue-900 font-bold">➔</span>}
+                      {ev.fromUnitName && ev.toUnitName && <ArrowRight size={14} className="text-blue-900 mx-1 inline" />}
                       {ev.toUnitName && (
                         <div className="text-blue-950 font-medium">
                           Đến: <strong>{ev.toUnitName}</strong> ({ev.toPositionName || "—"})
@@ -479,9 +480,10 @@ export default function EmployeeDetailPage({ params }: { params: Promise<{ id: s
             </div>
             <Link
               href="/contracts"
-              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-slate-200"
+              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-slate-200 inline-flex items-center gap-1.5"
             >
-              Đi đến Quản trị Hợp đồng ➔
+              <span>Đi đến Quản trị Hợp đồng</span>
+              <ArrowRight size={13} />
             </Link>
           </div>
 
@@ -569,8 +571,8 @@ export default function EmployeeDetailPage({ params }: { params: Promise<{ id: s
                   Ghi nhận sự kiện cho {employee.fullName} ({employee.employeeCode})
                 </p>
               </div>
-              <button onClick={() => setShowAddEventModal(false)} className="text-slate-400 hover:text-slate-600">
-                ✕
+              <button onClick={() => setShowAddEventModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                <X size={18} />
               </button>
             </div>
 

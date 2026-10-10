@@ -26,6 +26,7 @@ import {
   UserCheck,
   Users,
   XCircle,
+  X,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 import { useAuth } from "../../../context/AuthContext";
@@ -225,7 +226,7 @@ function RdRoyaltyContent() {
     async function fetchProjects() {
       try {
         const token = localStorage.getItem("token") || "mock-token";
-        const res = await fetch("http://localhost:3001/api/v1/rd/projects", {
+        const res = await fetch("/api/v1/rd/projects", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
@@ -277,7 +278,7 @@ function RdRoyaltyContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/rd/projects/${activeProject.id}/review`,
+        `/api/v1/rd/projects/${activeProject.id}/review`,
         {
           method: "POST",
           headers: {
@@ -337,7 +338,7 @@ function RdRoyaltyContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/rd/projects/${activeProject.id}/allocate`,
+        `/api/v1/rd/projects/${activeProject.id}/allocate`,
         {
           method: "POST",
           headers: {
@@ -390,7 +391,7 @@ function RdRoyaltyContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/rd/projects/${activeProject.id}/approve`,
+        `/api/v1/rd/projects/${activeProject.id}/approve`,
         {
           method: "POST",
           headers: {
@@ -740,7 +741,7 @@ function RdRoyaltyContent() {
                     </div>
 
                     <a
-                      href={`http://localhost:3001/api/v1/rd/projects/${activeProject.id}/resolution/pdf`}
+                      href={`/api/v1/rd/projects/${activeProject.id}/resolution/pdf`}
                       target="_blank"
                       rel="noreferrer"
                       className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-sm transition-all"
@@ -810,8 +811,8 @@ function RdRoyaltyContent() {
                   <Award size={18} className="text-purple-600" />
                   <h3 className="text-base font-bold text-slate-900">Đánh Giá Nghiệm Thu Đề Tài / Dự Án</h3>
                 </div>
-                <button onClick={() => setIsReviewModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                  ✕
+                <button onClick={() => setIsReviewModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                  <X size={18} />
                 </button>
               </div>
 
@@ -892,8 +893,8 @@ function RdRoyaltyContent() {
                   <Percent size={18} className="text-indigo-600" />
                   <h3 className="text-base font-bold text-slate-900">Phân Bổ Tỷ Lệ Nhuận Bút Tác Giả</h3>
                 </div>
-                <button onClick={() => setIsAllocateModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                  ✕
+                <button onClick={() => setIsAllocateModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                  <X size={18} />
                 </button>
               </div>
 
@@ -970,8 +971,8 @@ function RdRoyaltyContent() {
                   <Key size={18} className="text-emerald-600" />
                   <h3 className="text-base font-bold text-slate-900">Ký Số PKI RSA-2048 & Quyết Toán</h3>
                 </div>
-                <button onClick={() => setIsPkiModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                  ✕
+                <button onClick={() => setIsPkiModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                  <X size={18} />
                 </button>
               </div>
 

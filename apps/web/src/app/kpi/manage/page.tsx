@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Lock,
   ExternalLink,
+  X,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 
@@ -548,11 +549,21 @@ export default function KpiManagementPage() {
               {currentCstcRatio}%
             </div>
             <span
-              className={`text-xs font-semibold ${
+              className={`text-xs font-semibold flex items-center gap-1 ${
                 isCstcCompliant ? "text-emerald-700" : "text-rose-700"
               }`}
             >
-              {isCstcCompliant ? "✓ Hợp lệ theo Luật TĐ-KT 2022" : "⚠ Cảnh báo: Vượt trần 15% CSTĐCS"}
+              {isCstcCompliant ? (
+                <>
+                  <CheckCircle2 size={13} />
+                  <span>Hợp lệ theo Luật TĐ-KT 2022</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={13} />
+                  <span>Cảnh báo: Vượt trần 15% CSTĐCS</span>
+                </>
+              )}
             </span>
           </div>
         </div>
@@ -804,9 +815,9 @@ export default function KpiManagementPage() {
                 </div>
                 <button
                   onClick={() => setSelectedEvalForCouncilVote(null)}
-                  className="text-gray-400 hover:text-gray-600 font-bold p-1"
+                  className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 
@@ -923,9 +934,9 @@ export default function KpiManagementPage() {
                 </div>
                 <button
                   onClick={() => setSelectedEvalForFinalize(null)}
-                  className="text-gray-400 hover:text-gray-600 font-bold p-1"
+                  className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 

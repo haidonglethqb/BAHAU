@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { CheckCircle2, AlertTriangle, X } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface BusinessTripItem {
@@ -354,21 +355,23 @@ export default function BusinessTripsPage() {
               <h3 className="text-lg font-bold text-slate-900">Đăng ký chuyến công tác mới</h3>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-slate-400 hover:text-slate-600 transition"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 
             {formError && (
-              <div className="mt-4 rounded-lg bg-rose-50 p-3 text-xs font-semibold text-rose-700 border border-rose-200">
-                ⚠️ {formError}
+              <div className="mt-4 rounded-lg bg-rose-50 p-3 text-xs font-semibold text-rose-700 border border-rose-200 flex items-center gap-1.5">
+                <AlertTriangle size={14} />
+                <span>{formError}</span>
               </div>
             )}
 
             {formSuccess && (
-              <div className="mt-4 rounded-lg bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                ✓ {formSuccess}
+              <div className="mt-4 rounded-lg bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
+                <CheckCircle2 size={14} />
+                <span>{formSuccess}</span>
               </div>
             )}
 
@@ -509,9 +512,9 @@ export default function BusinessTripsPage() {
               </div>
               <button
                 onClick={() => setSelectedTrip(null)}
-                className="text-slate-400 hover:text-slate-600 transition"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 

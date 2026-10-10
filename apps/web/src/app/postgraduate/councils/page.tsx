@@ -26,6 +26,7 @@ import {
   UserCheck,
   Users,
   XCircle,
+  X,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 import { useAuth } from "../../../context/AuthContext";
@@ -231,7 +232,7 @@ function PostgradCouncilsContent() {
     async function fetchStudents() {
       try {
         const token = localStorage.getItem("token") || "mock-token";
-        const res = await fetch("http://localhost:3001/api/v1/postgrad/students", {
+        const res = await fetch("/api/v1/postgrad/students", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
@@ -275,7 +276,7 @@ function PostgradCouncilsContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/postgrad/students/${activeStudent.id}/schedule-council`,
+        `/api/v1/postgrad/students/${activeStudent.id}/schedule-council`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -335,7 +336,7 @@ function PostgradCouncilsContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/postgrad/students/${activeStudent.id}/score-defense`,
+        `/api/v1/postgrad/students/${activeStudent.id}/score-defense`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -387,7 +388,7 @@ function PostgradCouncilsContent() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/api/v1/postgrad/students/${activeStudent.id}/award-degree`,
+        `/api/v1/postgrad/students/${activeStudent.id}/award-degree`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -727,7 +728,7 @@ function PostgradCouncilsContent() {
                     </div>
 
                     <a
-                      href={`http://localhost:3001/api/v1/postgrad/students/${activeStudent.id}/resolution/pdf`}
+                      href={`/api/v1/postgrad/students/${activeStudent.id}/resolution/pdf`}
                       target="_blank"
                       rel="noreferrer"
                       className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-sm transition-all"
@@ -797,7 +798,7 @@ function PostgradCouncilsContent() {
                   <Users size={18} className="text-blue-600" />
                   <h3 className="text-base font-bold text-slate-900">Thành Lập Hội Đồng Chấm Luận Văn / Luận Án</h3>
                 </div>
-                <button onClick={() => setIsScheduleModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                <button onClick={() => setIsScheduleModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X size={18} /></button>
               </div>
 
               <form onSubmit={handleScheduleCouncil} className="space-y-3 pt-3 text-xs">
@@ -869,7 +870,7 @@ function PostgradCouncilsContent() {
                   <Award size={18} className="text-purple-600" />
                   <h3 className="text-base font-bold text-slate-900">Hội Đồng Chấm Điểm & Biểu Quyết</h3>
                 </div>
-                <button onClick={() => setIsScoreModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                <button onClick={() => setIsScoreModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X size={18} /></button>
               </div>
 
               <form onSubmit={handleScoreDefense} className="space-y-3 pt-3 text-xs">
@@ -945,7 +946,7 @@ function PostgradCouncilsContent() {
                   <Key size={18} className="text-emerald-600" />
                   <h3 className="text-base font-bold text-slate-900">Ký Số PKI RSA-2048 Cấp Bằng</h3>
                 </div>
-                <button onClick={() => setIsPkiModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                <button onClick={() => setIsPkiModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X size={18} /></button>
               </div>
 
               <form onSubmit={handleAwardDegree} className="space-y-4 pt-4 text-xs">

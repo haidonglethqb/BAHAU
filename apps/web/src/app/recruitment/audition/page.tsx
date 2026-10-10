@@ -22,6 +22,7 @@ import {
   UserPlus,
   Users,
   XCircle,
+  X,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
 import { useAuth } from "../../../context/AuthContext";
@@ -677,9 +678,9 @@ export default function RecruitmentAuditionCouncilPage() {
                 </div>
                 <button
                   onClick={() => setShowR1Modal(false)}
-                  className="text-stone-400 hover:text-stone-600 text-sm font-bold"
+                  className="text-stone-400 hover:text-stone-600 p-1 rounded-lg hover:bg-stone-100"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 
@@ -813,9 +814,9 @@ export default function RecruitmentAuditionCouncilPage() {
                 </div>
                 <button
                   onClick={() => setShowR2Modal(false)}
-                  className="text-stone-400 hover:text-stone-600 text-sm font-bold"
+                  className="text-stone-400 hover:text-stone-600 p-1 rounded-lg hover:bg-stone-100"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 
@@ -947,9 +948,9 @@ export default function RecruitmentAuditionCouncilPage() {
                 </div>
                 <button
                   onClick={() => setShowPkiModal(false)}
-                  className="text-stone-400 hover:text-stone-600 text-sm font-bold"
+                  className="text-stone-400 hover:text-stone-600 p-1 rounded-lg hover:bg-stone-100"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 

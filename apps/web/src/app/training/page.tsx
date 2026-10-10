@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Award, FileText, GraduationCap } from "lucide-react";
+import { Award, FileText, GraduationCap, CheckCircle2, XCircle, Clock, AlertTriangle, ArrowRight, X } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface CertificateItem {
@@ -251,11 +251,11 @@ export default function TrainingPersonalPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "VERIFIED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">✓ Đã thẩm định</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200"><CheckCircle2 size={12} /> Đã thẩm định</span>;
       case "PENDING":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">⏳ Chờ thẩm định</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"><Clock size={12} /> Chờ thẩm định</span>;
       case "REJECTED":
-        return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 border border-red-200">✕ Bị từ chối</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 border border-red-200"><XCircle size={12} /> Bị từ chối</span>;
       case "EXPIRED":
         return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-300">Quá hạn</span>;
       default:
@@ -337,11 +337,11 @@ export default function TrainingPersonalPage() {
           }`}
         >
           <div className="flex items-center gap-2">
-            <span className="text-lg">{message.type === "success" ? "✓" : "⚠️"}</span>
+            {message.type === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
             <p className="text-sm font-medium">{message.text}</p>
           </div>
-          <button onClick={() => setMessage(null)} className="text-sm text-gray-400 hover:text-gray-600">
-            ✕
+          <button onClick={() => setMessage(null)} className="text-sm text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100">
+            <X size={16} />
           </button>
         </div>
       )}
@@ -559,8 +559,9 @@ export default function TrainingPersonalPage() {
 
                 <div className="flex flex-col items-end gap-2">
                   {course.isRegisteredByMe ? (
-                    <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                      ✓ Đã đăng ký ({course.myParticipantStatus || "Đang học"})
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      <CheckCircle2 size={13} />
+                      <span>Đã đăng ký ({course.myParticipantStatus || "Đang học"})</span>
                     </span>
                   ) : course.status === "COMPLETED" ? (
                     <button disabled className="px-4 py-2 text-xs font-medium rounded-lg text-gray-400 bg-gray-100 cursor-not-allowed">
@@ -569,9 +570,10 @@ export default function TrainingPersonalPage() {
                   ) : (
                     <button
                       onClick={() => handleRegisterCourse(course.id)}
-                      className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-blue-900 hover:bg-blue-800 transition shadow-sm"
+                      className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-blue-900 hover:bg-blue-800 transition shadow-sm inline-flex items-center gap-1.5"
                     >
-                      Đăng ký tham gia →
+                      <span>Đăng ký tham gia</span>
+                      <ArrowRight size={13} />
                     </button>
                   )}
                 </div>
@@ -589,9 +591,9 @@ export default function TrainingPersonalPage() {
               <h2 className="text-lg font-bold text-gray-900">Khai báo Chứng chỉ / Văn bằng Mới</h2>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1"
+                className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 

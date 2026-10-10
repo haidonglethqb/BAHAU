@@ -22,6 +22,7 @@ import {
   Layers,
   ChevronRight,
   Download,
+  X,
 } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 import { useAuth } from "../../context/AuthContext";
@@ -222,7 +223,7 @@ export default function RdProjectsPage() {
     async function fetchProjects() {
       try {
         const token = localStorage.getItem("token") || "mock-token";
-        const res = await fetch("http://localhost:3001/api/v1/rd/projects", {
+        const res = await fetch("/api/v1/rd/projects", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
@@ -300,7 +301,7 @@ export default function RdProjectsPage() {
     };
 
     try {
-      const res = await fetch("http://localhost:3001/api/v1/rd/projects", {
+      const res = await fetch("/api/v1/rd/projects", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -652,7 +653,7 @@ export default function RdProjectsPage() {
 
                       {project.status === "COMPLETED" && (
                         <a
-                          href={`http://localhost:3001/api/v1/rd/projects/${project.id}/resolution/pdf`}
+                          href={`/api/v1/rd/projects/${project.id}/resolution/pdf`}
                           target="_blank"
                           rel="noreferrer"
                           className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors"
@@ -695,7 +696,7 @@ export default function RdProjectsPage() {
                   onClick={() => setIsCreateModalOpen(false)}
                   className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-lg"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
 

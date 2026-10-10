@@ -53,11 +53,12 @@ export class OutboxService {
 
     // 2. Thử lưu vào Prisma OutboxEvent nếu có DB
     try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dto.aggregateId);
       await prisma.outboxEvent.create({
         data: {
           id: crypto.randomUUID(),
           aggregateType: dto.aggregateType,
-          aggregateId: dto.aggregateId.length === 36 ? dto.aggregateId : crypto.randomUUID(),
+          aggregateId: isUuid ? dto.aggregateId : crypto.randomUUID(),
           eventType: dto.eventType,
           payload: dto.payload,
           idempotencyKey: dto.idempotencyKey,
