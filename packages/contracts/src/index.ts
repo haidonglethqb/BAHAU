@@ -19,3 +19,4 @@ export * from "./rd/index.js";
 export * from "./postgrad/index.js";
 export * from "./events/index.js";
 export * from "./outbox/index.js";
+export * from "./jobs/index.js";

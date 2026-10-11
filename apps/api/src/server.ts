@@ -3,16 +3,23 @@ dotenv.config();
 
 import { app } from "./app.js";
 import { prisma } from "@bahau/database";
+import { JobScheduler } from "./jobs/scheduler.js";
 
 const PORT = Number(process.env["PORT"]) || 4000;
 
 const server = app.listen(PORT, () => {
   console.log(`[BAHAU API] Server listening on port ${PORT} (PID: ${process.pid})`);
+  // Tự động khởi động JobScheduler cho background tasks nếu không ở môi trường test
+  if (process.env["NODE_ENV"] !== "test") {
+    JobScheduler.getInstance().start();
+    console.log("[BAHAU API] Background JobScheduler & Outbox Poller daemon activated.");
+  }
 });
 
 // Graceful shutdown handling
 function handleShutdown(signal: string): void {
   console.log(`[BAHAU API] Received ${signal}, shutting down gracefully...`);
+  JobScheduler.getInstance().stop();
   server.close(async () => {
     console.log("[BAHAU API] HTTP server closed.");
     try {

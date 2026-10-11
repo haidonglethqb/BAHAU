@@ -20,6 +20,7 @@ import recruitmentRoutes from "./recruitment.routes.js";
 import rdRoutes from "./rd.routes.js";
 import postgradRoutes from "./postgrad.routes.js";
 import outboxRoutes from "./outbox.routes.js";
+import jobRoutes from "./job.routes.js";
 
 const router = Router();
 
@@ -44,5 +45,6 @@ router.use(recruitmentRoutes);
 router.use(rdRoutes);
 router.use(postgradRoutes);
 router.use("/outbox", outboxRoutes);
+router.use("/jobs", jobRoutes);
 
 export default router;
