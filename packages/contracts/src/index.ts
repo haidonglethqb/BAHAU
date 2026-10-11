@@ -20,3 +20,4 @@ export * from "./postgrad/index.js";
 export * from "./events/index.js";
 export * from "./outbox/index.js";
 export * from "./jobs/index.js";
+export * from "./observability/index.js";

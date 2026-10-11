@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { DomainEvent, DomainEventMetadata } from "@bahau/contracts";
 import { OutboxService } from "../services/outbox.service.js";
+import { MetricsService } from "../metrics/metrics.service.js";
 
 export type DomainEventHandler<T = any> = (event: DomainEvent<T>) => Promise<void> | void;
 
@@ -52,10 +53,29 @@ export class DomainEventBus {
   }
 
   /**
+   * Đếm tổng số lượng subscribers đang lắng nghe các sự kiện
+   */
+  public getSubscriberCount(): number {
+    let count = 0;
+    for (const list of this.handlers.values()) {
+      count += list.length;
+    }
+    return count;
+  }
+
+  /**
    * Phát sự kiện (Publish Event) tới toàn bộ các Subscribers
    * Tự động lưu vào Event Store để phục vụ Audit Trail và Event Replay
    */
   public async publish<T = any>(event: DomainEvent<T>): Promise<void> {
+    // 0. Ghi nhận Metrics
+    try {
+      MetricsService.getInstance().recordEventPublished(
+        event.name,
+        event.metadata?.source || "BAHAU_HRMS_CORE"
+      );
+    } catch {}
+
     // 1. Lưu vào Event Store & Persistent Outbox Audit
     this.eventStore.push(event);
     if (this.eventStore.length > this.maxStoreSize) {
@@ -99,6 +119,14 @@ export class DomainEventBus {
    * Phát sự kiện đồng bộ hoàn toàn (Sync Publish)
    */
   public publishSync<T = any>(event: DomainEvent<T>): void {
+    // 0. Ghi nhận Metrics
+    try {
+      MetricsService.getInstance().recordEventPublished(
+        event.name,
+        event.metadata?.source || "BAHAU_HRMS_CORE"
+      );
+    } catch {}
+
     // 1. Lưu vào Event Store & Persistent Outbox Audit
     this.eventStore.push(event);
     if (this.eventStore.length > this.maxStoreSize) {

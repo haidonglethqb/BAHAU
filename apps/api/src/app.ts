@@ -3,6 +3,9 @@ import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { requestIdMiddleware } from "./middlewares/request-id.middleware.js";
+import { traceIdMiddleware } from "./middlewares/trace.middleware.js";
+import { metricsMiddleware } from "./metrics/metrics.middleware.js";
+import { HealthController } from "./controllers/health.controller.js";
 import { authenticate } from "./middlewares/auth.middleware.js";
 import { notFoundHandler, errorHandler } from "./middlewares/error.middleware.js";
 import v1Router from "./routes/v1/index.js";
@@ -51,12 +54,17 @@ export function createApp(): Express {
     })
   );
 
-  // Parsers & Tracing
+  // Parsers, Tracing & Observability
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
   app.use(requestIdMiddleware);
+  app.use(traceIdMiddleware);
+  app.use(metricsMiddleware);
   app.use(authenticate);
+
+  // Root Prometheus Metrics endpoint (standard OpenMetrics scraper target)
+  app.get("/metrics", (req, res) => HealthController.getPrometheusMetrics(req, res));
 
   // API Routes
   app.use("/api/v1", v1Router);
