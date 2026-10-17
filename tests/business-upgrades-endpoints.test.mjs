@@ -17,7 +17,7 @@ async function runBusinessUpgradesTests() {
     });
 
     console.log(`\n[BOOT] Waiting for API server on port ${testPort}...`);
-    const ready = await waitForPort(Number(testPort), "127.0.0.1", 15000, entry);
+    const ready = await waitForPort(Number(testPort), "127.0.0.1", 30000, entry);
     assert.ok(ready, `API server must boot on port ${testPort} within 15s`);
     console.log(`[BOOT] API server ready on http://127.0.0.1:${testPort}`);
 

@@ -461,6 +461,116 @@ class ApiClient {
       })
     },
   }
+
+  // ===========================================================================
+  // PHASE 5: SYSTEM ADMINISTRATION, OBSERVABILITY & BACKGROUND WORKER QUEUE
+  // ===========================================================================
+  public system = {
+    getHealth: async () => {
+      return await this.request('/api/v1/health', { method: 'GET' })
+    },
+
+    getLiveness: async () => {
+      return await this.request('/api/v1/health/liveness', { method: 'GET' })
+    },
+
+    getReadiness: async () => {
+      return await this.request('/api/v1/health/readiness', { method: 'GET' })
+    },
+
+    getMetricsJson: async () => {
+      return await this.request('/api/v1/metrics/json', { method: 'GET' })
+    },
+
+    getMetricsText: async (): Promise<string | null> => {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/v1/metrics`, { method: 'GET' })
+        if (!res.ok) return null
+        return await res.text()
+      } catch {
+        return null
+      }
+    },
+
+    getOutboxEvents: async (params?: {
+      status?: string
+      eventType?: string
+      page?: number
+      limit?: number
+    }) => {
+      const q = new URLSearchParams()
+      if (params?.status && params.status !== 'ALL') q.set('status', params.status)
+      if (params?.eventType) q.set('eventType', params.eventType)
+      if (params?.page) q.set('page', String(params.page))
+      if (params?.limit) q.set('limit', String(params.limit))
+      const queryStr = q.toString()
+      return await this.request(`/api/v1/outbox/events${queryStr ? `?${queryStr}` : ''}`, { method: 'GET' })
+    },
+
+    getOutboxEventById: async (id: string) => {
+      return await this.request(`/api/v1/outbox/events/${encodeURIComponent(id)}`, { method: 'GET' })
+    },
+
+    retryOutboxEvent: async (id: string) => {
+      return await this.request(`/api/v1/outbox/events/${encodeURIComponent(id)}/retry`, {
+        method: 'POST',
+      })
+    },
+
+    processOutboxBatch: async (limit = 10) => {
+      return await this.request('/api/v1/outbox/process-batch', {
+        method: 'POST',
+        body: JSON.stringify({ limit }),
+      })
+    },
+
+    getJobs: async (params?: {
+      status?: string
+      jobType?: string
+      page?: number
+      limit?: number
+    }) => {
+      const q = new URLSearchParams()
+      if (params?.status && params.status !== 'ALL') q.set('status', params.status)
+      if (params?.jobType) q.set('jobType', params.jobType)
+      if (params?.page) q.set('page', String(params.page))
+      if (params?.limit) q.set('limit', String(params.limit))
+      const queryStr = q.toString()
+      return await this.request(`/api/v1/jobs${queryStr ? `?${queryStr}` : ''}`, { method: 'GET' })
+    },
+
+    getJobById: async (id: string) => {
+      return await this.request(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'GET' })
+    },
+
+    enqueueJob: async (jobType: string, payload: Record<string, any> = {}, priority?: number) => {
+      return await this.request('/api/v1/jobs/enqueue', {
+        method: 'POST',
+        body: JSON.stringify({ jobType, payload, priority }),
+      })
+    },
+
+    cancelJob: async (id: string, reason?: string) => {
+      return await this.request(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      })
+    },
+
+    retryJob: async (id: string) => {
+      return await this.request(`/api/v1/jobs/${encodeURIComponent(id)}/retry`, {
+        method: 'POST',
+      })
+    },
+
+    getJobSummary: async () => {
+      return await this.request('/api/v1/jobs/stats/summary', { method: 'GET' })
+    },
+
+    triggerOutboxPoll: async () => {
+      return await this.request('/api/v1/jobs/trigger-outbox-poll', { method: 'POST' })
+    },
+  }
 }
 
 export const apiClient = new ApiClient()

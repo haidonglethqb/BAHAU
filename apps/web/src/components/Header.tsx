@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import {
+  Activity,
   Banknote,
   Building2,
   ChevronRight,
@@ -107,6 +108,15 @@ export function Header() {
                 <Sparkles size={13} />
                 <span>AI Trợ lý</span>
               </Link>
+              {(user?.role === "SYSTEM_ADMIN" || user?.role === "RECTOR") && (
+                <Link
+                  href="/admin/system"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold"
+                >
+                  <Activity size={13} />
+                  <span>Hệ thống</span>
+                </Link>
+              )}
             </>
           )}
         </nav>
