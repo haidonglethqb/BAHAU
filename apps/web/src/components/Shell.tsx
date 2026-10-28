@@ -52,166 +52,47 @@ export interface NavGroup {
   items: NavItem[]
 }
 
-/**
- * Phân tách cây danh mục điều hướng theo đúng phạm vi thẩm quyền của từng vai trò (RBAC Dynamic Menu)
- */
-export function getNavGroupsForRole(role?: string): NavGroup[] {
-  switch (role) {
-    case 'LECTURER': // Cán bộ / Giảng viên thường
-      return [
-        {
-          group: 'TỔNG QUAN & CÁ NHÂN',
-          items: [
-            { href: '/dashboard', label: 'Bàn làm việc', icon: <LayoutDashboard size={18} /> },
-            { href: '/profile', label: 'Hồ sơ cá nhân & CV', icon: <User size={18} /> },
-            { href: '/leave', label: 'Sổ phép năm của tôi', icon: <Wallet size={18} /> },
-            { href: '/attendance', label: 'Chấm công & Điểm danh', icon: <CalendarCheck size={18} /> },
-            { href: '/trips', label: 'Lệnh công tác', icon: <Plane size={18} /> },
-          ],
-        },
-        {
-          group: 'HỌC THUẬT & CHUYÊN MÔN',
-          items: [
-            { href: '/workload', label: 'Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
-            { href: '/training', label: 'Đào tạo & Chứng chỉ', icon: <GraduationCap size={18} /> },
-            { href: '/kpi', label: 'Đánh giá KPI cá nhân', icon: <TrendingUp size={18} /> },
-            { href: '/rd', label: 'NCKH & Nhuận Bút', icon: <Compass size={18} /> },
-          ],
-        },
-        {
-          group: 'TIỆN ÍCH THÔNG MINH',
-          items: [
-            { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-
-    case 'DEAN': // Trưởng khoa / Quản lý đơn vị
-      return [
-        {
-          group: 'QUẢN LÝ KHOA & ĐƠN VỊ',
-          items: [
-            { href: '/dashboard', label: 'Bàn làm việc Khoa', icon: <LayoutDashboard size={18} /> },
-            { href: '/approvals', label: 'Phê duyệt Khoa', icon: <Inbox size={18} />, badge: 'Duyệt' },
-            { href: '/employees', label: 'Nhân sự Khoa', icon: <Users size={18} /> },
-            { href: '/units', label: 'Bộ môn & Đơn vị', icon: <Network size={18} /> },
-          ],
-        },
-        {
-          group: 'HỌC THUẬT & GIỜ CHUẨN',
-          items: [
-            { href: '/workload', label: 'Phân công Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
-            { href: '/kpi', label: 'Đánh giá KPI Khoa', icon: <TrendingUp size={18} /> },
-            { href: '/postgraduate', label: 'Đào tạo Sau Đại học', icon: <BookMarked size={18} /> },
-            { href: '/rd', label: 'NCKH & Nhuận Bút Thiết Kế', icon: <Compass size={18} /> },
-          ],
-        },
-        {
-          group: 'CÁ NHÂN & TRỢ LÝ',
-          items: [
-            { href: '/leave', label: 'Sổ phép năm', icon: <Wallet size={18} /> },
-            { href: '/attendance', label: 'Chấm công', icon: <CalendarCheck size={18} /> },
-            { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-
-    case 'HR_SPECIALIST': // Phòng Tổ chức - Hành chính
-      return [
-        {
-          group: 'QUẢN TRỊ NHÂN SỰ TOÀN TRƯỜNG',
-          items: [
-            { href: '/dashboard', label: 'Bàn làm việc TCHC', icon: <LayoutDashboard size={18} /> },
-            { href: '/employees', label: 'Hồ sơ CBGV toàn trường', icon: <Users size={18} /> },
-            { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} /> },
-            { href: '/units', label: 'Cơ cấu tổ chức DAU', icon: <Network size={18} /> },
-          ],
-        },
-        {
-          group: 'CHẤM CÔNG & LƯƠNG BỔNG',
-          items: [
-            { href: '/attendance', label: 'Chấm công & Quẹt thẻ', icon: <CalendarCheck size={18} /> },
-            { href: '/payroll', label: 'Bảng tính lương NĐ 85', icon: <Banknote size={18} /> },
-            { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} /> },
-            { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} /> },
-          ],
-        },
-        {
-          group: 'QUY TRÌNH & PHÊ DUYỆT',
-          items: [
-            { href: '/approvals', label: 'Hộp thư phê duyệt TCHC', icon: <Inbox size={18} />, badge: 'TCHC' },
-            { href: '/training', label: 'Quản lý đào tạo', icon: <GraduationCap size={18} /> },
-            { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-
-    case 'RECTOR': // Ban Giám hiệu / Hiệu trưởng
-      return [
-        {
-          group: 'ĐIỀU HÀNH BAN GIÁM HIỆU',
-          items: [
-            { href: '/dashboard', label: 'Executive Dashboard', icon: <LayoutDashboard size={18} /> },
-            { href: '/approvals', label: 'Phê duyệt Cấp Trường', icon: <Inbox size={18} />, badge: 'BGH' },
-            { href: '/payroll', label: 'Ký duyệt Bảng lương', icon: <Banknote size={18} /> },
-            { href: '/employees', label: 'Nhân sự toàn trường', icon: <Users size={18} /> },
-            { href: '/units', label: 'Cây tổ chức DAU', icon: <Network size={18} /> },
-          ],
-        },
-        {
-          group: 'CHIẾN LƯỢC & HỌC THUẬT',
-          items: [
-            { href: '/tenure', label: 'Hội đồng Chức danh', icon: <Award size={18} /> },
-            { href: '/kpi', label: 'Tổng hợp KPI Toàn trường', icon: <TrendingUp size={18} /> },
-            { href: '/rd', label: 'NCKH & Dự án Kiến trúc', icon: <Compass size={18} /> },
-            { href: '/postgraduate', label: 'Hội đồng Sau Đại học', icon: <BookMarked size={18} /> },
-          ],
-        },
-        {
-          group: 'HỆ THỐNG KỸ THUẬT',
-          items: [
-            { href: '/admin/system', label: 'Control Center K8s', icon: <Activity size={18} />, badge: 'K8s' },
-            { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-
-    case 'SYSTEM_ADMIN': // Quản trị hệ thống
-      return [
-        {
-          group: 'QUẢN TRỊ KỸ THUẬT & HỆ THỐNG',
-          items: [
-            { href: '/admin/system', label: 'System Control Center', icon: <Activity size={18} />, badge: 'Admin' },
-            { href: '/dashboard', label: 'Dashboard Kỹ thuật', icon: <LayoutDashboard size={18} /> },
-          ],
-        },
-        {
-          group: 'QUẢN LÝ TÀI KHOẢN & DỮ LIỆU',
-          items: [
-            { href: '/employees', label: 'Quản lý Tài khoản & CBGV', icon: <Users size={18} /> },
-            { href: '/units', label: 'Cơ cấu Tổ chức', icon: <Network size={18} /> },
-            { href: '/approvals', label: 'Giám sát Quy trình Duyệt', icon: <Inbox size={18} /> },
-            { href: '/ai-assistant', label: 'AI Trợ lý Kỹ thuật', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-
-    default: // Fallback mặc định
-      return [
-        {
-          group: 'TỔNG QUAN',
-          items: [
-            { href: '/dashboard', label: 'Bàn làm việc', icon: <LayoutDashboard size={18} /> },
-            { href: '/profile', label: 'Hồ sơ cá nhân', icon: <User size={18} /> },
-            { href: '/leave', label: 'Nghỉ phép', icon: <Wallet size={18} /> },
-            { href: '/attendance', label: 'Chấm công', icon: <CalendarCheck size={18} /> },
-            { href: '/workload', label: 'Giờ chuẩn', icon: <BookOpen size={18} /> },
-            { href: '/ai-assistant', label: 'AI Trợ lý', icon: <Sparkles size={18} />, badge: 'AI' },
-          ],
-        },
-      ]
-  }
-}
+const NAV_GROUPS: NavGroup[] = [
+  {
+    group: 'TỔNG QUAN & ĐIỀU HÀNH',
+    items: [
+      { href: '/dashboard', label: 'Executive Dashboard', icon: <LayoutDashboard size={18} /> },
+      { href: '/units', label: 'Cây tổ chức', icon: <Network size={18} /> },
+    ],
+  },
+  {
+    group: 'CÁ NHÂN & CÔNG TÁC',
+    items: [
+      { href: '/profile', label: 'Hồ sơ & CV', icon: <User size={18} /> },
+      { href: '/leave', label: 'Sổ phép năm', icon: <Wallet size={18} /> },
+      { href: '/attendance', label: 'Chấm công & Quẹt thẻ', icon: <CalendarCheck size={18} /> },
+      { href: '/trips', label: 'Lệnh công tác', icon: <Plane size={18} /> },
+    ],
+  },
+  {
+    group: 'HỌC THUẬT & CHUYÊN MÔN',
+    items: [
+      { href: '/workload', label: 'Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
+      { href: '/training', label: 'Đào tạo & Chứng chỉ', icon: <GraduationCap size={18} /> },
+      { href: '/kpi', label: 'Đánh giá KPI', icon: <TrendingUp size={18} /> },
+      { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} /> },
+      { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} /> },
+      { href: '/rd', label: 'NCKH & Nhuận Bút Thiết Kế', icon: <Compass size={18} /> },
+      { href: '/postgraduate', label: 'Đào tạo Sau Đại học', icon: <BookMarked size={18} /> },
+    ],
+  },
+  {
+    group: 'QUẢN TRỊ & HÀNH CHÍNH',
+    items: [
+      { href: '/employees', label: 'Danh bạ CBGV', icon: <Users size={18} /> },
+      { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} /> },
+      { href: '/payroll', label: 'Bảng lương Toàn trường', icon: <Banknote size={18} /> },
+      { href: '/approvals', label: 'Hộp thư phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox' },
+      { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
+      { href: '/admin/system', label: 'Hệ thống (Control Center)', icon: <Activity size={18} />, badge: 'K8s' },
+    ],
+  },
+]
 
 export function Shell({
   children,
@@ -243,9 +124,6 @@ export function Shell({
     title: 'Giảng viên',
     code: 'DAU260003',
   }
-
-  // Tự động lấy danh mục điều hướng theo vai trò đăng nhập
-  const navGroups = getNavGroupsForRole(currentUser.role)
 
   const handleRoleSelect = (roleKey: Role) => {
     loginAsRole(roleKey)
@@ -282,9 +160,9 @@ export function Shell({
           </div>
         </Link>
 
-        {/* Dynamic Navigation items */}
+        {/* Navigation items */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-          {navGroups.map((group) => (
+          {NAV_GROUPS.map((group) => (
             <div key={group.group}>
               <div className="mb-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {group.group}
@@ -313,7 +191,7 @@ export function Shell({
                             'rounded-full px-1.5 py-0.2 text-[10px] font-mono font-semibold',
                             item.badge === 'AI'
                               ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                              : item.badge === 'K8s' || item.badge === 'Admin'
+                              : item.badge === 'K8s'
                               ? 'bg-blue-100 text-blue-700 border border-blue-200'
                               : 'bg-amber-100 text-amber-800 border border-amber-200',
                           )}
@@ -359,7 +237,7 @@ export function Shell({
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-              {navGroups.map((group) => (
+              {NAV_GROUPS.map((group) => (
                 <div key={group.group}>
                   <div className="mb-1 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     {group.group}
@@ -377,9 +255,9 @@ export function Shell({
                             isActive ? 'bg-brand-50 font-bold text-brand-700' : 'text-muted hover:bg-slate-50',
                           )}
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            {item.icon}
-                            <span className="truncate">{item.label}</span>
+                          <div className="flex items-center gap-2">
+                            <span>{item.icon}</span>
+                            <span>{item.label}</span>
                           </div>
                         </Link>
                       )
@@ -388,13 +266,21 @@ export function Shell({
                 </div>
               ))}
             </nav>
+            <div className="border-t border-line p-3">
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+              >
+                <LogOut size={15} /> Đăng xuất
+              </button>
+            </div>
           </div>
           <div className="flex-1" onClick={() => setMobileMenuOpen(false)} />
         </div>
       )}
 
       {/* =========================================================================
-          MAIN CONTENT COLUMN
+          MAIN COLUMN
       ========================================================================= */}
       <div className="flex min-w-0 flex-col">
         {/* Top Header */}
@@ -403,7 +289,7 @@ export function Shell({
             {/* Mobile menu trigger */}
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="p-1.5 rounded-lg border border-line text-slate-600 md:hidden hover:bg-slate-50"
+              className="p-1.5 rounded-lg border border-line text-slate-600 md:hidden hover:bg-slate-50 cursor-pointer"
               aria-label="Mở danh mục điều hướng"
             >
               <Menu size={18} />
@@ -416,7 +302,7 @@ export function Shell({
                   setRoleMenuOpen((v) => !v)
                   setUserMenuOpen(false)
                 }}
-                className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:bg-slate-50 shadow-2xs"
+                className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:bg-slate-50 shadow-2xs cursor-pointer"
               >
                 <Building2 size={15} className="text-brand-500 shrink-0" />
                 <span className="hidden sm:inline font-medium text-slate-700">{currentUser.unitName || 'Đơn vị'}</span>
@@ -440,7 +326,7 @@ export function Shell({
                           key={rKey}
                           onClick={() => handleRoleSelect(rKey)}
                           className={cx(
-                            'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors',
+                            'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors cursor-pointer',
                             isCurrent ? 'bg-brand-50 font-bold text-brand-700' : 'hover:bg-slate-50 text-ink',
                           )}
                         >
@@ -485,15 +371,13 @@ export function Shell({
               </button>
 
               {/* QĐ NĐ 30: Cho TCHC (soạn thảo), Hiệu trưởng (ký số), Admin */}
-              {(currentUser.role === 'HR_SPECIALIST' || currentUser.role === 'RECTOR' || currentUser.role === 'SYSTEM_ADMIN') && (
-                <button
-                  onClick={() => setShowExecutive(true)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                >
-                  <ScrollText size={14} className="text-amber-700" />
-                  <span>QĐ NĐ 30</span>
-                </button>
-              )}
+              <button
+                onClick={() => setShowExecutive(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+              >
+                <ScrollText size={14} className="text-amber-700" />
+                <span>QĐ NĐ 30</span>
+              </button>
             </div>
 
             {/* Notification Bell Dropdown */}
