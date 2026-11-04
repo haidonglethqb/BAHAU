@@ -183,7 +183,7 @@ export default function EmployeeDetailPage({ params }: { params: Promise<{ id: s
   async function fetchEmployeeData() {
     try {
       setLoading(true);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
       const [resEmp, resEvents, resContracts, resUnits] = await Promise.all([
         fetch(`${apiUrl}/api/v1/employees/${employeeId}`, { credentials: "include" }),
@@ -232,7 +232,7 @@ export default function EmployeeDetailPage({ params }: { params: Promise<{ id: s
     try {
       setLoading(true);
       setFormMsg(null);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
       const res = await fetch(`${apiUrl}/api/v1/employees/${employeeId}/events`, {
         method: "POST",

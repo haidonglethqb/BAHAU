@@ -24,7 +24,7 @@ export function ApiHealthStatus() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
     async function checkHealth() {
       try {
