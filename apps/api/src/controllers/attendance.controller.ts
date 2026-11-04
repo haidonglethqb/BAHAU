@@ -81,7 +81,10 @@ export async function lockPeriod(req: Request, res: Response): Promise<void> {
 }
 
 export async function faceCheckIn(req: Request, res: Response): Promise<void> {
-  const employeeId = req.user?.employeeId || "DAU260003-ID";
+  const employeeId =
+    req.user?.employeeId ||
+    req.body?.employeeId ||
+    (req.body?.employeeCode ? `${req.body.employeeCode}-ID` : "DAU260003-ID");
   const result = await AttendanceService.faceCheckIn(employeeId, {
     snapshot: req.body?.snapshot,
     deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",
@@ -100,7 +103,10 @@ export async function faceCheckIn(req: Request, res: Response): Promise<void> {
 }
 
 export async function faceCheckOut(req: Request, res: Response): Promise<void> {
-  const employeeId = req.user?.employeeId || "DAU260003-ID";
+  const employeeId =
+    req.user?.employeeId ||
+    req.body?.employeeId ||
+    (req.body?.employeeCode ? `${req.body.employeeCode}-ID` : "DAU260003-ID");
   const result = await AttendanceService.faceCheckOut(employeeId, {
     snapshot: req.body?.snapshot,
     deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",

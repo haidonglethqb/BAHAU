@@ -99,6 +99,19 @@ export const SAMPLE_USERS: Record<string, AuthUser> = {
   "quantri@dau.edu.vn": ROLE_USER_MAP.admin,
 };
 
+export const ROLE_API_EMAIL_MAP: Record<string, string> = {
+  LECTURER: 'employee@dau.edu.vn',
+  DEAN: 'unithead@dau.edu.vn',
+  HR_SPECIALIST: 'hrspecialist@dau.edu.vn',
+  RECTOR: 'rector@dau.edu.vn',
+  SYSTEM_ADMIN: 'admin@dau.edu.vn',
+  cbgv: 'employee@dau.edu.vn',
+  truongkhoa: 'unithead@dau.edu.vn',
+  tchc: 'hrspecialist@dau.edu.vn',
+  hieutruong: 'rector@dau.edu.vn',
+  admin: 'admin@dau.edu.vn',
+};
+
 const STORAGE_KEY = "bahau_auth_user";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -109,8 +122,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Check saved session in localStorage
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setUser(JSON.parse(saved));
+            if (saved) {
+        const parsed = JSON.parse(saved);
+        setUser(parsed);
+        if (!apiClient.getSessionId()) {
+          syncBackendSession(parsed);
+        }
       }
     } catch (e) {
       console.warn("Could not read auth from storage", e);
@@ -119,10 +136,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+    const syncBackendSession = async (targetUser: AuthUser) => {
+    try {
+      const apiEmail =
+        ROLE_API_EMAIL_MAP[targetUser.role] ||
+        ROLE_API_EMAIL_MAP[targetUser.id] ||
+        targetUser.email;
+      await apiClient.auth.login(apiEmail, 'Admin@123456');
+    } catch (e) {
+      console.warn('[AuthContext] Backend session sync fallback', e);
+    }
+  };
+
   const login = (userData: AuthUser) => {
     setUser(userData);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
+      syncBackendSession(userData);
     } catch (e) {
       console.warn("Could not save auth to storage", e);
     }

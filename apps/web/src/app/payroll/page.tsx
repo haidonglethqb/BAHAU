@@ -29,6 +29,7 @@ import {
 import { Badge, Button, Card } from '../../components/ui'
 import apiClient from '../../services/api-client'
 import { PayslipModal } from '../../components/PayslipModal'
+import { getMockPayrollData } from '../../services/payroll-mock'
 import { useAuth } from '../../context/AuthContext'
 
 export default function PayrollPage() {

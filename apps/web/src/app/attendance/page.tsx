@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Lightbulb, Lock, XCircle, X, Camera, Scan, Clock, LogIn, LogOut, Sparkles } from "lucide-react";
+import { CheckCircle2, RefreshCw, Lightbulb, Lock, XCircle, X, Camera, Scan, Clock, LogIn, LogOut, Sparkles } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { FaceCheckInModal } from "../../components/FaceCheckInModal";
 import { AuthGuard } from "../../components/AuthGuard";
@@ -162,31 +162,61 @@ export default function AttendancePersonalPage() {
   const [showFaceModal, setShowFaceModal] = useState(false);
   const [todayFaceRecord, setTodayFaceRecord] = useState<AttendanceRecord | null>(null);
 
+  // Active shift identification
+  const todayDateStr = new Date().toISOString().split('T')[0];
+  const demoDateStr = `${year}-${String(month).padStart(2, '0')}-08`;
+  const todayRecord =
+    todayFaceRecord ||
+    records.find((r) => r.workDate === todayDateStr || r.workDate === demoDateStr);
+
+  const hasCheckedIn = Boolean(todayRecord?.checkInTime);
+  const hasCheckedOut = Boolean(todayRecord?.checkOutTime);
+  const activeMode: 'checkin' | 'checkout' = hasCheckedIn && !hasCheckedOut ? 'checkout' : 'checkin';
+
+  const handleResetShift = () => {
+    const demoDateStr = `${year}-${String(month).padStart(2, '0')}-08`;
+    const resetRec: AttendanceRecord = {
+      id: "r6",
+      workDate: demoDateStr,
+      checkInTime: null,
+      checkOutTime: null,
+      rawWorkingHours: 0,
+      status: "PRESENT",
+      deviceSource: "BIOMETRIC_GATE_A",
+    };
+    setTodayFaceRecord(resetRec);
+    setRecords((prev) => [resetRec, ...prev.filter((r) => r.workDate !== demoDateStr)]);
+  };
+
   const handleFaceSuccess = (newRec: any) => {
     if (!newRec) return;
-    const formattedRec: AttendanceRecord = {
-      id: newRec.id || `face-${Date.now()}`,
-      workDate: newRec.workDate || new Date().toISOString().split('T')[0],
-      checkInTime: newRec.checkInTime,
-      checkOutTime: newRec.checkOutTime,
-      rawWorkingHours: newRec.rawWorkingHours || 8.0,
-      status: newRec.status || 'PRESENT',
-      deviceSource: newRec.deviceSource || 'BIOMETRIC_FACE_RECOGNITION',
-    };
-
-    setTodayFaceRecord(formattedRec);
-
-    // Update records list
+    const workDate = newRec.workDate || todayRecord?.workDate || new Date().toISOString().split('T')[0];
+    const isCheckOutAction = Boolean(newRec.checkOutTime) || activeMode === 'checkout';
+    
     setRecords((prev) => {
-      const filtered = prev.filter((r) => r.workDate !== formattedRec.workDate);
-      return [formattedRec, ...filtered];
+      const existing = prev.find((r) => r.workDate === workDate);
+      const merged: AttendanceRecord = {
+        id: newRec.id || existing?.id || `face-${Date.now()}`,
+        workDate,
+        // If checking out, keep existing check-in time; if checking in, set new check-in time
+        checkInTime: isCheckOutAction ? (existing?.checkInTime || todayRecord?.checkInTime || '2026-09-08T07:55:00Z') : (newRec.checkInTime || new Date().toISOString()),
+        // If checking in, clear checkout; if checking out, set checkout time
+        checkOutTime: isCheckOutAction ? (newRec.checkOutTime || new Date().toISOString()) : null,
+        rawWorkingHours: isCheckOutAction ? (newRec.rawWorkingHours || 8.0) : 0,
+        status: newRec.status || existing?.status || 'PRESENT',
+        deviceSource: newRec.deviceSource || 'BIOMETRIC_FACE_RECOGNITION',
+      };
+      setTodayFaceRecord(merged);
+      const filtered = prev.filter((r) => r.workDate !== workDate);
+      return [merged, ...filtered];
     });
 
     // Update summary counts
     setSummary((prev) => {
-      const newActual = Number(prev.actualWorkingDays) + 1;
-      const newLate = formattedRec.status === 'LATE' ? prev.lateCount + 1 : prev.lateCount;
-      const newEarly = formattedRec.status === 'EARLY_LEAVE' ? prev.earlyLeaveCount + 1 : prev.earlyLeaveCount;
+      const isNewDay = !hasCheckedIn && !isCheckOutAction;
+      const newActual = isNewDay ? Number(prev.actualWorkingDays) + 1 : Number(prev.actualWorkingDays);
+      const newLate = newRec.status === 'LATE' ? prev.lateCount + 1 : prev.lateCount;
+      const newEarly = newRec.status === 'EARLY_LEAVE' ? prev.earlyLeaveCount + 1 : prev.earlyLeaveCount;
       return {
         ...prev,
         actualWorkingDays: newActual,
@@ -412,42 +442,86 @@ export default function AttendancePersonalPage() {
       )}
 
       
-      {/* Live Biometric Action Banner */}
-      <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-teal-50 to-white p-5 shadow-xs">
+      {/* Live Shift Lifecycle & Biometric Action Banner */}
+      <div className={`rounded-2xl border p-5 shadow-xs ${
+        !hasCheckedIn
+          ? "border-emerald-200 bg-gradient-to-r from-emerald-50 via-teal-50 to-white"
+          : !hasCheckedOut
+          ? "border-blue-200 bg-gradient-to-r from-blue-50 via-indigo-50 to-white"
+          : "border-slate-200 bg-gradient-to-r from-slate-50 via-emerald-50/30 to-white"
+      }`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md shrink-0">
-              <Scan size={24} />
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-md shrink-0 ${
+              !hasCheckedIn ? "bg-emerald-600" : !hasCheckedOut ? "bg-blue-600" : "bg-slate-700"
+            }`}>
+              {!hasCheckedIn ? <LogIn size={24} /> : !hasCheckedOut ? <Clock size={24} /> : <CheckCircle2 size={24} />}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-900 text-base">Chấm Công Sinh Trắc Học Trực Tuyến</h3>
-                <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold px-2 py-0.5 border border-emerald-200">
-                  AI FACE SCANNER 2026
+                <h3 className="font-bold text-slate-900 text-base">
+                  {!hasCheckedIn
+                    ? "Chưa Vào Ca Làm Việc Hôm Nay"
+                    : !hasCheckedOut
+                    ? "Đang Trong Ca Làm Việc"
+                    : "Đã Hoàn Thành Ca Làm Việc Hôm Nay"}
+                </h3>
+                <span className={`rounded-full text-[10px] font-mono font-bold px-2 py-0.5 border ${
+                  !hasCheckedIn
+                    ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                    : !hasCheckedOut
+                    ? "bg-blue-100 text-blue-800 border-blue-200"
+                    : "bg-slate-100 text-slate-700 border-slate-300"
+                }`}>
+                  {!hasCheckedIn
+                    ? "CHỜ CHECK-IN"
+                    : !hasCheckedOut
+                    ? `ĐÃ VÀO CA ${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'}`
+                    : "HOÀN TẤT CA"}
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Cán bộ giảng viên sử dụng camera máy tính hoặc thiết bị di động để quét khuôn mặt vào ca / hết ca.
-                {todayFaceRecord ? (
-                  <span className="ml-1 text-emerald-700 font-semibold">
-                    (Hôm nay: Vào {todayFaceRecord.checkInTime ? new Date(todayFaceRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'} · {todayFaceRecord.status === 'LATE' ? 'Đi muộn' : 'Đúng giờ'})
-                  </span>
-                ) : (
-                  <span className="ml-1 text-slate-500">
-                    (Quy chuẩn: Vào trước 08:00, Ra sau 17:00)
-                  </span>
-                )}
+                {!hasCheckedIn
+                  ? "Camera AI sẽ tự động nhận diện khuôn mặt và ghi nhận Check-in ngay khi bạn nhìn thẳng (Quy chuẩn vào trước 08:00)."
+                  : !hasCheckedOut
+                  ? `Đã ghi nhận giờ vào ca (${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'}). Khi hết giờ làm việc, quét khuôn mặt để tự động ghi nhận Check-out (Quy chuẩn ra sau 17:00).`
+                  : `Ca làm việc hôm nay: Vào ca lúc ${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'} · Hết ca lúc ${todayRecord?.checkOutTime ? new Date(todayRecord.checkOutTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '17:05'} (Tổng ${todayRecord?.rawWorkingHours || 8.0} giờ công).`}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowFaceModal(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 text-xs shadow-md transition duration-150 cursor-pointer"
-            >
-              <Camera size={16} />
-              <span>Bật Camera Chấm Công Ngay</span>
-            </button>
+            {!hasCheckedIn ? (
+              <button
+                onClick={() => setShowFaceModal(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 text-xs shadow-md transition duration-150 cursor-pointer"
+              >
+                <Camera size={16} />
+                <span>📸 Bật Camera Điểm Danh Vào Ca (Check-in)</span>
+              </button>
+            ) : !hasCheckedOut ? (
+              <button
+                onClick={() => setShowFaceModal(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 text-xs shadow-md transition duration-150 cursor-pointer animate-pulse"
+              >
+                <Camera size={16} />
+                <span>📸 Bật Camera Điểm Danh Hết Ca (Check-out)</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 text-xs">
+                  <CheckCircle2 size={15} className="text-emerald-600" />
+                  <span>Ca Hôm Nay Đã Hoàn Tất</span>
+                </span>
+                <button
+                  onClick={handleResetShift}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold px-3 py-2 text-xs shadow-xs transition cursor-pointer"
+                  title="Khởi tạo lại trạng thái ca hôm nay để thử nghiệm lại từ đầu"
+                >
+                  <RefreshCw size={13} className="text-blue-600" />
+                  <span>Làm mới ca thử nghiệm</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -787,6 +861,11 @@ export default function AttendancePersonalPage() {
         isOpen={showFaceModal}
         onClose={() => setShowFaceModal(false)}
         onSuccess={handleFaceSuccess}
+        mode={activeMode}
+        hasCheckedIn={hasCheckedIn}
+        hasCheckedOut={hasCheckedOut}
+        checkInTime={todayRecord?.checkInTime}
+        checkOutTime={todayRecord?.checkOutTime}
       />
     </AuthGuard>
   );
