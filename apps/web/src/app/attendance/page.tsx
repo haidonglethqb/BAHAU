@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Lightbulb, Lock, XCircle, X } from "lucide-react";
+import { CheckCircle2, Lightbulb, Lock, XCircle, X, Camera, Scan, Clock, LogIn, LogOut, Sparkles } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
+import { FaceCheckInModal } from "../../components/FaceCheckInModal";
 import { AuthGuard } from "../../components/AuthGuard";
 
 interface AttendanceRecord {
@@ -156,6 +158,45 @@ export default function AttendancePersonalPage() {
   const [records, setRecords] = useState<AttendanceRecord[]>(DEMO_RECORDS);
   const [adjustments, setAdjustments] = useState<AdjustmentRequest[]>(DEMO_ADJUSTMENTS);
   const [isLoading, setIsLoading] = useState(false);
+  const { user } = useAuth();
+  const [showFaceModal, setShowFaceModal] = useState(false);
+  const [todayFaceRecord, setTodayFaceRecord] = useState<AttendanceRecord | null>(null);
+
+  const handleFaceSuccess = (newRec: any) => {
+    if (!newRec) return;
+    const formattedRec: AttendanceRecord = {
+      id: newRec.id || `face-${Date.now()}`,
+      workDate: newRec.workDate || new Date().toISOString().split('T')[0],
+      checkInTime: newRec.checkInTime,
+      checkOutTime: newRec.checkOutTime,
+      rawWorkingHours: newRec.rawWorkingHours || 8.0,
+      status: newRec.status || 'PRESENT',
+      deviceSource: newRec.deviceSource || 'BIOMETRIC_FACE_RECOGNITION',
+    };
+
+    setTodayFaceRecord(formattedRec);
+
+    // Update records list
+    setRecords((prev) => {
+      const filtered = prev.filter((r) => r.workDate !== formattedRec.workDate);
+      return [formattedRec, ...filtered];
+    });
+
+    // Update summary counts
+    setSummary((prev) => {
+      const newActual = Number(prev.actualWorkingDays) + 1;
+      const newLate = formattedRec.status === 'LATE' ? prev.lateCount + 1 : prev.lateCount;
+      const newEarly = formattedRec.status === 'EARLY_LEAVE' ? prev.earlyLeaveCount + 1 : prev.earlyLeaveCount;
+      return {
+        ...prev,
+        actualWorkingDays: newActual,
+        lateCount: newLate,
+        earlyLeaveCount: newEarly,
+        totalPayableDays: newActual + prev.paidLeaveDays + prev.businessTripDays,
+      };
+    });
+  };
+
 
   // Modal nộp đơn giải trình
   const [showModal, setShowModal] = useState(false);
@@ -369,6 +410,47 @@ export default function AttendancePersonalPage() {
           </span>
         </div>
       )}
+
+      
+      {/* Live Biometric Action Banner */}
+      <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-teal-50 to-white p-5 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md shrink-0">
+              <Scan size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-slate-900 text-base">Chấm Công Sinh Trắc Học Trực Tuyến</h3>
+                <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold px-2 py-0.5 border border-emerald-200">
+                  AI FACE SCANNER 2026
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Cán bộ giảng viên sử dụng camera máy tính hoặc thiết bị di động để quét khuôn mặt vào ca / hết ca.
+                {todayFaceRecord ? (
+                  <span className="ml-1 text-emerald-700 font-semibold">
+                    (Hôm nay: Vào {todayFaceRecord.checkInTime ? new Date(todayFaceRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'} · {todayFaceRecord.status === 'LATE' ? 'Đi muộn' : 'Đúng giờ'})
+                  </span>
+                ) : (
+                  <span className="ml-1 text-slate-500">
+                    (Quy chuẩn: Vào trước 08:00, Ra sau 17:00)
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowFaceModal(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 text-xs shadow-md transition duration-150 cursor-pointer"
+            >
+              <Camera size={16} />
+              <span>Bật Camera Chấm Công Ngay</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Layer 3: Summary KPI Cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -701,6 +783,11 @@ export default function AttendancePersonalPage() {
         </div>
       )}
       </div>
+      <FaceCheckInModal
+        isOpen={showFaceModal}
+        onClose={() => setShowFaceModal(false)}
+        onSuccess={handleFaceSuccess}
+      />
     </AuthGuard>
   );
 }

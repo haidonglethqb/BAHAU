@@ -79,3 +79,41 @@ export async function lockPeriod(req: Request, res: Response): Promise<void> {
     },
   });
 }
+
+export async function faceCheckIn(req: Request, res: Response): Promise<void> {
+  const employeeId = req.user?.employeeId || "DAU260003-ID";
+  const result = await AttendanceService.faceCheckIn(employeeId, {
+    snapshot: req.body?.snapshot,
+    deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",
+    timestamp: req.body?.timestamp ? new Date(req.body.timestamp) : new Date(),
+  });
+  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+
+  res.status(200).json({
+    success: true,
+    data: result,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId,
+    },
+  });
+}
+
+export async function faceCheckOut(req: Request, res: Response): Promise<void> {
+  const employeeId = req.user?.employeeId || "DAU260003-ID";
+  const result = await AttendanceService.faceCheckOut(employeeId, {
+    snapshot: req.body?.snapshot,
+    deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",
+    timestamp: req.body?.timestamp ? new Date(req.body.timestamp) : new Date(),
+  });
+  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+
+  res.status(200).json({
+    success: true,
+    data: result,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId,
+    },
+  });
+}

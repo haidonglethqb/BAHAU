@@ -33,7 +33,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import { useAuth, ROLE_USER_MAP } from '../context/AuthContext'
+import { useAuth } from '../context/AuthContext'
 import type { Role } from '../data'
 import { Avatar, Badge, cx } from './ui'
 import { NotificationDropdown } from './NotificationDropdown'
@@ -45,6 +45,7 @@ export interface NavItem {
   label: string
   icon: ReactNode
   badge?: string
+  allowedRoles?: string[]
 }
 
 export interface NavGroup {
@@ -56,8 +57,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     group: 'TỔNG QUAN & ĐIỀU HÀNH',
     items: [
-      { href: '/dashboard', label: 'Executive Dashboard', icon: <LayoutDashboard size={18} /> },
-      { href: '/units', label: 'Cây tổ chức', icon: <Network size={18} /> },
+      { href: '/dashboard', label: 'Bàn làm việc', icon: <LayoutDashboard size={18} /> },
+      { href: '/units', label: 'Cây tổ chức', icon: <Network size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
     ],
   },
   {
@@ -75,8 +76,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/workload', label: 'Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
       { href: '/training', label: 'Đào tạo & Chứng chỉ', icon: <GraduationCap size={18} /> },
       { href: '/kpi', label: 'Đánh giá KPI', icon: <TrendingUp size={18} /> },
-      { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} /> },
-      { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} /> },
+      { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
+      { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
       { href: '/rd', label: 'NCKH & Nhuận Bút Thiết Kế', icon: <Compass size={18} /> },
       { href: '/postgraduate', label: 'Đào tạo Sau Đại học', icon: <BookMarked size={18} /> },
     ],
@@ -84,12 +85,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     group: 'QUẢN TRỊ & HÀNH CHÍNH',
     items: [
-      { href: '/employees', label: 'Danh bạ CBGV', icon: <Users size={18} /> },
-      { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} /> },
-      { href: '/payroll', label: 'Bảng lương Toàn trường', icon: <Banknote size={18} /> },
-      { href: '/approvals', label: 'Hộp thư phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox' },
+      { href: '/employees', label: 'Danh bạ CBGV', icon: <Users size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
+      { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} />, allowedRoles: ['HR_SPECIALIST', 'SYSTEM_ADMIN'] },
+      { href: '/payroll', label: 'Bảng lương', icon: <Banknote size={18} /> },
+      { href: '/approvals', label: 'Hộp thư phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox', allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
       { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-      { href: '/admin/system', label: 'Hệ thống (Control Center)', icon: <Activity size={18} />, badge: 'K8s' },
+      { href: '/admin/system', label: 'Hệ thống (Control Center)', icon: <Activity size={18} />, badge: 'K8s', allowedRoles: ['SYSTEM_ADMIN'] },
     ],
   },
 ]
@@ -106,10 +107,9 @@ export function Shell({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { user, loginAsRole, logout } = useAuth()
+  const { user, logout } = useAuth()
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showPayslip, setShowPayslip] = useState(false)
   const [showExecutive, setShowExecutive] = useState(false)
@@ -119,16 +119,31 @@ export function Shell({
     email: 'cbgv@dau.edu.vn',
     fullName: 'Cán bộ Giảng viên DAU',
     role: 'LECTURER',
-    roleLabel: 'Giảng viên',
+    roleLabel: 'Giảng viên (CBGV)',
     unitName: 'Khoa Kiến trúc',
     title: 'Giảng viên',
     code: 'DAU260003',
   }
 
-  const handleRoleSelect = (roleKey: Role) => {
-    loginAsRole(roleKey)
-    setRoleMenuOpen(false)
-  }
+  const userRole = currentUser.role || 'LECTURER'
+
+  const filteredNavGroups = NAV_GROUPS.map((group) => {
+    const items = group.items
+      .filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole))
+      .map((item) => {
+        if (item.href === '/payroll') {
+          if (userRole === 'LECTURER') {
+            return { ...item, label: 'Phiếu lương cá nhân' }
+          }
+          if (userRole === 'DEAN') {
+            return { ...item, label: 'Bảng lương Khoa KT' }
+          }
+          return { ...item, label: 'Bảng lương Toàn trường' }
+        }
+        return item
+      })
+    return { ...group, items }
+  }).filter((group) => group.items.length > 0)
 
   const handleLogout = async () => {
     await logout()
@@ -160,9 +175,9 @@ export function Shell({
           </div>
         </Link>
 
-        {/* Navigation items */}
+        {/* Navigation items - Filtered by Authenticated Role */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-          {NAV_GROUPS.map((group) => (
+          {filteredNavGroups.map((group) => (
             <div key={group.group}>
               <div className="mb-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {group.group}
@@ -237,7 +252,7 @@ export function Shell({
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-              {NAV_GROUPS.map((group) => (
+              {filteredNavGroups.map((group) => (
                 <div key={group.group}>
                   <div className="mb-1 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     {group.group}
@@ -295,54 +310,13 @@ export function Shell({
               <Menu size={18} />
             </button>
 
-            {/* Scope / Role Context Switcher */}
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setRoleMenuOpen((v) => !v)
-                  setUserMenuOpen(false)
-                }}
-                className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition-colors hover:bg-slate-50 shadow-2xs cursor-pointer"
-              >
-                <Building2 size={15} className="text-brand-500 shrink-0" />
-                <span className="hidden sm:inline font-medium text-slate-700">{currentUser.unitName || 'Đơn vị'}</span>
-                <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-bold text-brand-700 border border-brand-200">
-                  {currentUser.roleLabel}
-                </span>
-                <ChevronDown size={14} className="text-slate-400" />
-              </button>
-
-              {roleMenuOpen && (
-                <div className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-line bg-white p-2 shadow-xl z-50">
-                  <div className="px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Chuyển đổi vai trò thẩm định (Demo)
-                  </div>
-                  <div className="mt-1 space-y-1">
-                    {(Object.keys(ROLE_USER_MAP) as Role[]).map((rKey) => {
-                      const rUser = ROLE_USER_MAP[rKey]
-                      const isCurrent = currentUser.roleLabel === rUser.roleLabel
-                      return (
-                        <button
-                          key={rKey}
-                          onClick={() => handleRoleSelect(rKey)}
-                          className={cx(
-                            'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] transition-colors cursor-pointer',
-                            isCurrent ? 'bg-brand-50 font-bold text-brand-700' : 'hover:bg-slate-50 text-ink',
-                          )}
-                        >
-                          <Avatar name={rUser.fullName} size={26} />
-                          <div className="min-w-0 flex-1 leading-tight">
-                            <div className="truncate font-semibold">{rUser.roleLabel}</div>
-                            <div className="truncate text-[11px] text-muted">
-                              {rUser.fullName} · {rUser.unitName}
-                            </div>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
+            {/* Scope / Official User Identity Badge (Fixed - Non-Demo Switchable) */}
+            <div className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink shadow-2xs">
+              <Building2 size={15} className="text-brand-500 shrink-0" />
+              <span className="hidden sm:inline font-medium text-slate-700">{currentUser.unitName || 'Đơn vị'}</span>
+              <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 border border-brand-200">
+                {currentUser.roleLabel}
+              </span>
             </div>
           </div>
 
@@ -350,8 +324,8 @@ export function Shell({
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Quick Actions */}
             <div className="hidden lg:flex items-center gap-1.5">
-              {/* Nút truy cập nhanh System Control Center cho Admin và Hiệu trưởng */}
-              {(currentUser.role === 'SYSTEM_ADMIN' || currentUser.role === 'RECTOR') && (
+              {/* Nút truy cập nhanh System Control Center chỉ cho Admin */}
+              {userRole === 'SYSTEM_ADMIN' && (
                 <Link
                   href="/admin/system"
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-semibold transition-colors shadow-2xs"
@@ -371,13 +345,15 @@ export function Shell({
               </button>
 
               {/* QĐ NĐ 30: Cho TCHC (soạn thảo), Hiệu trưởng (ký số), Admin */}
-              <button
-                onClick={() => setShowExecutive(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-              >
-                <ScrollText size={14} className="text-amber-700" />
-                <span>QĐ NĐ 30</span>
-              </button>
+              {(userRole === 'HR_SPECIALIST' || userRole === 'RECTOR' || userRole === 'SYSTEM_ADMIN') && (
+                <button
+                  onClick={() => setShowExecutive(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                >
+                  <ScrollText size={14} className="text-amber-700" />
+                  <span>QĐ NĐ 30</span>
+                </button>
+              )}
             </div>
 
             {/* Notification Bell Dropdown */}
@@ -386,10 +362,7 @@ export function Shell({
             {/* User Identity Pill */}
             <div className="relative border-l border-line pl-2 sm:pl-3">
               <button
-                onClick={() => {
-                  setUserMenuOpen((v) => !v)
-                  setRoleMenuOpen(false)
-                }}
+                onClick={() => setUserMenuOpen((v) => !v)}
                 className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 cursor-pointer"
               >
                 <Avatar name={currentUser.fullName} size={32} />
@@ -405,6 +378,9 @@ export function Shell({
                   <div className="px-3 py-2 border-b border-line mb-1">
                     <p className="text-xs font-bold text-ink truncate">{currentUser.fullName}</p>
                     <p className="text-[11px] text-muted truncate">{currentUser.email}</p>
+                    <span className="mt-1 inline-block rounded bg-brand-50 px-1.5 py-0.2 text-[10px] font-bold text-brand-700 border border-brand-200">
+                      {currentUser.roleLabel}
+                    </span>
                   </div>
                   <Link
                     href="/profile"

@@ -5,6 +5,8 @@ import {
   createAdjustmentRequest,
   importAttendanceData,
   lockPeriod,
+  faceCheckIn,
+  faceCheckOut,
 } from "../../controllers/attendance.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
 import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
@@ -61,6 +63,18 @@ router.post(
   requirePermission("attendance:lock_period"),
   validateBody(LockPeriodSchema),
   asyncHandler(lockPeriod)
+);
+
+// Điểm danh vào ca bằng nhận diện khuôn mặt (Face Check-in)
+router.post(
+  "/attendance/face-checkin",
+  asyncHandler(faceCheckIn)
+);
+
+// Điểm danh hết ca bằng nhận diện khuôn mặt (Face Check-out)
+router.post(
+  "/attendance/face-checkout",
+  asyncHandler(faceCheckOut)
 );
 
 export default router;

@@ -486,7 +486,7 @@ export default function PayrollPage() {
               disabled={loading || actionLoading}
             >
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-              Tính toán lại
+              Đồng bộ từ Chấm công
             </Button>
           )}
 
@@ -708,8 +708,8 @@ export default function PayrollPage() {
                       {formatVnd(item.teachingAllowance)}
                     </td>
                     <td className="px-4 py-3.5">
-                      <div className="font-bold text-ink">{item.workingDays} / 22 ngày</div>
-                      <div className="text-[10px] text-emerald-600 font-medium">100% định mức</div>
+                      <div className="font-bold text-ink">{(item.actualWorkDays !== undefined ? item.actualWorkDays : item.workingDays) || 22} / {(item.standardWorkDays || 22)} ngày</div>
+                      <div className="text-[10px] font-medium">{((item.actualWorkDays !== undefined ? item.actualWorkDays : item.workingDays) || 22) >= 22 ? (<span className="text-emerald-600">100% định mức</span>) : (<span className="text-rose-600 font-semibold">Thiếu {(item.standardWorkDays || 22) - ((item.actualWorkDays !== undefined ? item.actualWorkDays : item.workingDays) || 22)} ngày (Trừ lương)</span>)}</div>
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="font-bold text-brand-700">

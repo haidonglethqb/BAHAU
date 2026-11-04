@@ -113,6 +113,33 @@ export function PayslipModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
+          
+          {/* Chấm công & Ngày công thực tế */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
+                Đối Soát Chấm Công & Ngày Công Tính Lương (Biometric Attendance)
+              </h4>
+              <Badge tone="info">Chấm công Face ID</Badge>
+            </div>
+            <div className="rounded-xl border border-line divide-y divide-line text-[13px] bg-slate-50/50">
+              <div className="flex items-center justify-between p-3">
+                <span className="text-slate-600">Số ngày công tiêu chuẩn trong tháng</span>
+                <span className="font-mono font-bold text-ink">{payslip.standardWorkDays || 22} ngày</span>
+              </div>
+              <div className="flex items-center justify-between p-3">
+                <span className="text-slate-600">Số ngày quẹt thẻ / điểm danh thực tế</span>
+                <span className="font-mono font-bold text-emerald-700">{payslip.actualWorkDays || 22} ngày</span>
+              </div>
+              {payslip.unpaidLeaveDays > 0 && (
+                <div className="flex items-center justify-between p-3 bg-rose-50/60 text-rose-800">
+                  <span>Khấu trừ lương do thiếu công ({payslip.unpaidLeaveDays} ngày)</span>
+                  <span className="font-mono font-bold">- {payslip.workDaysDeduction?.toLocaleString('vi-VN')} đ</span>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Component 1: State salary & allowances */}
           <div>
             <div className="flex items-center justify-between mb-2">
