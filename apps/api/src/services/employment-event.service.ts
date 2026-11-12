@@ -7,6 +7,13 @@ import type {
   AuthUser,
 } from "@bahau/contracts";
 
+const HEAD_POSITION_CODES = new Set([
+  "HIEU_TRUONG",
+  "TRUONG_KHOA",
+  "TRUONG_PHONG",
+  "TRUONG_BO_MON",
+]);
+
 export class EmploymentEventService {
   /**
    * Lấy toàn bộ dòng thời gian diễn biến công tác của một nhân sự (Timeline)
@@ -114,18 +121,96 @@ export class EmploymentEventService {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hồ sơ nhân sự.");
     }
 
-    const effectiveDateObj = new Date(input.effectiveDate);
-    const decisionDateObj = input.decisionDate ? new Date(input.decisionDate) : null;
+    const effectiveDateObj = new Date(`${input.effectiveDate}T00:00:00.000Z`);
+    const decisionDateObj = input.decisionDate
+      ? new Date(`${input.decisionDate}T00:00:00.000Z`)
+      : null;
+
+    if (
+      input.syncAssignment &&
+      ["APPOINTED", "TRANSFERRED", "CONCURRENT_ASSIGNED"].includes(input.eventType) &&
+      (!input.toUnitId || !input.toPositionId)
+    ) {
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "Vui lòng cung cấp đầy đủ đơn vị mới (toUnitId) và chức vụ mới (toPositionId) khi đồng bộ phân công công tác."
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Tự động đồng bộ phân công công tác nếu bật cờ syncAssignment
-      if (input.syncAssignment) {
-        if (
-          ["APPOINTED", "TRANSFERRED"].includes(input.eventType) &&
-          input.toUnitId &&
-          input.toPositionId
-        ) {
-          // Hết hạn phân công PRIMARY cũ
+      // 1. Xử lý chấm dứt công tác (RESIGNED / RETIRED): luôn cập nhật trạng thái & thu hồi quyền
+      if (["RESIGNED", "RETIRED"].includes(input.eventType)) {
+        await tx.employmentAssignment.updateMany({
+          where: {
+            employeeId: input.employeeId,
+            status: "ACTIVE",
+          },
+          data: {
+            status: "TERMINATED",
+            endDate: effectiveDateObj,
+            isHeadOfUnit: false,
+          },
+        });
+
+        await tx.employmentContract.updateMany({
+          where: {
+            employeeId: input.employeeId,
+            status: "ACTIVE",
+          },
+          data: {
+            status: "TERMINATED",
+          },
+        });
+
+        await tx.organizationalUnit.updateMany({
+          where: { managerEmployeeId: input.employeeId },
+          data: { managerEmployeeId: null },
+        });
+
+        await tx.employee.update({
+          where: { id: input.employeeId },
+          data: {
+            employmentStatus: input.eventType as any,
+          },
+        });
+
+        if (emp.userId) {
+          await tx.user.update({
+            where: { id: emp.userId },
+            data: { status: "INACTIVE" },
+          });
+          await tx.session.deleteMany({
+            where: { userId: emp.userId },
+          });
+        }
+      } else if (input.syncAssignment) {
+        if (["APPOINTED", "TRANSFERRED"].includes(input.eventType)) {
+          const toUnitId = input.toUnitId!;
+          const toPositionId = input.toPositionId!;
+
+          const [toUnit, toPosition] = await Promise.all([
+            tx.organizationalUnit.findUnique({ where: { id: toUnitId } }),
+            tx.position.findUnique({ where: { id: toPositionId } }),
+          ]);
+
+          if (!toUnit) {
+            throw new AppError(404, "RESOURCE_NOT_FOUND", "Đơn vị tiếp nhận (toUnitId) không tồn tại.");
+          }
+          if (!toUnit.isActive) {
+            throw new AppError(422, "VALIDATION_FAILED", "Đơn vị tiếp nhận đang ngừng hoạt động.");
+          }
+          if (!toPosition) {
+            throw new AppError(404, "RESOURCE_NOT_FOUND", "Chức vụ mới (toPositionId) không tồn tại.");
+          }
+          if (!toPosition.isActive) {
+            throw new AppError(422, "VALIDATION_FAILED", "Chức vụ mới đang ngừng hoạt động.");
+          }
+
+          const isHead = HEAD_POSITION_CODES.has(toPosition.code);
+          const priorEndDate = new Date(effectiveDateObj.getTime() - 24 * 60 * 60 * 1000);
+
+          // Đóng phân công PRIMARY cũ với endDate = effectiveDate - 1 ngày
           await tx.employmentAssignment.updateMany({
             where: {
               employeeId: input.employeeId,
@@ -134,56 +219,139 @@ export class EmploymentEventService {
             },
             data: {
               status: "EXPIRED",
-              endDate: effectiveDateObj,
+              endDate: priorEndDate,
+              isHeadOfUnit: false,
             },
           });
+
+          if (isHead) {
+            // Bỏ cờ trưởng đơn vị của người tiền nhiệm (nếu có) tại đơn vị mới
+            await tx.employmentAssignment.updateMany({
+              where: {
+                unitId: toUnitId,
+                employeeId: { not: input.employeeId },
+                status: "ACTIVE",
+                isHeadOfUnit: true,
+              },
+              data: { isHeadOfUnit: false },
+            });
+          }
 
           // Tạo phân công PRIMARY mới
           await tx.employmentAssignment.create({
             data: {
               employeeId: input.employeeId,
-              unitId: input.toUnitId,
-              positionId: input.toPositionId,
+              unitId: toUnitId,
+              positionId: toPositionId,
               assignmentType: "PRIMARY",
+              isHeadOfUnit: isHead,
               startDate: effectiveDateObj,
               status: "ACTIVE",
             },
           });
-        } else if (
-          input.eventType === "CONCURRENT_ASSIGNED" &&
-          input.toUnitId &&
-          input.toPositionId
-        ) {
+
+          // Đồng bộ OrganizationalUnit.managerEmployeeId trên các đơn vị cũ không còn là trưởng đơn vị
+          const managedUnits = await tx.organizationalUnit.findMany({
+            where: { managerEmployeeId: input.employeeId },
+            select: { id: true },
+          });
+          for (const unit of managedUnits) {
+            if (isHead && unit.id === toUnitId) continue;
+            const stillHeadAtUnit = await tx.employmentAssignment.findFirst({
+              where: {
+                employeeId: input.employeeId,
+                unitId: unit.id,
+                status: "ACTIVE",
+                isHeadOfUnit: true,
+              },
+              select: { id: true },
+            });
+            if (!stillHeadAtUnit) {
+              await tx.organizationalUnit.update({
+                where: { id: unit.id },
+                data: { managerEmployeeId: null },
+              });
+            }
+          }
+
+          if (isHead) {
+            await tx.organizationalUnit.update({
+              where: { id: toUnitId },
+              data: { managerEmployeeId: input.employeeId },
+            });
+          }
+        } else if (input.eventType === "CONCURRENT_ASSIGNED") {
+          const toUnitId = input.toUnitId!;
+          const toPositionId = input.toPositionId!;
+
+          const [toUnit, toPosition] = await Promise.all([
+            tx.organizationalUnit.findUnique({ where: { id: toUnitId } }),
+            tx.position.findUnique({ where: { id: toPositionId } }),
+          ]);
+
+          if (!toUnit) {
+            throw new AppError(404, "RESOURCE_NOT_FOUND", "Đơn vị kiêm nhiệm (toUnitId) không tồn tại.");
+          }
+          if (!toUnit.isActive) {
+            throw new AppError(422, "VALIDATION_FAILED", "Đơn vị kiêm nhiệm đang ngừng hoạt động.");
+          }
+          if (!toPosition) {
+            throw new AppError(404, "RESOURCE_NOT_FOUND", "Chức vụ kiêm nhiệm (toPositionId) không tồn tại.");
+          }
+          if (!toPosition.isActive) {
+            throw new AppError(422, "VALIDATION_FAILED", "Chức vụ kiêm nhiệm đang ngừng hoạt động.");
+          }
+
+          const duplicateConcurrent = await tx.employmentAssignment.findFirst({
+            where: {
+              employeeId: input.employeeId,
+              unitId: toUnitId,
+              positionId: toPositionId,
+              assignmentType: "CONCURRENT",
+              status: "ACTIVE",
+            },
+          });
+
+          if (duplicateConcurrent) {
+            throw new AppError(
+              409,
+              "CONFLICT_STATE",
+              "Nhân sự đã có phân công kiêm nhiệm đang hiệu lực tại đơn vị và chức vụ này."
+            );
+          }
+
+          const isHead = HEAD_POSITION_CODES.has(toPosition.code);
+          if (isHead) {
+            await tx.employmentAssignment.updateMany({
+              where: {
+                unitId: toUnitId,
+                employeeId: { not: input.employeeId },
+                status: "ACTIVE",
+                isHeadOfUnit: true,
+              },
+              data: { isHeadOfUnit: false },
+            });
+          }
+
           // Tạo phân công kiêm nhiệm mới mà không hủy phân công PRIMARY
           await tx.employmentAssignment.create({
             data: {
               employeeId: input.employeeId,
-              unitId: input.toUnitId,
-              positionId: input.toPositionId,
+              unitId: toUnitId,
+              positionId: toPositionId,
               assignmentType: "CONCURRENT",
+              isHeadOfUnit: isHead,
               startDate: effectiveDateObj,
               status: "ACTIVE",
             },
           });
-        } else if (["RESIGNED", "RETIRED"].includes(input.eventType)) {
-          // Hết hạn toàn bộ phân công công tác và chuyển trạng thái nhân sự
-          await tx.employmentAssignment.updateMany({
-            where: {
-              employeeId: input.employeeId,
-              status: "ACTIVE",
-            },
-            data: {
-              status: "TERMINATED",
-              endDate: effectiveDateObj,
-            },
-          });
 
-          await tx.employee.update({
-            where: { id: input.employeeId },
-            data: {
-              employmentStatus: input.eventType as any,
-            },
-          });
+          if (isHead) {
+            await tx.organizationalUnit.update({
+              where: { id: toUnitId },
+              data: { managerEmployeeId: input.employeeId },
+            });
+          }
         }
       }
 
@@ -208,6 +376,23 @@ export class EmploymentEventService {
           fromPosition: { select: { name: true } },
           toPosition: { select: { name: true } },
           employee: { select: { employeeCode: true, fullName: true } },
+        },
+      });
+
+      await tx.auditEvent.create({
+        data: {
+          userId: currentUser?.id ?? null,
+          action: "EMPLOYMENT_EVENT_CREATED",
+          entityName: "EmploymentEvent",
+          entityId: created.id,
+          diffData: {
+            employeeId: input.employeeId,
+            eventType: input.eventType,
+            effectiveDate: input.effectiveDate,
+            toUnitId: input.toUnitId || null,
+            toPositionId: input.toPositionId || null,
+            syncAssignment: input.syncAssignment,
+          },
         },
       });
 

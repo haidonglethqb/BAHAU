@@ -13,8 +13,21 @@ import type {
 } from "@bahau/contracts";
 
 export class ContractService {
+  private static getVnTodayUtcDate(now: Date = new Date()): Date {
+    const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    return new Date(Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate()));
+  }
+
+  private static toUtcDateOnly(date: Date): Date {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+
+  private static addDaysUtc(utcDate: Date, days: number): Date {
+    return new Date(utcDate.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
   /**
-   * Tính toán số ngày còn lại và mức độ cảnh báo của hợp đồng
+   * Tính toán số ngày còn lại và mức độ cảnh báo của hợp đồng theo ranh giới ngày dương lịch (UTC+7)
    */
   public static calculateExpiryAlert(
     contractType: string,
@@ -25,8 +38,10 @@ export class ContractService {
       return { daysRemaining: null, alertLevel: "INDEFINITE" };
     }
 
-    const diffTime = expiryDate.getTime() - now.getTime();
-    const daysRemaining = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const todayUtc = this.getVnTodayUtcDate(now);
+    const expiryUtc = this.toUtcDateOnly(expiryDate);
+    const diffTime = expiryUtc.getTime() - todayUtc.getTime();
+    const daysRemaining = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
     if (daysRemaining < 0) {
       return { daysRemaining, alertLevel: "EXPIRED" };
@@ -161,14 +176,15 @@ export class ContractService {
       where.contractType = query.contractType as ContractType;
     }
 
-    // 3. Lọc theo thời hạn cảnh báo hết hạn (expiringInDays = 30 | 60 | 90)
+    // 3. Lọc theo thời hạn cảnh báo hết hạn (expiringInDays = 30 | 60 | 90) theo ranh giới ngày dương lịch
     if (query.expiringInDays) {
-      const targetDate = new Date(now.getTime() + query.expiringInDays * 24 * 60 * 60 * 1000);
+      const todayUtc = this.getVnTodayUtcDate(now);
+      const targetDate = this.addDaysUtc(todayUtc, query.expiringInDays);
       where.status = "ACTIVE";
       where.contractType = { not: "INDEFINITE_TERM" };
       where.expiryDate = {
         not: null,
-        gte: now,
+        gte: todayUtc,
         lte: targetDate,
       };
     }
@@ -260,10 +276,12 @@ export class ContractService {
   public static async getContractAlertSummary(
     currentUser?: AuthUser
   ): Promise<ContractAlertSummaryDto> {
-    const now = new Date();
-    const date30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const date60 = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-    const date90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+    const todayUtc = this.getVnTodayUtcDate(new Date());
+    const date30 = this.addDaysUtc(todayUtc, 30);
+    const date31 = this.addDaysUtc(todayUtc, 31);
+    const date60 = this.addDaysUtc(todayUtc, 60);
+    const date61 = this.addDaysUtc(todayUtc, 61);
+    const date90 = this.addDaysUtc(todayUtc, 90);
 
     const baseWhere: any = {};
     const isGlobalHR = Boolean(
@@ -304,6 +322,7 @@ export class ContractService {
 
     const [
       totalActive,
+      totalDefinite,
       totalIndefinite,
       totalExpiring30,
       totalExpiring60,
@@ -313,6 +332,13 @@ export class ContractService {
         where: { ...baseWhere, status: "ACTIVE" },
       }),
       prisma.employmentContract.count({
+        where: {
+          ...baseWhere,
+          status: "ACTIVE",
+          contractType: { in: ["DEFINITE_TERM_12M", "DEFINITE_TERM_36M"] },
+        },
+      }),
+      prisma.employmentContract.count({
         where: { ...baseWhere, status: "ACTIVE", contractType: "INDEFINITE_TERM" },
       }),
       prisma.employmentContract.count({
@@ -320,7 +346,7 @@ export class ContractService {
           ...baseWhere,
           status: "ACTIVE",
           contractType: { not: "INDEFINITE_TERM" },
-          expiryDate: { not: null, gte: now, lte: date30 },
+          expiryDate: { not: null, gte: todayUtc, lte: date30 },
         },
       }),
       prisma.employmentContract.count({
@@ -328,7 +354,7 @@ export class ContractService {
           ...baseWhere,
           status: "ACTIVE",
           contractType: { not: "INDEFINITE_TERM" },
-          expiryDate: { not: null, gte: now, lte: date60 },
+          expiryDate: { not: null, gte: date31, lte: date60 },
         },
       }),
       prisma.employmentContract.count({
@@ -336,12 +362,10 @@ export class ContractService {
           ...baseWhere,
           status: "ACTIVE",
           contractType: { not: "INDEFINITE_TERM" },
-          expiryDate: { not: null, gte: now, lte: date90 },
+          expiryDate: { not: null, gte: date61, lte: date90 },
         },
       }),
     ]);
-
-    const totalDefinite = Math.max(0, totalActive - totalIndefinite);
 
     return {
       totalActive,
@@ -477,53 +501,124 @@ export class ContractService {
   }
 
   /**
-   * Tạo hợp đồng lao động mới
+   * Tạo hợp đồng lao động mới (chặn nhân sự đã nghỉ việc & chặn hợp đồng hiệu lực chồng chéo)
    */
   public static async createContract(
     input: CreateContractInput,
     currentUser?: AuthUser
   ): Promise<ContractDto> {
-    // 1. Kiểm tra tồn tại nhân sự
-    const emp = await prisma.employee.findUnique({
-      where: { id: input.employeeId },
-      include: {
-        assignments: {
-          where: { assignmentType: "PRIMARY", status: "ACTIVE" },
-          include: {
-            unit: { select: { name: true } },
-            position: { select: { name: true } },
+    const signedDateObj = new Date(`${input.signedDate}T00:00:00.000Z`);
+    const effectiveDateObj = new Date(`${input.effectiveDate}T00:00:00.000Z`);
+    const expiryDateObj =
+      input.contractType === "INDEFINITE_TERM" || !input.expiryDate
+        ? null
+        : new Date(`${input.expiryDate}T00:00:00.000Z`);
+
+    const { emp, contract } = await prisma.$transaction(async (tx) => {
+      // 1. Kiểm tra tồn tại và trạng thái nhân sự
+      const employee = await tx.employee.findUnique({
+        where: { id: input.employeeId },
+        include: {
+          assignments: {
+            where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+            include: {
+              unit: { select: { name: true } },
+              position: { select: { name: true } },
+            },
+            take: 1,
           },
-          take: 1,
         },
-      },
-    });
+      });
 
-    if (!emp) {
-      throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hồ sơ nhân sự.");
-    }
+      if (!employee) {
+        throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hồ sơ nhân sự.");
+      }
 
-    // 2. Kiểm tra trùng số hợp đồng
-    const existing = await prisma.employmentContract.findUnique({
-      where: { contractNumber: input.contractNumber },
-    });
+      if (["RESIGNED", "RETIRED"].includes(employee.employmentStatus)) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          "Không thể tạo hợp đồng hiệu lực cho nhân sự đã thôi việc hoặc nghỉ hưu."
+        );
+      }
 
-    if (existing) {
-      throw new AppError(409, "RESOURCE_CONFLICT", `Số hợp đồng ${input.contractNumber} đã tồn tại.`);
-    }
+      // 2. Kiểm tra trùng số hợp đồng
+      const existing = await tx.employmentContract.findUnique({
+        where: { contractNumber: input.contractNumber },
+      });
 
-    // 3. Tạo hợp đồng mới
-    const contract = await prisma.employmentContract.create({
-      data: {
-        employeeId: input.employeeId,
-        contractNumber: input.contractNumber,
-        contractType: input.contractType as ContractType,
-        signedDate: new Date(input.signedDate),
-        effectiveDate: new Date(input.effectiveDate),
-        expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
-        salaryCoefficient: input.salaryCoefficient,
-        fileAssetId: input.fileAssetId || null,
-        status: "ACTIVE",
-      },
+      if (existing) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Số hợp đồng ${input.contractNumber} đã tồn tại.`
+        );
+      }
+
+      // 3. Kiểm tra trùng lặp khoảng thời gian với hợp đồng ACTIVE hiện có của nhân sự
+      const overlapping = await tx.employmentContract.findFirst({
+        where: {
+          employeeId: input.employeeId,
+          status: "ACTIVE",
+          AND: [
+            {
+              OR: [{ expiryDate: null }, { expiryDate: { gte: effectiveDateObj } }],
+            },
+            ...(expiryDateObj ? [{ effectiveDate: { lte: expiryDateObj } }] : []),
+          ],
+        },
+      });
+
+      if (overlapping) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Nhân sự đã có hợp đồng đang hiệu lực (${overlapping.contractNumber}) trong khoảng thời gian này.`
+        );
+      }
+
+      if (input.fileAssetId) {
+        const asset = await tx.fileAsset.findUnique({
+          where: { id: input.fileAssetId },
+          select: { id: true },
+        });
+        if (!asset) {
+          throw new AppError(422, "VALIDATION_FAILED", "Tệp đính kèm (fileAssetId) không tồn tại.");
+        }
+      }
+
+      // 4. Tạo hợp đồng mới
+      const created = await tx.employmentContract.create({
+        data: {
+          employeeId: input.employeeId,
+          contractNumber: input.contractNumber,
+          contractType: input.contractType as ContractType,
+          signedDate: signedDateObj,
+          effectiveDate: effectiveDateObj,
+          expiryDate: expiryDateObj,
+          salaryCoefficient: input.salaryCoefficient,
+          fileAssetId: input.fileAssetId || null,
+          status: "ACTIVE",
+        },
+      });
+
+      await tx.auditEvent.create({
+        data: {
+          userId: currentUser?.id ?? null,
+          action: "CONTRACT_CREATED",
+          entityName: "EmploymentContract",
+          entityId: created.id,
+          diffData: {
+            employeeId: input.employeeId,
+            contractNumber: created.contractNumber,
+            contractType: created.contractType,
+            effectiveDate: input.effectiveDate,
+            expiryDate: input.expiryDate ?? null,
+          },
+        },
+      });
+
+      return { emp: employee, contract: created };
     });
 
     const primaryAssignment = emp.assignments[0];
@@ -562,66 +657,137 @@ export class ContractService {
     input: RenewContractInput,
     currentUser?: AuthUser
   ): Promise<ContractDto> {
-    // 1. Kiểm tra hợp đồng cũ
-    const parentContract = await prisma.employmentContract.findUnique({
-      where: { id: parentContractId },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            employeeCode: true,
-            fullName: true,
-            assignments: {
-              where: { assignmentType: "PRIMARY", status: "ACTIVE" },
-              include: {
-                unit: { select: { name: true } },
-                position: { select: { name: true } },
+    const signedDateObj = new Date(`${input.signedDate}T00:00:00.000Z`);
+    const effectiveDateObj = new Date(`${input.effectiveDate}T00:00:00.000Z`);
+    const expiryDateObj =
+      input.contractType === "INDEFINITE_TERM" || !input.expiryDate
+        ? null
+        : new Date(`${input.expiryDate}T00:00:00.000Z`);
+
+    // Toàn bộ kiểm tra trạng thái + cập nhật có điều kiện + tạo hợp đồng mới chạy nguyên tử trong $transaction
+    const { parentContract, newContract } = await prisma.$transaction(async (tx) => {
+      const parent = await tx.employmentContract.findUnique({
+        where: { id: parentContractId },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              fullName: true,
+              employmentStatus: true,
+              assignments: {
+                where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+                include: {
+                  unit: { select: { name: true } },
+                  position: { select: { name: true } },
+                },
+                take: 1,
               },
-              take: 1,
             },
           },
         },
-      },
-    });
+      });
 
-    if (!parentContract) {
-      throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hợp đồng gốc cần gia hạn.");
-    }
+      if (!parent) {
+        throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hợp đồng gốc cần gia hạn.");
+      }
 
-    if (["RENEWED", "TERMINATED"].includes(parentContract.status)) {
-      throw new AppError(
-        400,
-        "INVALID_STATE",
-        `Hợp đồng hiện tại đang ở trạng thái ${parentContract.status}, không thể gia hạn thêm.`
-      );
-    }
+      if (["RESIGNED", "RETIRED"].includes(parent.employee.employmentStatus)) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          "Không thể gia hạn hợp đồng cho nhân sự đã thôi việc hoặc nghỉ hưu."
+        );
+      }
 
-    // 2. Kiểm tra trùng số hợp đồng mới
-    const duplicate = await prisma.employmentContract.findUnique({
-      where: { contractNumber: input.contractNumber },
-    });
+      if (parent.contractType === "INDEFINITE_TERM") {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          "Hợp đồng không xác định thời hạn không thể thực hiện gia hạn."
+        );
+      }
 
-    if (duplicate) {
-      throw new AppError(409, "RESOURCE_CONFLICT", `Số hợp đồng mới ${input.contractNumber} đã tồn tại.`);
-    }
+      if (!["ACTIVE", "EXPIRED"].includes(parent.status)) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Hợp đồng hiện tại đang ở trạng thái ${parent.status}, không thể gia hạn.`
+        );
+      }
 
-    // 3. Thực thi chuỗi bất biến trong một Transaction duy nhất
-    const newContract = await prisma.$transaction(async (tx) => {
-      // Đổi trạng thái hợp đồng cũ sang RENEWED
-      await tx.employmentContract.update({
-        where: { id: parentContractId },
+      // Kiểm tra trùng số hợp đồng mới
+      const duplicate = await tx.employmentContract.findUnique({
+        where: { contractNumber: input.contractNumber },
+      });
+
+      if (duplicate) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Số hợp đồng mới ${input.contractNumber} đã tồn tại.`
+        );
+      }
+
+      if (input.fileAssetId) {
+        const asset = await tx.fileAsset.findUnique({
+          where: { id: input.fileAssetId },
+          select: { id: true },
+        });
+        if (!asset) {
+          throw new AppError(422, "VALIDATION_FAILED", "Tệp đính kèm (fileAssetId) không tồn tại.");
+        }
+      }
+
+      // Cập nhật có điều kiện chống race-condition khi 2 request gia hạn cùng lúc
+      const updatedParent = await tx.employmentContract.updateMany({
+        where: {
+          id: parentContractId,
+          status: { in: ["ACTIVE", "EXPIRED"] },
+        },
         data: { status: "RENEWED" },
       });
+
+      if (updatedParent.count !== 1) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          "Hợp đồng gốc đã được gia hạn hoặc thay đổi trạng thái bởi giao dịch khác."
+        );
+      }
+
+      // Chặn trường hợp nhân sự còn hợp đồng ACTIVE khác chồng chéo thời gian
+      const overlappingOther = await tx.employmentContract.findFirst({
+        where: {
+          employeeId: parent.employeeId,
+          id: { not: parentContractId },
+          status: "ACTIVE",
+          AND: [
+            {
+              OR: [{ expiryDate: null }, { expiryDate: { gte: effectiveDateObj } }],
+            },
+            ...(expiryDateObj ? [{ effectiveDate: { lte: expiryDateObj } }] : []),
+          ],
+        },
+      });
+
+      if (overlappingOther) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Nhân sự đã có hợp đồng hiệu lực khác (${overlappingOther.contractNumber}) trùng thời gian.`
+        );
+      }
 
       // Tạo hợp đồng mới liên kết cha-con
       const created = await tx.employmentContract.create({
         data: {
-          employeeId: parentContract.employeeId,
+          employeeId: parent.employeeId,
           contractNumber: input.contractNumber,
           contractType: input.contractType as ContractType,
-          signedDate: new Date(input.signedDate),
-          effectiveDate: new Date(input.effectiveDate),
-          expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
+          signedDate: signedDateObj,
+          effectiveDate: effectiveDateObj,
+          expiryDate: expiryDateObj,
           salaryCoefficient: input.salaryCoefficient,
           fileAssetId: input.fileAssetId || null,
           parentContractId: parentContractId,
@@ -629,7 +795,25 @@ export class ContractService {
         },
       });
 
-      return created;
+      await tx.auditEvent.create({
+        data: {
+          userId: currentUser?.id ?? null,
+          action: "CONTRACT_RENEWED",
+          entityName: "EmploymentContract",
+          entityId: created.id,
+          diffData: {
+            parentContractId,
+            parentContractNumber: parent.contractNumber,
+            contractNumber: created.contractNumber,
+            contractType: created.contractType,
+            effectiveDate: input.effectiveDate,
+            expiryDate: input.expiryDate ?? null,
+            note: input.note ?? null,
+          },
+        },
+      });
+
+      return { parentContract: parent, newContract: created };
     });
 
     const primaryAssignment = parentContract.employee.assignments[0];

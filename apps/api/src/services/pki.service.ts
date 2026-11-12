@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   OfficialResolutionResponse,
   DigitalSignatureInfo,
@@ -10,35 +13,87 @@ export class PkiService {
   private static keyPair: { publicKey: string; privateKey: string } | null = null;
   private static rectorCertSerial = "VN-DAU-CA-8899A1-2026";
 
+  private static getKeyPairFilePath(): string {
+    if (process.env.PKI_KEYPAIR_PATH) {
+      return path.resolve(process.env.PKI_KEYPAIR_PATH);
+    }
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    return path.resolve(currentDir, "../../../../storage/pki/dau-keypair.json");
+  }
+
   /**
-   * Khởi tạo hoặc lấy cặp khóa ký số RSA của Hiệu trưởng
+   * Khởi tạo hoặc nạp cặp khóa ký số RSA-2048 của Hiệu trưởng từ env hoặc storage/pki/dau-keypair.json
    */
   public static getKeyPair(): { publicKey: string; privateKey: string } {
-    if (!this.keyPair) {
-      // Khởi tạo cặp khóa RSA 2048-bit chuẩn PKCS#8 / SPKI
-      const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
-        modulusLength: 2048,
-        publicKeyEncoding: {
-          type: "spki",
-          format: "pem",
-        },
-        privateKeyEncoding: {
-          type: "pkcs8",
-          format: "pem",
-        },
-      });
-      this.keyPair = { publicKey, privateKey };
+    if (this.keyPair) {
+      return this.keyPair;
     }
+
+    const envPrivate = process.env.PKI_PRIVATE_KEY_PEM?.replace(/\\n/g, "\n").trim();
+    const envPublic = process.env.PKI_PUBLIC_KEY_PEM?.replace(/\\n/g, "\n").trim();
+    if (envPrivate) {
+      const publicKey =
+        envPublic ||
+        crypto
+          .createPublicKey(envPrivate)
+          .export({ type: "spki", format: "pem" })
+          .toString();
+      this.keyPair = { publicKey, privateKey: envPrivate };
+      return this.keyPair;
+    }
+
+    const keyFilePath = this.getKeyPairFilePath();
+    try {
+      if (fs.existsSync(keyFilePath)) {
+        const raw = fs.readFileSync(keyFilePath, "utf8");
+        const parsed = JSON.parse(raw) as { publicKey?: string; privateKey?: string };
+        if (parsed.publicKey && parsed.privateKey) {
+          this.keyPair = { publicKey: parsed.publicKey, privateKey: parsed.privateKey };
+          return this.keyPair;
+        }
+      }
+    } catch (err) {
+      console.warn("[PkiService] Không thể đọc keypair từ storage/pki, sẽ tạo mới:", err);
+    }
+
+    // Khởi tạo cặp khóa RSA 2048-bit chuẩn PKCS#8 / SPKI và lưu lại để tái sử dụng qua các lần restart
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "pem",
+      },
+    });
+
+    this.keyPair = { publicKey, privateKey };
+
+    try {
+      fs.mkdirSync(path.dirname(keyFilePath), { recursive: true });
+      fs.writeFileSync(
+        keyFilePath,
+        JSON.stringify({ publicKey, privateKey, createdAt: new Date().toISOString() }, null, 2),
+        { encoding: "utf8", mode: 0o600 }
+      );
+    } catch (err) {
+      console.warn("[PkiService] Không thể ghi keypair xuống storage/pki:", err);
+    }
+
     return this.keyPair;
   }
 
   /**
-   * Tạo chuỗi chuẩn hóa (Canonical String) từ nội dung quyết định để băm
+   * Tạo chuỗi chuẩn hóa (Canonical String) từ toàn bộ nội dung quyết định để băm
    */
   public static getCanonicalPayload(doc: OfficialResolutionResponse): string {
+    const legalGroundsContent = (doc.legalGrounds || []).join("|");
     const articlesContent = (doc.articles || [])
       .map((a) => `${a.articleNumber}:${a.title}:${a.content}`)
       .join("|");
+    const recipientsContent = (doc.recipients || []).join("|");
 
     return [
       doc.resolutionNumber,
@@ -47,7 +102,9 @@ export class PkiService {
       doc.signAuthority,
       doc.signerName,
       doc.title,
+      legalGroundsContent,
       articlesContent,
+      recipientsContent,
       doc.fullFormattedDocument || "",
     ].join("##");
   }
@@ -158,7 +215,7 @@ export class PkiService {
       certificateSerial: signature.certificateSerial,
       signedAt: signature.signedAt,
       documentHash: currentHash,
-      verificationUrl: `http://localhost:3000/verify/${encodeURIComponent(doc.resolutionNumber)}`,
+      verificationUrl: `${(process.env.WEB_BASE_URL || "http://localhost:3000").replace(/\/+$/, "")}/verify/${encodeURIComponent(doc.resolutionNumber)}`,
       message,
     };
   }

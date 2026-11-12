@@ -47,6 +47,42 @@ export type ContractAlertLevel = z.infer<typeof ContractAlertLevelEnum>;
 // CONTRACT INPUT SCHEMAS
 // =============================================================================
 
+const isoContractDateSchema = (label: string) =>
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, `${label} định dạng YYYY-MM-DD`)
+    .refine(
+      (val) => {
+        const d = new Date(`${val}T00:00:00.000Z`);
+        return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(val);
+      },
+      { message: `${label} không phải là ngày hợp lệ` }
+    );
+
+function validateContractTermDates(
+  data: { contractType: ContractType; effectiveDate: string; expiryDate?: string | null },
+  ctx: z.RefinementCtx
+): void {
+  if (data.contractType === "INDEFINITE_TERM") {
+    if (data.expiryDate !== undefined && data.expiryDate !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Hợp đồng không xác định thời hạn không được có ngày kết thúc",
+        path: ["expiryDate"],
+      });
+    }
+    return;
+  }
+
+  if (!data.expiryDate || data.expiryDate <= data.effectiveDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Hợp đồng có thời hạn bắt buộc có ngày kết thúc sau ngày hiệu lực",
+      path: ["expiryDate"],
+    });
+  }
+}
+
 export const CreateContractSchema = z
   .object({
     employeeId: z.string().uuid("Mã nhân sự không đúng định dạng UUID"),
@@ -56,28 +92,13 @@ export const CreateContractSchema = z
       .min(3, "Số hợp đồng tối thiểu 3 ký tự")
       .max(100, "Số hợp đồng không vượt quá 100 ký tự"),
     contractType: ContractTypeEnum,
-    signedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày ký định dạng YYYY-MM-DD"),
-    effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày hiệu lực định dạng YYYY-MM-DD"),
-    expiryDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc định dạng YYYY-MM-DD")
-      .optional()
-      .nullable(),
+    signedDate: isoContractDateSchema("Ngày ký"),
+    effectiveDate: isoContractDateSchema("Ngày hiệu lực"),
+    expiryDate: isoContractDateSchema("Ngày kết thúc").optional().nullable(),
     salaryCoefficient: z.coerce.number().positive("Hệ số lương phải là số dương"),
     fileAssetId: z.string().uuid("File asset id không đúng định dạng UUID").optional().nullable(),
   })
-  .refine(
-    (data) => {
-      if (data.contractType === "INDEFINITE_TERM") {
-        return true;
-      }
-      return !!data.expiryDate && data.expiryDate >= data.effectiveDate;
-    },
-    {
-      message: "Hợp đồng có thời hạn bắt buộc có ngày kết thúc sau ngày hiệu lực",
-      path: ["expiryDate"],
-    }
-  );
+  .superRefine(validateContractTermDates);
 
 export type CreateContractInput = z.infer<typeof CreateContractSchema>;
 
@@ -89,29 +110,14 @@ export const RenewContractSchema = z
       .min(3, "Số hợp đồng mới tối thiểu 3 ký tự")
       .max(100, "Số hợp đồng không vượt quá 100 ký tự"),
     contractType: ContractTypeEnum,
-    signedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày ký định dạng YYYY-MM-DD"),
-    effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày hiệu lực định dạng YYYY-MM-DD"),
-    expiryDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc định dạng YYYY-MM-DD")
-      .optional()
-      .nullable(),
+    signedDate: isoContractDateSchema("Ngày ký"),
+    effectiveDate: isoContractDateSchema("Ngày hiệu lực"),
+    expiryDate: isoContractDateSchema("Ngày kết thúc").optional().nullable(),
     salaryCoefficient: z.coerce.number().positive("Hệ số lương phải là số dương"),
     fileAssetId: z.string().uuid("File asset id không đúng định dạng UUID").optional().nullable(),
     note: z.string().optional().nullable(),
   })
-  .refine(
-    (data) => {
-      if (data.contractType === "INDEFINITE_TERM") {
-        return true;
-      }
-      return !!data.expiryDate && data.expiryDate >= data.effectiveDate;
-    },
-    {
-      message: "Hợp đồng có thời hạn bắt buộc có ngày kết thúc sau ngày hiệu lực",
-      path: ["expiryDate"],
-    }
-  );
+  .superRefine(validateContractTermDates);
 
 export type RenewContractInput = z.infer<typeof RenewContractSchema>;
 

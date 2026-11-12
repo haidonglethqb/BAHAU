@@ -88,18 +88,59 @@ export class PdfExportService {
 
     const t = (text: string) => (useUnicode ? text : this.sanitizeText(text));
 
+    const wrapText = (
+      text: string,
+      font: any,
+      size: number,
+      maxWidth: number
+    ): string[] => {
+      const result: string[] = [];
+      const paragraphs = (text || "").split(/\r?\n/);
+
+      for (const para of paragraphs) {
+        const words = para.trim().split(/\s+/).filter(Boolean);
+        if (words.length === 0) {
+          continue;
+        }
+        let currentLine = "";
+        for (const word of words) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          if (font.widthOfTextAtSize(t(testLine), size) > maxWidth && currentLine) {
+            result.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        }
+        if (currentLine) {
+          result.push(currentLine);
+        }
+      }
+
+      return result;
+    };
+
     // Lề chuẩn Nghị định 30
     const marginLeft = 72; // ~25mm
     const marginRight = width - 42; // ~15mm
     const printableWidth = marginRight - marginLeft;
+    const bottomMargin = 65;
 
+    let currentPage = page;
     let cursorY = height - 56; // Cách mép trên 20mm
+
+    const ensureSpace = (requiredHeight: number): void => {
+      if (cursorY - requiredHeight < bottomMargin) {
+        currentPage = pdfDoc.addPage([595.28, 841.89]);
+        cursorY = height - 56;
+      }
+    };
 
     // =========================================================================
     // 1. HEADER HAI CỘT THEO NGHỊ ĐỊNH 30
     // =========================================================================
     // Cột 1 (Bên trái): Cơ quan ban hành & Số hiệu
-    page.drawText(t("BỘ GIÁO DỤC VÀ ĐÀO TẠO"), {
+    currentPage.drawText(t("BỘ GIÁO DỤC VÀ ĐÀO TẠO"), {
       x: marginLeft,
       y: cursorY,
       size: 10,
@@ -107,7 +148,7 @@ export class PdfExportService {
       color: rgb(0.2, 0.2, 0.2),
     });
 
-    page.drawText(t("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"), {
+    currentPage.drawText(t("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"), {
       x: width / 2 - 10,
       y: cursorY,
       size: 10.5,
@@ -117,7 +158,7 @@ export class PdfExportService {
 
     cursorY -= 14;
 
-    page.drawText(t("TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG"), {
+    currentPage.drawText(t("TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG"), {
       x: marginLeft,
       y: cursorY,
       size: 10,
@@ -125,7 +166,7 @@ export class PdfExportService {
       color: rgb(0.05, 0.05, 0.05),
     });
 
-    page.drawText(t("Độc lập - Tự do - Hạnh phúc"), {
+    currentPage.drawText(t("Độc lập - Tự do - Hạnh phúc"), {
       x: width / 2 + 30,
       y: cursorY,
       size: 10.5,
@@ -135,7 +176,7 @@ export class PdfExportService {
 
     cursorY -= 6;
     // Đường gạch chân tiêu ngữ
-    page.drawLine({
+    currentPage.drawLine({
       start: { x: width / 2 + 40, y: cursorY },
       end: { x: width / 2 + 160, y: cursorY },
       thickness: 1,
@@ -144,7 +185,7 @@ export class PdfExportService {
 
     cursorY -= 12;
 
-    page.drawText(t(`Số: ${doc.resolutionNumber}`), {
+    currentPage.drawText(t(`Số: ${doc.resolutionNumber}`), {
       x: marginLeft,
       y: cursorY,
       size: 10,
@@ -152,7 +193,14 @@ export class PdfExportService {
       color: rgb(0.1, 0.1, 0.1),
     });
 
-    page.drawText(t(`Đà Nẵng, ngày ${doc.signDate || "15 tháng 10 năm 2026"}`), {
+    const rawSignDate = (doc.signDate || "").trim();
+    const formattedSignDate = rawSignDate
+      ? /^(đà nẵng|da nang)/i.test(rawSignDate)
+        ? rawSignDate
+        : `Đà Nẵng, ngày ${rawSignDate}`
+      : "Đà Nẵng, ngày 15 tháng 10 năm 2026";
+
+    currentPage.drawText(t(formattedSignDate), {
       x: width / 2 + 10,
       y: cursorY,
       size: 10,
@@ -163,11 +211,11 @@ export class PdfExportService {
     cursorY -= 28;
 
     // =========================================================================
-    // 2. TIÊU ĐỀ QUYẾT ĐỊNH
+    // 2. TIÊU ĐỀ QUYẾT ĐỊNH (loại bỏ trùng lặp "QUYẾT ĐỊNH" & bọc dòng)
     // =========================================================================
     const titleHeader = t("QUYẾT ĐỊNH");
     const titleWidth = fontBold.widthOfTextAtSize(titleHeader, 14);
-    page.drawText(titleHeader, {
+    currentPage.drawText(titleHeader, {
       x: (width - titleWidth) / 2,
       y: cursorY,
       size: 14,
@@ -177,21 +225,32 @@ export class PdfExportService {
 
     cursorY -= 18;
 
-    const subTitle = t(doc.title);
-    const subTitleWidth = fontBold.widthOfTextAtSize(subTitle, 11);
-    page.drawText(subTitle, {
-      x: Math.max(marginLeft, (width - subTitleWidth) / 2),
-      y: cursorY,
-      size: 11,
-      font: fontBold,
-      color: rgb(0.1, 0.1, 0.1),
-    });
+    const subTitleRaw = (doc.title || "")
+      .replace(/^\s*QUYẾT\s+ĐỊNH\s*[\r\n:]*/i, "")
+      .replace(/^\s*QUYET\s+DINH\s*[\r\n:]*/i, "")
+      .trim();
 
-    cursorY -= 20;
+    const subTitleLines = wrapText(subTitleRaw, fontBold, 11, printableWidth);
+    for (const line of subTitleLines) {
+      ensureSpace(16);
+      const renderedLine = t(line);
+      const lineWidth = fontBold.widthOfTextAtSize(renderedLine, 11);
+      currentPage.drawText(renderedLine, {
+        x: Math.max(marginLeft, (width - lineWidth) / 2),
+        y: cursorY,
+        size: 11,
+        font: fontBold,
+        color: rgb(0.1, 0.1, 0.1),
+      });
+      cursorY -= 15;
+    }
 
+    cursorY -= 6;
+
+    ensureSpace(22);
     const authTitle = t("HIỆU TRƯỞNG TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG");
     const authWidth = fontBold.widthOfTextAtSize(authTitle, 11);
-    page.drawText(authTitle, {
+    currentPage.drawText(authTitle, {
       x: (width - authWidth) / 2,
       y: cursorY,
       size: 11,
@@ -202,24 +261,35 @@ export class PdfExportService {
     cursorY -= 20;
 
     // =========================================================================
-    // 3. CĂN CỨ PHÁP LÝ (LEGAL GROUNDS)
+    // 3. CĂN CỨ PHÁP LÝ (LEGAL GROUNDS - CÓ BỌC DÒNG & PHÂN TRANG)
     // =========================================================================
     for (const ground of doc.legalGrounds || []) {
-      const line = t(`- ${ground};`);
-      page.drawText(line, {
-        x: marginLeft,
-        y: cursorY,
-        size: 9.5,
-        font: fontRegular,
-        color: rgb(0.2, 0.2, 0.2),
-      });
-      cursorY -= 14;
+      const normalizedGround = ground.trim().replace(/[;,.]+$/, "");
+      const wrappedGround = wrapText(
+        `- ${normalizedGround}${ground.trim().endsWith(",") ? "," : ";"}`,
+        fontRegular,
+        9.5,
+        printableWidth
+      );
+      for (const line of wrappedGround) {
+        ensureSpace(14);
+        currentPage.drawText(t(line), {
+          x: marginLeft,
+          y: cursorY,
+          size: 9.5,
+          font: fontRegular,
+          color: rgb(0.2, 0.2, 0.2),
+        });
+        cursorY -= 13;
+      }
+      cursorY -= 2;
     }
 
     cursorY -= 8;
+    ensureSpace(24);
     const decideWord = t("QUYẾT ĐỊNH:");
     const decideWidth = fontBold.widthOfTextAtSize(decideWord, 11);
-    page.drawText(decideWord, {
+    currentPage.drawText(decideWord, {
       x: (width - decideWidth) / 2,
       y: cursorY,
       size: 11,
@@ -230,11 +300,12 @@ export class PdfExportService {
     cursorY -= 18;
 
     // =========================================================================
-    // 4. CÁC ĐIỀU KHOẢN (ARTICLES)
+    // 4. CÁC ĐIỀU KHOẢN (ARTICLES - CÓ BỌC DÒNG & TỰ ĐỘNG SANG TRANG)
     // =========================================================================
     for (const art of doc.articles || []) {
+      ensureSpace(30);
       const artHeader = t(`Điều ${art.articleNumber}. ${art.title}`);
-      page.drawText(artHeader, {
+      currentPage.drawText(artHeader, {
         x: marginLeft,
         y: cursorY,
         size: 10,
@@ -243,45 +314,37 @@ export class PdfExportService {
       });
       cursorY -= 14;
 
-      // Wrap text nội dung
-      const words = art.content.split(" ");
-      let currentLine = "";
-      for (const word of words) {
-        const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const testWidth = fontRegular.widthOfTextAtSize(t(testLine), 9.5);
-        if (testWidth > printableWidth) {
-          page.drawText(t(currentLine), {
-            x: marginLeft + 12,
-            y: cursorY,
-            size: 9.5,
-            font: fontRegular,
-            color: rgb(0.15, 0.15, 0.15),
-          });
-          cursorY -= 13;
-          currentLine = word;
-        } else {
-          currentLine = testLine;
-        }
-      }
-      if (currentLine) {
-        page.drawText(t(currentLine), {
+      const wrappedContent = wrapText(art.content || "", fontRegular, 9.5, printableWidth - 12);
+      for (const line of wrappedContent) {
+        ensureSpace(14);
+        currentPage.drawText(t(line), {
           x: marginLeft + 12,
           y: cursorY,
           size: 9.5,
           font: fontRegular,
           color: rgb(0.15, 0.15, 0.15),
         });
-        cursorY -= 16;
+        cursorY -= 13;
       }
+      cursorY -= 4;
     }
 
     // =========================================================================
     // 5. NƠI NHẬN & KHỐI KÝ SỐ / CON DẤU ĐIỆN TỬ
     // =========================================================================
-    const bottomSectionY = Math.max(90, cursorY - 10);
+    const recipientMaxWidth = width / 2 - marginLeft + 25;
+    const wrappedRecipientLines: string[] = [];
+    for (const r of doc.recipients || []) {
+      const lines = wrapText(`- ${r}`, fontRegular, 8.5, recipientMaxWidth);
+      wrappedRecipientLines.push(...lines);
+    }
+
+    const requiredBottomBlockHeight = Math.max(125, wrappedRecipientLines.length * 11 + 24);
+    ensureSpace(requiredBottomBlockHeight);
+    const bottomSectionY = cursorY - 10;
 
     // Cột bên trái: Nơi nhận
-    page.drawText(t("Nơi nhận:"), {
+    currentPage.drawText(t("Nơi nhận:"), {
       x: marginLeft,
       y: bottomSectionY,
       size: 9.5,
@@ -290,8 +353,8 @@ export class PdfExportService {
     });
 
     let recipientY = bottomSectionY - 12;
-    for (const r of doc.recipients || []) {
-      page.drawText(t(`- ${r}`), {
+    for (const line of wrappedRecipientLines) {
+      currentPage.drawText(t(line), {
         x: marginLeft,
         y: recipientY,
         size: 8.5,
@@ -304,7 +367,7 @@ export class PdfExportService {
     // Cột bên phải: Chức vụ & Thẩm quyền ký
     const rightColX = width / 2 + 50;
 
-    page.drawText(t("TM. BAN GIÁM HIỆU"), {
+    currentPage.drawText(t("TM. BAN GIÁM HIỆU"), {
       x: rightColX + 15,
       y: bottomSectionY,
       size: 10,
@@ -312,7 +375,7 @@ export class PdfExportService {
       color: rgb(0.1, 0.1, 0.1),
     });
 
-    page.drawText(t(doc.signAuthority || "HIỆU TRƯỞNG"), {
+    currentPage.drawText(t(doc.signAuthority || "HIỆU TRƯỞNG"), {
       x: rightColX + 30,
       y: bottomSectionY - 14,
       size: 10.5,
@@ -325,7 +388,7 @@ export class PdfExportService {
     const sealCenterY = bottomSectionY - 55;
 
     // Vòng tròn dấu đỏ ngoài
-    page.drawCircle({
+    currentPage.drawCircle({
       x: sealCenterX,
       y: sealCenterY,
       size: 38,
@@ -333,7 +396,7 @@ export class PdfExportService {
       borderWidth: 1.5,
     });
     // Vòng tròn dấu đỏ trong
-    page.drawCircle({
+    currentPage.drawCircle({
       x: sealCenterX,
       y: sealCenterY,
       size: 26,
@@ -341,14 +404,14 @@ export class PdfExportService {
       borderWidth: 0.8,
     });
     // Chữ trong mộc dấu
-    page.drawText(t("ĐH KIẾN TRÚC"), {
+    currentPage.drawText(t("ĐH KIẾN TRÚC"), {
       x: sealCenterX - 24,
       y: sealCenterY + 5,
       size: 7.5,
       font: fontBold,
       color: rgb(0.85, 0.15, 0.15),
     });
-    page.drawText(t("ĐÀ NẴNG"), {
+    currentPage.drawText(t("ĐÀ NẴNG"), {
       x: sealCenterX - 18,
       y: sealCenterY - 5,
       size: 8,
@@ -357,7 +420,7 @@ export class PdfExportService {
     });
 
     // Tên người ký
-    page.drawText(t(doc.signerName || "GS.TS. Nguyễn Hiệu Trưởng"), {
+    currentPage.drawText(t(doc.signerName || "GS.TS. Nguyễn Hiệu Trưởng"), {
       x: rightColX + 10,
       y: bottomSectionY - 105,
       size: 11,
@@ -366,17 +429,17 @@ export class PdfExportService {
     });
 
     // =========================================================================
-    // 6. NHÚNG MÃ QR CODE XÁC THỰC VĂN BẢN (VERIFICATION QR CODE)
+    // 6. NHÚNG MÃ QR CODE XÁC THỰC VĂN BẢN TRÊN TRANG ĐẦU
     // =========================================================================
     const verifyUrl =
       doc.verificationUrl ||
-      `http://localhost:3000/verify/${encodeURIComponent(doc.resolutionNumber)}`;
+      `${(process.env.WEB_BASE_URL || "http://localhost:3000").replace(/\/+$/, "")}/verify/${encodeURIComponent(doc.resolutionNumber)}`;
 
     try {
       const qrPngBuffer = await this.generateQrBuffer(verifyUrl);
       const qrImage = await pdfDoc.embedPng(qrPngBuffer);
 
-      // Đặt QR Code ở góc trên bên phải (cách mép phải 42pt, mép trên 140pt)
+      // Đặt QR Code ở góc trên bên phải của trang đầu
       const qrX = width - 85;
       const qrY = height - 125;
       const qrSize = 50;
@@ -407,32 +470,34 @@ export class PdfExportService {
     }
 
     // =========================================================================
-    // 7. FOOTER CHỨNG THƯ SỐ PKI
+    // 7. FOOTER CHỨNG THƯ SỐ PKI TRÊN TẤT CẢ CÁC TRANG
     // =========================================================================
     if (doc.signature) {
       const sig = doc.signature;
-      page.drawRectangle({
-        x: marginLeft,
-        y: 20,
-        width: printableWidth,
-        height: 24,
-        color: rgb(0.96, 0.98, 0.96),
-        borderColor: rgb(0.3, 0.7, 0.4),
-        borderWidth: 0.8,
-      });
+      for (const p of pdfDoc.getPages()) {
+        p.drawRectangle({
+          x: marginLeft,
+          y: 20,
+          width: printableWidth,
+          height: 24,
+          color: rgb(0.96, 0.98, 0.96),
+          borderColor: rgb(0.3, 0.7, 0.4),
+          borderWidth: 0.8,
+        });
 
-      page.drawText(
-        t(
-          `✓ KÝ SỐ XÁC THỰC: ${sig.signerName} (${sig.signerPosition}) · Seri: ${sig.certificateSerial} · ${sig.signedAt.slice(0, 10)}`
-        ),
-        {
-          x: marginLeft + 8,
-          y: 28,
-          size: 7.5,
-          font: fontBold,
-          color: rgb(0.1, 0.5, 0.2),
-        }
-      );
+        p.drawText(
+          t(
+            `✓ KÝ SỐ XÁC THỰC: ${sig.signerName} (${sig.signerPosition}) · Seri: ${sig.certificateSerial} · ${sig.signedAt.slice(0, 10)}`
+          ),
+          {
+            x: marginLeft + 8,
+            y: 28,
+            size: 7.5,
+            font: fontBold,
+            color: rgb(0.1, 0.5, 0.2),
+          }
+        );
+      }
     }
 
     return await pdfDoc.save();

@@ -8,10 +8,10 @@ export async function getContracts(req: Request, res: Response): Promise<void> {
   res.status(200).json({
     success: true,
     data: result.items,
+    pagination: result.pagination,
     meta: {
       timestamp: new Date().toISOString(),
       requestId,
-      pagination: result.pagination,
     },
   });
 }

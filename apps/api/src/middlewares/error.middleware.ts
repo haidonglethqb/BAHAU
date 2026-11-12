@@ -103,6 +103,55 @@ export function errorHandler(
     return;
   }
 
+  // Prisma known request errors (do not leak internal DB/schema/constraint details)
+  const isPrismaKnownError =
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof (err as { code?: unknown }).code === "string" &&
+    ((err as { name?: string }).name === "PrismaClientKnownRequestError" ||
+      /^P20\d{2}$/.test((err as { code: string }).code));
+
+  if (isPrismaKnownError) {
+    const prismaCode = (err as { code: string }).code;
+    const prismaMapping: Record<string, { status: number; code: string; message: string }> = {
+      P2002: {
+        status: 409,
+        code: "CONFLICT_STATE",
+        message: "Dữ liệu bị trùng lặp với bản ghi đã tồn tại.",
+      },
+      P2003: {
+        status: 422,
+        code: "VALIDATION_FAILED",
+        message: "Tham chiếu dữ liệu liên kết không tồn tại hoặc không hợp lệ.",
+      },
+      P2023: {
+        status: 400,
+        code: "BAD_REQUEST",
+        message: "Định dạng mã định danh (UUID) hoặc dữ liệu truy vấn không hợp lệ.",
+      },
+      P2025: {
+        status: 404,
+        code: "RESOURCE_NOT_FOUND",
+        message: "Không tìm thấy bản ghi dữ liệu yêu cầu.",
+      },
+    };
+
+    const mapped = prismaMapping[prismaCode];
+    if (mapped) {
+      res.status(mapped.status).json({
+        success: false,
+        error: {
+          code: mapped.code,
+          message: mapped.message,
+          requestId,
+          timestamp,
+        },
+      });
+      return;
+    }
+  }
+
   console.error(`[Unhandled Error] [${requestId}]`, err);
 
   res.status(500).json({

@@ -39,8 +39,8 @@ export const OrganizationalUnitDtoSchema: z.ZodType<OrganizationalUnitDto> = z.o
 
 // Create Unit Schema
 export const CreateUnitSchema = z.object({
-  code: z.string().min(2, "Mã đơn vị tối thiểu 2 ký tự").max(50),
-  name: z.string().min(2, "Tên đơn vị tối thiểu 2 ký tự").max(255),
+  code: z.string().trim().min(2, "Mã đơn vị tối thiểu 2 ký tự").max(50),
+  name: z.string().trim().min(2, "Tên đơn vị tối thiểu 2 ký tự").max(255),
   unitType: UnitTypeEnum,
   parentId: z.string().uuid().nullable().optional(),
   managerEmployeeId: z.string().uuid().nullable().optional(),
@@ -49,8 +49,14 @@ export const CreateUnitSchema = z.object({
 
 export type CreateUnitInput = z.infer<typeof CreateUnitSchema>;
 
-// Update Unit Schema
-export const UpdateUnitSchema = CreateUnitSchema.partial().extend({
+// Update Unit Schema (không gắn default cho orderIndex để tránh ghi đè khi partial update)
+export const UpdateUnitSchema = z.object({
+  code: z.string().trim().min(2, "Mã đơn vị tối thiểu 2 ký tự").max(50).optional(),
+  name: z.string().trim().min(2, "Tên đơn vị tối thiểu 2 ký tự").max(255).optional(),
+  unitType: UnitTypeEnum.optional(),
+  parentId: z.string().uuid().nullable().optional(),
+  managerEmployeeId: z.string().uuid().nullable().optional(),
+  orderIndex: z.number().int().optional(),
   isActive: z.boolean().optional(),
 });
 

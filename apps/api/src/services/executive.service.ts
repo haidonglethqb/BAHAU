@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { prisma } from "@bahau/database";
 import { PkiService } from "./pki.service.js";
 import { PdfExportService } from "./pdf-export.service.js";
@@ -10,74 +11,209 @@ import type {
   ResolutionVerificationResponse,
 } from "@bahau/contracts";
 
+interface CachedEmployeeSalaryInfo {
+  positionName: string;
+  currentRank: number;
+  currentCoefficient: number;
+  nextRank: number;
+  nextCoefficient: number;
+}
+
 export class ExecutiveService {
+  private static resolutionSeq = 0;
+  private static employeeSalaryCache = new Map<string, CachedEmployeeSalaryInfo>();
+  private static salaryCacheWarming: Promise<void> | null = null;
+
+  private static getWebBaseUrl(): string {
+    return (process.env.WEB_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+  }
+
+  private static computeMonthsElapsed(fromDate: Date, toDate: Date = new Date()): number {
+    const startYear = fromDate.getUTCFullYear();
+    const startMonth = fromDate.getUTCMonth();
+    const startDay = fromDate.getUTCDate();
+
+    const endYear = toDate.getUTCFullYear();
+    const endMonth = toDate.getUTCMonth();
+    const endDay = toDate.getUTCDate();
+
+    let months = (endYear - startYear) * 12 + (endMonth - startMonth);
+    if (endDay < startDay) {
+      months -= 1;
+    }
+    return Math.max(0, months);
+  }
+
+  private static inferSalaryRank(coeff: number): {
+    currentRank: number;
+    nextRank: number;
+    nextCoefficient: number;
+  } {
+    const inferredRank = Math.min(8, Math.max(1, Math.round((coeff - 2.34) / 0.33) + 1));
+    const nextRank = inferredRank < 8 ? inferredRank + 1 : 8;
+    const nextCoefficient =
+      inferredRank < 8 ? Math.round((coeff + 0.33) * 100) / 100 : coeff;
+    return { currentRank: inferredRank, nextRank, nextCoefficient };
+  }
+
+  private static async warmSalaryCache(): Promise<void> {
+    if (this.salaryCacheWarming) return this.salaryCacheWarming;
+    this.salaryCacheWarming = (async () => {
+      try {
+        await this.getSalaryIncrementCandidates();
+      } catch {
+        // Bỏ qua nếu DB offline
+      } finally {
+        this.salaryCacheWarming = null;
+      }
+    })();
+    return this.salaryCacheWarming;
+  }
+
+  private static nextResolutionNumber(year: number): string {
+    let candidate = "";
+    do {
+      this.resolutionSeq += 1;
+      const seqPart = this.resolutionSeq.toString().padStart(4, "0");
+      const uniqueSuffix = crypto.randomBytes(2).toString("hex").toUpperCase();
+      candidate = `${year}${seqPart}-${uniqueSuffix}/QĐ-ĐHKTĐN`;
+    } while (this.resolutionsStore.has(candidate));
+    return candidate;
+  }
+
   /**
    * Tự động rà soát và lập danh sách CBGV đủ điều kiện xét nâng bậc lương thường xuyên và trước thời hạn
    */
   public static async getSalaryIncrementCandidates(): Promise<SalaryIncrementCandidateDto[]> {
-    const employees = await prisma.employee.findMany({
-      where: { employmentStatus: "ACTIVE" },
-      include: {
-        assignments: {
-          where: { status: "ACTIVE" },
-          include: { unit: true, position: true },
-        },
-        contracts: {
-          where: { status: "ACTIVE" },
-          orderBy: { effectiveDate: "desc" },
-          take: 1,
-        },
-      },
-    }) as any[];
+    let employees: any[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("DATABASE_TIMEOUT")), 3000);
+        if (typeof (timer as any).unref === "function") {
+          (timer as any).unref();
+        }
+      });
+
+      employees = await Promise.race([
+        prisma.employee.findMany({
+          where: { employmentStatus: "ACTIVE" },
+          include: {
+            assignments: {
+              where: { status: "ACTIVE" },
+              include: { unit: true, position: true },
+            },
+            contracts: {
+              where: { status: "ACTIVE" },
+              orderBy: { effectiveDate: "desc" },
+              take: 1,
+            },
+            events: {
+              where: { eventType: "PROMOTED" },
+              orderBy: { effectiveDate: "desc" },
+              take: 1,
+            },
+            kpiEvaluations: {
+              where: { status: "FINALIZED" },
+              include: { period: { select: { endDate: true } } },
+              orderBy: { createdAt: "desc" },
+              take: 2,
+            },
+          },
+        }),
+        timeoutPromise,
+      ]);
+    } catch (err) {
+      console.warn(
+        "[ExecutiveService] Không thể truy vấn danh sách xét nâng lương từ CSDL, trả về danh sách rỗng:",
+        err instanceof Error ? err.message : String(err)
+      );
+      return [];
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
 
     const candidates: SalaryIncrementCandidateDto[] = [];
+    const now = new Date();
 
     for (const emp of employees) {
+      const primaryAssignment =
+        emp.assignments?.find((a: any) => a.assignmentType === "PRIMARY") || emp.assignments?.[0];
       const contract = emp.contracts?.[0];
-      const currentCoeff = contract?.salaryCoefficient ? Number(contract.salaryCoefficient) : 4.98;
-      const currentRank = 5;
-      const nextRank = currentRank < 8 ? currentRank + 1 : currentRank;
-      const nextCoeff = Math.round((currentCoeff + 0.33) * 100) / 100;
+      const lastPromotedEvent = emp.events?.[0];
 
-      // Giả lập thời gian giữ bậc từ ngày tuyển dụng / hợp đồng
-      const startDate = contract?.effectiveDate || emp.hireDate || new Date("2021-09-01");
-      const monthsElapsed = Math.round((Date.now() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24 * 30.4));
+      const currentCoeff = contract?.salaryCoefficient ? Number(contract.salaryCoefficient) : 2.34;
+      const { currentRank, nextRank, nextCoefficient } = this.inferSalaryRank(currentCoeff);
+      const positionName = primaryAssignment?.position?.name || "Giảng viên";
 
-      // CBGV đủ 36 tháng đối với ngạch Giảng viên
-      const isRegularEligible = monthsElapsed >= 36;
-      const isEarlyEligible = monthsElapsed >= 24; // Đạt 2 năm liên tiếp KPI A
+      this.employeeSalaryCache.set(emp.employeeCode, {
+        positionName,
+        currentRank,
+        currentCoefficient: currentCoeff,
+        nextRank,
+        nextCoefficient,
+      });
+
+      if (currentRank >= 8) {
+        continue;
+      }
+
+      const rankStartDateRaw =
+        lastPromotedEvent?.effectiveDate || contract?.effectiveDate || emp.hireDate;
+      if (!rankStartDateRaw) continue;
+
+      const monthsElapsed = this.computeMonthsElapsed(new Date(rankStartDateRaw), now);
+      const kpiList: any[] = emp.kpiEvaluations || [];
+      const recentKpiScores = kpiList
+        .map((k) => Number(k.totalFinalScore ?? k.totalManagerScore ?? k.totalSelfScore ?? 0))
+        .filter((s) => Number.isFinite(s) && s > 0);
+
+      const latestRanking = kpiList[0]?.ranking;
+      const hasTwoExcellentKpi =
+        kpiList.length >= 2 &&
+        kpiList.slice(0, 2).every((k) => k.ranking === "EXCELLENT");
+
+      const isRegularEligible =
+        monthsElapsed >= 36 && latestRanking !== "UNSATISFACTORY";
+      const isEarlyEligible =
+        !isRegularEligible && monthsElapsed >= 24 && hasTwoExcellentKpi;
+
+      const unitName = primaryAssignment?.unit?.name || "Chưa phân công đơn vị";
 
       if (isRegularEligible) {
         candidates.push({
           employeeId: emp.id,
           employeeName: emp.fullName,
           employeeCode: emp.employeeCode,
-          unitName: emp.assignments[0]?.unit?.name || "Khoa Kiến trúc",
+          unitName,
           currentRank,
           currentCoefficient: currentCoeff,
           nextRank,
-          nextCoefficient: nextCoeff,
+          nextCoefficient,
           monthsInCurrentRank: monthsElapsed,
           recommendationType: "REGULAR",
-          recommendationReason: `Đã đủ ${monthsElapsed} tháng giữ bậc (yêu cầu ≥ 36 tháng) và hoàn thành tốt nhiệm vụ.`,
+          recommendationReason: `Đã đủ ${monthsElapsed} tháng giữ bậc (yêu cầu ≥ 36 tháng) và hoàn thành nhiệm vụ.`,
           isEligible: true,
-          recentKpiScores: [94.5, 92.0],
+          recentKpiScores,
         });
       } else if (isEarlyEligible) {
         candidates.push({
           employeeId: emp.id,
           employeeName: emp.fullName,
           employeeCode: emp.employeeCode,
-          unitName: emp.assignments[0]?.unit?.name || "Khoa Kiến trúc",
+          unitName,
           currentRank,
           currentCoefficient: currentCoeff,
           nextRank,
-          nextCoefficient: nextCoeff,
+          nextCoefficient,
           monthsInCurrentRank: monthsElapsed,
           recommendationType: "EARLY",
-          recommendationReason: `Thành tích xuất sắc: 2 năm liên tục xếp loại KPI loại A, đề xuất nâng bậc trước thời hạn 12 tháng.`,
+          recommendationReason: `Thành tích xuất sắc: 2 kỳ liên tiếp đạt KPI xếp loại Xuất sắc, đề xuất nâng bậc trước thời hạn.`,
           isEligible: true,
-          recentKpiScores: [96.0, 95.5],
+          recentKpiScores,
         });
       }
     }
@@ -91,12 +227,16 @@ export class ExecutiveService {
   public static generateOfficialResolution(
     input: GenerateResolutionInput
   ): OfficialResolutionResponse {
-    const today = new Date();
-    const day = today.getDate().toString().padStart(2, "0");
-    const month = (today.getMonth() + 1).toString().padStart(2, "0");
-    const year = today.getFullYear();
-    const resolutionNum = Math.floor(100 + Math.random() * 900);
-    const resolutionNumber = `${resolutionNum}/QĐ-ĐHKTĐN`;
+    if (this.employeeSalaryCache.size === 0) {
+      void this.warmSalaryCache();
+    }
+
+    const vnNow = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    const day = vnNow.getUTCDate().toString().padStart(2, "0");
+    const monthNum = vnNow.getUTCMonth() + 1;
+    const month = monthNum.toString().padStart(2, "0");
+    const year = vnNow.getUTCFullYear();
+    const resolutionNumber = this.nextResolutionNumber(year);
     const signDate = `Đà Nẵng, ngày ${day} tháng ${month} năm ${year}`;
 
     const legalGrounds = [
@@ -161,18 +301,53 @@ export class ExecutiveService {
         ];
         break;
 
-      case "SALARY_PROMOTION":
+      case "SALARY_PROMOTION": {
+        const details = (input.details || {}) as Record<string, any>;
+        const cached = this.employeeSalaryCache.get(input.recipientCode);
+        const contentMatch =
+          /bậc\s*(\d+).*?hệ số\s*([\d.]+).*?bậc\s*(\d+).*?hệ số\s*([\d.]+)/i.exec(
+            input.contentTitle
+          );
+
+        const positionName =
+          typeof details.positionName === "string" && details.positionName.trim()
+            ? details.positionName.trim()
+            : cached?.positionName || "Giảng viên";
+        const currentRank = Number(
+          details.currentRank ?? cached?.currentRank ?? (contentMatch ? contentMatch[1] : 5)
+        );
+        const currentCoeff = Number(
+          details.currentCoefficient ??
+            cached?.currentCoefficient ??
+            (contentMatch ? contentMatch[2] : 4.98)
+        );
+        const nextRank = Number(
+          details.nextRank ?? cached?.nextRank ?? (contentMatch ? contentMatch[3] : currentRank + 1)
+        );
+        const nextCoeff = Number(
+          details.nextCoefficient ??
+            cached?.nextCoefficient ??
+            (contentMatch ? contentMatch[4] : Math.round((currentCoeff + 0.33) * 100) / 100)
+        );
+
+        const nextMonthNum = monthNum === 12 ? 1 : monthNum + 1;
+        const nextMonthYear = monthNum === 12 ? year + 1 : year;
+        const effectiveDateText =
+          typeof details.effectiveDate === "string" && details.effectiveDate.trim()
+            ? details.effectiveDate.trim()
+            : `ngày 01 tháng ${nextMonthNum.toString().padStart(2, "0")} năm ${nextMonthYear}`;
+
         title = `QUYẾT ĐỊNH\nVề việc nâng bậc lương đối với viên chức, người lao động`;
         articles = [
           {
             articleNumber: 1,
             title: "Nâng bậc lương",
-            content: `Nâng bậc lương đối với Ông/Bà ${input.recipientName}, chức danh Giảng viên, đơn vị ${input.unitName}: Từ bậc 5/8 (hệ số 4.98) lên bậc 6/8 (hệ số 5.31).`,
+            content: `Nâng bậc lương đối với Ông/Bà ${input.recipientName}, chức danh ${positionName}, đơn vị ${input.unitName}: Từ bậc ${currentRank}/8 (hệ số ${currentCoeff}) lên bậc ${nextRank}/8 (hệ số ${nextCoeff}).`,
           },
           {
             articleNumber: 2,
             title: "Thời gian hưởng",
-            content: `Thời gian được tính hưởng bậc lương mới kể từ ngày 01 tháng 09 năm 2026. Mốc thời gian tính nâng bậc lương lần sau được tính kể từ ngày hưởng bậc lương mới này.`,
+            content: `Thời gian được tính hưởng bậc lương mới kể từ ${effectiveDateText}. Mốc thời gian tính nâng bậc lương lần sau được tính kể từ ngày hưởng bậc lương mới này.`,
           },
           {
             articleNumber: 3,
@@ -181,9 +356,12 @@ export class ExecutiveService {
           },
         ];
         break;
+      }
 
       case "AWARD":
-      default:
+      default: {
+        const academicStartYear = monthNum >= 9 ? year : year - 1;
+        const academicYearLabel = `${academicStartYear}–${academicStartYear + 1}`;
         title = `QUYẾT ĐỊNH\nVề việc khen thưởng cán bộ, giảng viên có thành tích xuất sắc`;
         articles = [
           {
@@ -194,7 +372,7 @@ export class ExecutiveService {
           {
             articleNumber: 2,
             title: "Tiền thưởng",
-            content: `Mức tiền thưởng thực hiện theo Quy chế chi tiêu nội bộ của Nhà trường, trích từ Quỹ thi đua khen thưởng năm học 2025–2026.`,
+            content: `Mức tiền thưởng thực hiện theo Quy chế chi tiêu nội bộ của Nhà trường, trích từ Quỹ thi đua khen thưởng năm học ${academicYearLabel}.`,
           },
           {
             articleNumber: 3,
@@ -203,6 +381,7 @@ export class ExecutiveService {
           },
         ];
         break;
+      }
     }
 
     const documentText = [
@@ -251,7 +430,7 @@ export class ExecutiveService {
     doc: OfficialResolutionResponse
   ): Promise<SignedResolutionResponse> {
     const signature = PkiService.signResolution(doc);
-    const verificationUrl = `http://localhost:3000/verify/${encodeURIComponent(doc.resolutionNumber)}`;
+    const verificationUrl = `${this.getWebBaseUrl()}/verify/${encodeURIComponent(doc.resolutionNumber)}`;
     const qrCodeDataUrl = await PdfExportService.generateQrDataUrl(verificationUrl);
 
     const signedDoc: SignedResolutionResponse = {
@@ -291,11 +470,37 @@ export class ExecutiveService {
   }
 
   /**
-   * Xuất file PDF A4 chuẩn Nghị định 30 có chữ ký số và mã QR
+   * Xuất file PDF A4 chuẩn Nghị định 30 có chữ ký số và mã QR (bắt buộc đã ký số & xác thực hợp lệ)
    */
   public static async exportResolutionPdf(
     doc: SignedResolutionResponse
   ): Promise<Uint8Array> {
-    return await PdfExportService.generateResolutionPdf(doc);
+    if (!doc.signature || !doc.signature.signatureValue || !doc.signature.documentHash) {
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "Văn bản quyết định chưa được ký số PKI hợp lệ, không thể xuất PDF chính thức."
+      );
+    }
+
+    const verification = PkiService.verifyResolution(doc, doc.signature);
+    if (!verification.isValid) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Chữ ký số PKI của văn bản không hợp lệ hoặc nội dung đã bị thay đổi."
+      );
+    }
+
+    const stored = this.resolutionsStore.get(doc.resolutionNumber);
+    if (stored && stored.signature && doc.signature.signatureValue !== stored.signature.signatureValue) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Chữ ký số không khớp với bản quyết định đã ký lưu trữ."
+      );
+    }
+
+    return await PdfExportService.generateResolutionPdf(stored || doc);
   }
 }

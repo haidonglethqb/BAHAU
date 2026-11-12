@@ -43,24 +43,37 @@ export const EmployeeDetailedDtoSchema = EmployeeBasicDtoSchema.extend({
 
 export type EmployeeDetailedDto = z.infer<typeof EmployeeDetailedDtoSchema>;
 
+// Helper kiểm tra định dạng ngày YYYY-MM-DD hợp lệ theo lịch
+const isoDateSchema = (label: string) =>
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, `${label} phải có định dạng YYYY-MM-DD`)
+    .refine(
+      (val) => {
+        const d = new Date(`${val}T00:00:00.000Z`);
+        return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(val);
+      },
+      { message: `${label} không phải là ngày hợp lệ` }
+    );
+
 // Create Employee Schema
 export const CreateEmployeeSchema = z.object({
-  employeeCode: z.string().min(3).max(50).optional(), // Tự động sinh nếu không nhập
-  fullName: z.string().min(2, "Họ và tên tối thiểu 2 ký tự"),
+  employeeCode: z.string().trim().min(3).max(50).optional(), // Tự động sinh nếu không nhập
+  fullName: z.string().trim().min(2, "Họ và tên tối thiểu 2 ký tự"),
   gender: GenderEnum,
-  dateOfBirth: z.string(),
-  idCardNumber: z.string().min(9, "Số CCCD không hợp lệ").max(20),
-  idCardIssueDate: z.string().optional(),
-  idCardIssuePlace: z.string().optional(),
-  taxCode: z.string().optional(),
-  personalEmail: z.string().email().optional(),
-  workEmail: z.string().email("Email làm việc không đúng định dạng"),
-  phoneNumber: z.string().min(9, "Số điện thoại tối thiểu 9 số").max(15).optional(),
-  currentAddress: z.string().optional(),
+  dateOfBirth: isoDateSchema("Ngày sinh"),
+  idCardNumber: z.string().trim().min(9, "Số CCCD không hợp lệ").max(20),
+  idCardIssueDate: isoDateSchema("Ngày cấp CCCD").optional().nullable(),
+  idCardIssuePlace: z.string().trim().optional().nullable(),
+  taxCode: z.string().trim().optional().nullable(),
+  personalEmail: z.string().trim().toLowerCase().email().optional().nullable(),
+  workEmail: z.string().trim().toLowerCase().email("Email làm việc không đúng định dạng"),
+  phoneNumber: z.string().trim().min(9, "Số điện thoại tối thiểu 9 số").max(15).optional().nullable(),
+  currentAddress: z.string().trim().optional().nullable(),
   academicTitle: AcademicTitleEnum.optional().default("NONE"),
   academicDegree: AcademicDegreeEnum.optional().default("BACHELOR"),
   employmentStatus: EmploymentStatusEnum.optional().default("ACTIVE"),
-  hireDate: z.string(),
+  hireDate: isoDateSchema("Ngày tiếp nhận"),
   // Phân công ban đầu
   initialUnitId: z.string().uuid("Vui lòng chọn đơn vị trực thuộc"),
   initialPositionId: z.string().uuid("Vui lòng chọn chức vụ / chức danh"),
@@ -69,11 +82,11 @@ export const CreateEmployeeSchema = z.object({
 
 export type CreateEmployeeInput = z.infer<typeof CreateEmployeeSchema>;
 
-// Self-Service Contact Update Schema (Giảng viên tự sửa)
+// Self-Service Contact Update Schema (Giảng viên tự sửa, cho phép null để xóa giá trị)
 export const UpdateMyContactSchema = z.object({
-  phoneNumber: z.string().min(9).max(15).optional(),
-  personalEmail: z.string().email().optional(),
-  currentAddress: z.string().max(500).optional(),
+  phoneNumber: z.string().trim().min(9, "Số điện thoại tối thiểu 9 số").max(15).nullable().optional(),
+  personalEmail: z.string().trim().toLowerCase().email("Email cá nhân không đúng định dạng").nullable().optional(),
+  currentAddress: z.string().trim().max(500).nullable().optional(),
 });
 
 export type UpdateMyContactInput = z.infer<typeof UpdateMyContactSchema>;
@@ -85,6 +98,8 @@ export const EmployeeFilterQuerySchema = z.object({
   search: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  sortBy: z.enum(["createdAt", "fullName", "employeeCode", "hireDate"]).optional().default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
 });
 
 export type EmployeeFilterQuery = z.infer<typeof EmployeeFilterQuerySchema>;
