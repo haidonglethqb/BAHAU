@@ -39,13 +39,22 @@ export async function login(req: Request, res: Response): Promise<void> {
 }
 
 export async function logout(req: Request, res: Response): Promise<void> {
-  const sessionId = req.sessionId || req.cookies?.["bahau_session"];
+  const cookieSessionId = req.cookies?.["bahau_session"];
+  const sessionId = req.sessionId || cookieSessionId;
 
   if (sessionId) {
     await AuthService.logout(sessionId);
   }
+  if (cookieSessionId && cookieSessionId !== sessionId) {
+    await AuthService.logout(cookieSessionId);
+  }
 
-  res.clearCookie("bahau_session", { path: "/" });
+  res.clearCookie("bahau_session", {
+    httpOnly: true,
+    secure: process.env["NODE_ENV"] === "production",
+    sameSite: "lax",
+    path: "/",
+  });
 
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 

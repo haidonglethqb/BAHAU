@@ -67,6 +67,12 @@ export const authRateLimiter = createRateLimiter({
   windowMs: 5 * 60 * 1000,
   max: 30,
   message: "Quá nhiều lần gửi yêu cầu đăng nhập. Vui lòng thử lại sau 5 phút.",
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const email =
+      typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+    return `${ip}:${email}`;
+  },
 });
 
 // Giới hạn tần suất truy vấn Trợ lý AI

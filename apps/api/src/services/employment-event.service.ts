@@ -19,8 +19,7 @@ export class EmploymentEventService {
       where: { id: employeeId },
       include: {
         assignments: {
-          where: { assignmentType: "PRIMARY", status: "ACTIVE" },
-          take: 1,
+          orderBy: { startDate: "desc" },
         },
       },
     });
@@ -30,14 +29,29 @@ export class EmploymentEventService {
     }
 
     // Kiểm tra quyền
-    const isSelf = currentUser?.employeeId === employeeId;
-    const isGlobalHR = currentUser?.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    const isSelf = Boolean(currentUser?.employeeId && currentUser.employeeId === employeeId);
+    const isGlobalHR = Boolean(
+      currentUser?.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      )
     );
 
     if (!isSelf && !isGlobalHR) {
-      const primaryAssignment = emp.assignments[0];
-      const hasUnitAccess = currentUser?.unitsManaged?.includes(primaryAssignment?.unitId || "");
+      let hasUnitAccess = false;
+      if (
+        currentUser?.roles.includes("ROLE_UNIT_HEAD") &&
+        currentUser.unitsManaged &&
+        currentUser.unitsManaged.length > 0
+      ) {
+        const unitLists = await Promise.all(
+          currentUser.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+        );
+        const allAllowedUnitIds = new Set(unitLists.flat());
+        const activeAssignments = emp.assignments.filter((a) => a.status === "ACTIVE");
+        const targetAssignments =
+          activeAssignments.length > 0 ? activeAssignments : emp.assignments.slice(0, 1);
+        hasUnitAccess = targetAssignments.some((a) => allAllowedUnitIds.has(a.unitId));
+      }
       if (!hasUnitAccess) {
         throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem diễn biến công tác của nhân sự này.");
       }

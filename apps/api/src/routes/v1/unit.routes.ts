@@ -7,8 +7,8 @@ import { CreateUnitSchema } from "@bahau/contracts";
 
 const router = Router();
 
-router.get("/units/tree", asyncHandler(getUnitTree));
-router.get("/units", asyncHandler(getAllUnits));
+router.get("/units/tree", requireAuth, requirePermission("unit:read_tree"), asyncHandler(getUnitTree));
+router.get("/units", requireAuth, requirePermission("unit:read_tree"), asyncHandler(getAllUnits));
 router.post(
   "/units",
   requireAuth,

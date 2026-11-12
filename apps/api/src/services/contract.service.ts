@@ -67,20 +67,51 @@ export class ContractService {
 
     const where: any = {};
 
-    // 1. Phân quyền dữ liệu (Scope)
-    const isGlobalHR = currentUser?.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    // 1. Phân quyền dữ liệu (Scope) - ROLE_SYSADMIN không có quyền truy cập hợp đồng
+    const isGlobalHR = Boolean(
+      currentUser?.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r))
+    );
+    const isUnitHeadWithUnits = Boolean(
+      currentUser?.roles.includes("ROLE_UNIT_HEAD") &&
+        currentUser.unitsManaged &&
+        currentUser.unitsManaged.length > 0
     );
 
-    if (!isGlobalHR) {
-      if (currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
-        // Quản lý đơn vị: Chỉ xem hợp đồng thuộc đơn vị mình hoặc đơn vị con
-        const allAllowedUnitIds = new Set<string>();
-        for (const unitId of currentUser.unitsManaged) {
-          const descendantIds = await UnitService.getDescendantUnitIds(unitId);
-          descendantIds.forEach((id) => allAllowedUnitIds.add(id));
-        }
+    if (isGlobalHR) {
+      // Global HR / Ban Giám hiệu có thể lọc theo bất kỳ employeeId hoặc unitId nào
+      if (query.employeeId) {
+        where.employeeId = query.employeeId;
+      }
+      if (query.unitId) {
+        where.employee = {
+          assignments: {
+            some: {
+              unitId: query.unitId,
+              status: "ACTIVE",
+            },
+          },
+        };
+      }
+    } else if (isUnitHeadWithUnits) {
+      // Quản lý đơn vị: Chỉ xem hợp đồng thuộc đơn vị mình hoặc đơn vị con
+      const unitLists = await Promise.all(
+        currentUser!.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+      );
+      const allAllowedUnitIds = new Set(unitLists.flat());
 
+      if (query.unitId) {
+        if (!allAllowedUnitIds.has(query.unitId)) {
+          throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem hợp đồng của đơn vị này.");
+        }
+        where.employee = {
+          assignments: {
+            some: {
+              unitId: query.unitId,
+              status: "ACTIVE",
+            },
+          },
+        };
+      } else {
         where.employee = {
           assignments: {
             some: {
@@ -89,19 +120,37 @@ export class ContractService {
             },
           },
         };
-
-        if (query.employeeId) {
-          where.employeeId = query.employeeId;
-        }
-      } else {
-        // Cán bộ thông thường: Bắt buộc chỉ xem hợp đồng của chính mình
-        where.employeeId = currentUser?.employeeId || "__UNAUTHORIZED__";
       }
-    } else {
-      // Global HR có thể lọc theo bất kỳ employeeId nào
+
       if (query.employeeId) {
         where.employeeId = query.employeeId;
       }
+    } else {
+      const isPureSysAdmin =
+        currentUser?.roles.includes("ROLE_SYSADMIN") &&
+        !currentUser.roles.some((r) => ["ROLE_EMPLOYEE", "ROLE_UNIT_HEAD"].includes(r));
+      if (isPureSysAdmin) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền truy cập phân hệ hợp đồng.");
+      }
+
+      // Cán bộ thông thường (hoặc Trưởng đơn vị chưa có đơn vị quản lý): Chỉ xem hợp đồng của chính mình
+      if (query.employeeId && query.employeeId !== currentUser?.employeeId) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem hợp đồng của nhân sự khác.");
+      }
+      if (!currentUser?.employeeId) {
+        return {
+          items: [],
+          pagination: {
+            page,
+            pageSize,
+            totalItems: 0,
+            totalPages: 1,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        };
+      }
+      where.employeeId = currentUser.employeeId;
     }
 
     if (query.status) {
@@ -110,18 +159,6 @@ export class ContractService {
 
     if (query.contractType) {
       where.contractType = query.contractType as ContractType;
-    }
-
-    if (query.unitId) {
-      where.employee = {
-        ...(where.employee || {}),
-        assignments: {
-          some: {
-            unitId: query.unitId,
-            status: "ACTIVE",
-          },
-        },
-      };
     }
 
     // 3. Lọc theo thời hạn cảnh báo hết hạn (expiringInDays = 30 | 60 | 90)
@@ -229,21 +266,36 @@ export class ContractService {
     const date90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
     const baseWhere: any = {};
-    const isGlobalHR = currentUser?.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    const isGlobalHR = Boolean(
+      currentUser?.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r))
     );
+    const isUnitHead = Boolean(currentUser?.roles.includes("ROLE_UNIT_HEAD"));
 
-    if (!isGlobalHR && currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
-      const allAllowedUnitIds = new Set<string>();
-      for (const unitId of currentUser.unitsManaged) {
-        const descendantIds = await UnitService.getDescendantUnitIds(unitId);
-        descendantIds.forEach((id) => allAllowedUnitIds.add(id));
+    if (!isGlobalHR && !isUnitHead) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thống kê cảnh báo hợp đồng.");
+    }
+
+    if (!isGlobalHR) {
+      if (!currentUser?.unitsManaged || currentUser.unitsManaged.length === 0) {
+        return {
+          totalActive: 0,
+          totalDefinite: 0,
+          totalIndefinite: 0,
+          totalExpiring30: 0,
+          totalExpiring60: 0,
+          totalExpiring90: 0,
+        };
       }
+
+      const unitLists = await Promise.all(
+        currentUser.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+      );
+      const allAllowedUnitIds = Array.from(new Set(unitLists.flat()));
 
       baseWhere.employee = {
         assignments: {
           some: {
-            unitId: { in: Array.from(allAllowedUnitIds) },
+            unitId: { in: allAllowedUnitIds },
             status: "ACTIVE",
           },
         },
@@ -317,12 +369,11 @@ export class ContractService {
             employeeCode: true,
             fullName: true,
             assignments: {
-              where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+              orderBy: { startDate: "desc" },
               include: {
                 unit: { select: { name: true } },
                 position: { select: { name: true } },
               },
-              take: 1,
             },
           },
         },
@@ -337,24 +388,42 @@ export class ContractService {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hợp đồng lao động yêu cầu.");
     }
 
-    // Kiểm tra quyền
-    const isSelf = currentUser?.employeeId === c.employeeId;
-    const isGlobalHR = currentUser?.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    // Kiểm tra quyền (ROLE_SYSADMIN không có quyền truy cập phân hệ hợp đồng)
+    const isGlobalHR = Boolean(
+      currentUser?.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r))
+    );
+    const isSelf = Boolean(
+      currentUser?.employeeId &&
+        currentUser.employeeId === c.employeeId &&
+        currentUser.roles.some((r) =>
+          ["ROLE_EMPLOYEE", "ROLE_UNIT_HEAD", "ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
+        )
     );
 
     if (!isSelf && !isGlobalHR) {
-      // Kiểm tra xem có phải lãnh đạo đơn vị của nhân sự này không
-      const empUnit = c.employee.assignments[0]?.unit;
-      const hasUnitAccess = currentUser?.unitsManaged?.includes(
-        c.employee.assignments[0]?.unitId || ""
-      );
+      let hasUnitAccess = false;
+      if (
+        currentUser?.roles.includes("ROLE_UNIT_HEAD") &&
+        currentUser.unitsManaged &&
+        currentUser.unitsManaged.length > 0
+      ) {
+        const unitLists = await Promise.all(
+          currentUser.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+        );
+        const allAllowedUnitIds = new Set(unitLists.flat());
+        const activeAssignments = c.employee.assignments.filter((a) => a.status === "ACTIVE");
+        const targetAssignments =
+          activeAssignments.length > 0 ? activeAssignments : c.employee.assignments.slice(0, 1);
+        hasUnitAccess = targetAssignments.some((a) => allAllowedUnitIds.has(a.unitId));
+      }
       if (!hasUnitAccess) {
         throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin hợp đồng này.");
       }
     }
 
-    const primaryAssignment = c.employee.assignments[0];
+    const primaryAssignment = c.employee.assignments.find(
+      (a) => a.assignmentType === "PRIMARY" && a.status === "ACTIVE"
+    );
     const { daysRemaining, alertLevel } = this.calculateExpiryAlert(
       c.contractType,
       c.expiryDate,

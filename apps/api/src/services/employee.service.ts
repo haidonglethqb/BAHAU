@@ -50,21 +50,40 @@ export class EmployeeService {
     }
 
     // 3. Kiểm soát Scope theo vai trò
-    const isGlobalHR = currentUser?.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    const isGlobal = Boolean(
+      currentUser?.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      )
+    );
+    const isUnitHeadWithUnits = Boolean(
+      currentUser?.roles.includes("ROLE_UNIT_HEAD") &&
+        currentUser.unitsManaged &&
+        currentUser.unitsManaged.length > 0
     );
 
-    if (!isGlobalHR && currentUser?.unitsManaged && currentUser.unitsManaged.length > 0) {
-      // Trưởng đơn vị: Chỉ thấy nhân sự thuộc các đơn vị mình quản lý hoặc đơn vị con
-      const allAllowedUnitIds = new Set<string>();
-      for (const unitId of currentUser.unitsManaged) {
-        const descendantIds = await UnitService.getDescendantUnitIds(unitId);
-        descendantIds.forEach((id) => allAllowedUnitIds.add(id));
+    if (isGlobal) {
+      if (query.unitId) {
+        where.assignments = {
+          some: {
+            unitId: query.unitId,
+            status: "ACTIVE",
+          },
+        };
       }
+    } else if (isUnitHeadWithUnits) {
+      // Trưởng đơn vị: Chỉ thấy nhân sự thuộc các đơn vị mình quản lý hoặc đơn vị con
+      const unitLists = await Promise.all(
+        currentUser!.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+      );
+      const allAllowedUnitIds = new Set(unitLists.flat());
 
       if (query.unitId) {
         if (!allAllowedUnitIds.has(query.unitId)) {
-          throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem danh sách nhân sự của đơn vị này.");
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Bạn không có quyền xem danh sách nhân sự của đơn vị này."
+          );
         }
         where.assignments = {
           some: {
@@ -80,14 +99,22 @@ export class EmployeeService {
           },
         };
       }
-    } else if (query.unitId) {
-      // Global HR hoặc cán bộ tra cứu theo đơn vị
-      where.assignments = {
-        some: {
-          unitId: query.unitId,
-          status: "ACTIVE",
-        },
-      };
+    } else {
+      // Cán bộ thông thường hoặc Trưởng đơn vị chưa được gán đơn vị: Chỉ thấy hồ sơ của chính mình
+      if (!currentUser?.employeeId) {
+        return {
+          items: [],
+          pagination: {
+            page,
+            pageSize,
+            totalItems: 0,
+            totalPages: 1,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        };
+      }
+      where.id = currentUser.employeeId;
     }
 
     const [totalItems, employees] = await Promise.all([
@@ -166,12 +193,38 @@ export class EmployeeService {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy hồ sơ nhân sự yêu cầu.");
     }
 
+    const isSelf = Boolean(currentUser?.employeeId && currentUser.employeeId === id);
+    const isGlobalBasic = Boolean(
+      currentUser?.roles.some((r) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      )
+    );
+
+    if (!isSelf && !isGlobalBasic) {
+      let hasUnitAccess = false;
+      if (
+        currentUser?.roles.includes("ROLE_UNIT_HEAD") &&
+        currentUser.unitsManaged &&
+        currentUser.unitsManaged.length > 0
+      ) {
+        const unitLists = await Promise.all(
+          currentUser.unitsManaged.map((unitId) => UnitService.getDescendantUnitIds(unitId))
+        );
+        const allAllowedUnitIds = new Set(unitLists.flat());
+        hasUnitAccess = emp.assignments.some((a) => allAllowedUnitIds.has(a.unitId));
+      }
+
+      if (!hasUnitAccess) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem hồ sơ nhân sự này.");
+      }
+    }
+
     const primaryAssignment = emp.assignments.find((a) => a.assignmentType === "PRIMARY");
 
-    const isSelf = currentUser?.employeeId === id;
+    // ROLE_SYSADMIN không có quyền employee:read_sensitive (chỉ bản thân, HR, Ban Giám hiệu)
     const canViewSensitive =
       isSelf ||
-      currentUser?.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_SYSADMIN"].includes(r));
+      Boolean(currentUser?.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)));
 
     const basic: EmployeeBasicDto = {
       id: emp.id,

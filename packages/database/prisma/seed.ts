@@ -127,6 +127,7 @@ async function main() {
     // Employee Dossier
     { code: "employee:read_basic", module: "EMPLOYEE", action: "READ" },
     { code: "employee:read_sensitive", module: "EMPLOYEE", action: "READ" },
+    { code: "employee:create", module: "EMPLOYEE", action: "CREATE" },
     { code: "employee:update_contact", module: "EMPLOYEE", action: "UPDATE" },
     { code: "employee:update_official", module: "EMPLOYEE", action: "UPDATE" },
     // Unit Hierarchy
@@ -165,6 +166,7 @@ async function main() {
     { code: "training:view_own_certificates", module: "TRAINING", action: "READ" },
     { code: "training:submit_certificate", module: "TRAINING", action: "CREATE" },
     { code: "training:verify_certificate", module: "TRAINING", action: "VERIFY" },
+    { code: "training:view_unit_certificates", module: "TRAINING", action: "READ" },
     { code: "training:view_all_certificates", module: "TRAINING", action: "READ" },
     // Reports & Dashboards
     { code: "report:dashboard_unit", module: "REPORT", action: "READ" },
@@ -254,6 +256,7 @@ async function main() {
     ROLE_HR_OFFICER: [
       "employee:read_basic",
       "employee:read_sensitive",
+      "employee:create",
       "employee:update_contact",
       "employee:update_official",
       "unit:read_tree",
@@ -298,7 +301,6 @@ async function main() {
     ],
     ROLE_UNIT_HEAD: [
       "employee:read_basic",
-      "employee:update_official",
       "unit:read_tree",
       "contract:read_unit",
       "leave:create_request",
@@ -317,7 +319,7 @@ async function main() {
       "training:register_course",
       "training:view_own_certificates",
       "training:submit_certificate",
-      "training:view_all_certificates",
+      "training:view_unit_certificates",
       "report:dashboard_unit",
       "dashboard:view_overview",
       "dashboard:view_workforce_stats",
@@ -330,7 +332,6 @@ async function main() {
       "employee:read_basic",
       "employee:read_sensitive",
       "employee:update_contact",
-      "employee:update_official",
       "unit:read_tree",
       "contract:read_own",
       "leave:create_request",
@@ -353,6 +354,15 @@ async function main() {
   for (const [roleCode, permCodes] of Object.entries(rolePermissionsMapping)) {
     const role = roleMap.get(roleCode);
     if (!role) continue;
+    const validPermIds = permCodes
+      .map((code) => permissionMap.get(code)?.id)
+      .filter((id): id is string => Boolean(id));
+    await prisma.rolePermission.deleteMany({
+      where: {
+        roleId: role.id,
+        permissionId: { notIn: validPermIds },
+      },
+    });
     for (const permCode of permCodes) {
       const perm = permissionMap.get(permCode);
       if (!perm) continue;
@@ -1792,7 +1802,7 @@ async function main() {
 
     // 14.3. Chứng chỉ của ThS. Đỗ Tuấn Kiệt (Khoa Kiến trúc)
     const hrVerifier = await prisma.employee.findUnique({
-      where: { employeeCode: "DAU240088" }, // Chuyên viên nhân sự TCHC
+      where: { employeeCode: "DAU230001" }, // Chuyên viên nhân sự TCHC
     });
 
     const certList = [

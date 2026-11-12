@@ -7,6 +7,7 @@ import { traceIdMiddleware } from "./middlewares/trace.middleware.js";
 import { metricsMiddleware } from "./metrics/metrics.middleware.js";
 import { HealthController } from "./controllers/health.controller.js";
 import { authenticate } from "./middlewares/auth.middleware.js";
+import { asyncHandler } from "./middlewares/async.middleware.js";
 import { notFoundHandler, errorHandler } from "./middlewares/error.middleware.js";
 import v1Router from "./routes/v1/index.js";
 import { initEventSubscribers } from "./events/index.js";
@@ -16,7 +17,7 @@ export function createApp(): Express {
   initEventSubscribers();
 
   const app = express();
-
+  app.set("trust proxy", 1);
 
   // Security headers
   app.use(helmet());
@@ -39,12 +40,9 @@ export function createApp(): Express {
 
         const isExplicitlyAllowed = allowedOrigins.includes(origin);
         const isLocalDev =
-          process.env["NODE_ENV"] !== "production" &&
+          (process.env["NODE_ENV"] === "development" || process.env["NODE_ENV"] === "test") &&
           (/^http:\/\/localhost(:\d+)?$/.test(origin) ||
-            /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
-            /^http:\/\/192\.168\.\d+\.\d+(:\d+)?$/.test(origin) ||
-            /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/.test(origin) ||
-            /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+(:\d+)?$/.test(origin));
+            /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin));
 
         if (isExplicitlyAllowed || isLocalDev) {
           return callback(null, true);
@@ -67,7 +65,7 @@ export function createApp(): Express {
   app.use(authenticate);
 
   // Root Prometheus Metrics endpoint (standard OpenMetrics scraper target)
-  app.get("/metrics", (req, res) => HealthController.getPrometheusMetrics(req, res));
+  app.get("/metrics", asyncHandler((req, res) => HealthController.getPrometheusMetrics(req, res)));
 
   // API Routes
   app.use("/api/v1", v1Router);

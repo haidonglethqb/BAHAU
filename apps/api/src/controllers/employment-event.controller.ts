@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { EmploymentEventService } from "../services/employment-event.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
 
 export async function getEmployeeEvents(req: Request, res: Response): Promise<void> {
   const employeeId = String(req.params["id"]);
@@ -17,6 +18,15 @@ export async function getEmployeeEvents(req: Request, res: Response): Promise<vo
 }
 
 export async function createEmploymentEvent(req: Request, res: Response): Promise<void> {
+  const employeeId = String(req.params["id"]);
+  if (req.body.employeeId !== employeeId) {
+    throw new AppError(
+      422,
+      "VALIDATION_FAILED",
+      "Mã nhân sự trong URL và nội dung yêu cầu không khớp."
+    );
+  }
+
   const created = await EmploymentEventService.createEmploymentEvent(req.body, req.user);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 
