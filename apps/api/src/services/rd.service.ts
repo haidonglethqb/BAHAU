@@ -188,8 +188,35 @@ export class RdService {
   /**
    * Lấy danh sách tất cả đề tài & dự án tư vấn thiết kế theo bộ lọc
    */
-  public static getAllProjects(filter?: RdProjectFilterQuery): RdProjectDto[] {
+  private static hasRdReadRole(roles: string[]): boolean {
+    return roles.some((r) =>
+      ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"].includes(r)
+    );
+  }
+
+  private static isRdParticipant(project: RdProjectDto, currentUser: any): boolean {
+    return Boolean(
+      (currentUser?.employeeId &&
+        (project.principalInvestigatorId === currentUser.employeeId ||
+          project.members.some((m) => m.employeeId === currentUser.employeeId))) ||
+        (currentUser?.employeeCode &&
+          (project.principalInvestigatorCode === currentUser.employeeCode ||
+            project.members.some((m) => m.employeeCode === currentUser.employeeCode)))
+    );
+  }
+
+  /**
+   * Lấy danh sách toàn bộ đề tài NCKH & dự án tư vấn thiết kế
+   */
+  public static getAllProjects(filter?: RdProjectFilterQuery, currentUser?: any): RdProjectDto[] {
     let list = Array.from(this.projects.values());
+
+    if (currentUser?.roles && !this.hasRdReadRole(currentUser.roles)) {
+      if (!currentUser.roles.some((r: string) => ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r))) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền truy cập danh sách đề tài NCKH & dự án.");
+      }
+      list = list.filter((p) => this.isRdParticipant(p, currentUser));
+    }
 
     if (filter?.projectType) {
       list = list.filter((p) => p.projectType === filter.projectType);
@@ -223,10 +250,20 @@ export class RdService {
   /**
    * Xem chi tiết đề tài / dự án theo ID
    */
-  public static getProjectById(id: string): RdProjectDto {
+  public static getProjectById(id: string, currentUser?: any): RdProjectDto {
     const project = this.projects.get(id);
     if (!project) {
       throw new AppError(404, "NOT_FOUND", `Không tìm thấy đề tài / dự án với ID: ${id}`);
+    }
+    if (
+      currentUser?.roles &&
+      !this.hasRdReadRole(currentUser.roles) &&
+      !(
+        currentUser.roles.some((r: string) => ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r)) &&
+        this.isRdParticipant(project, currentUser)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin tài chính và chi tiết đề tài này.");
     }
     return project;
   }
@@ -234,7 +271,36 @@ export class RdService {
   /**
    * Đăng ký đề cương đề tài NCKH hoặc Hợp đồng tư vấn thiết kế mới
    */
-  public static createProject(input: CreateRdProjectInput): RdProjectDto {
+  public static createProject(input: CreateRdProjectInput, currentUser?: any): RdProjectDto {
+    // Xác định Chủ nhiệm / Chủ trì từ danh sách thành viên
+    const leadMember =
+      input.members.find(
+        (m) => m.role === "PRINCIPAL_INVESTIGATOR" || m.role === "LEAD_ARCHITECT"
+      ) || input.members[0];
+
+    if (currentUser?.roles) {
+      const canManageAll = currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN"].includes(r)
+      );
+      if (!canManageAll) {
+        const isFaculty = currentUser.roles.some((r: string) =>
+          ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r)
+        );
+        const isSelfLead = Boolean(
+          leadMember &&
+            ((currentUser.employeeId && leadMember.employeeId === currentUser.employeeId) ||
+              (currentUser.employeeCode && leadMember.employeeCode === currentUser.employeeCode))
+        );
+        if (!isFaculty || !isSelfLead) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Bạn chỉ được phép đăng ký đề tài NCKH hoặc dự án do chính mình làm chủ nhiệm."
+          );
+        }
+      }
+    }
+
     const id = `rd-dau-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
     const projectCount = this.projects.size + 1;
     const prefix = input.projectType === "ARCHITECTURAL_DESIGN" ? "TVTK" : "NCKH";
@@ -243,12 +309,6 @@ export class RdService {
     const feePct = input.institutionalFeePercentage || 25;
     const institutionalFeeAmount = Math.round((input.contractValue * feePct) / 100);
     const royaltyFundAmount = input.contractValue - institutionalFeeAmount;
-
-    // Xác định Chủ nhiệm / Chủ trì từ danh sách thành viên
-    const leadMember =
-      input.members.find(
-        (m) => m.role === "PRINCIPAL_INVESTIGATOR" || m.role === "LEAD_ARCHITECT"
-      ) || input.members[0];
 
     const members: RdTeamMember[] = input.members.map((m) => {
       const pct = m.royaltyPercentage || 0;
@@ -300,7 +360,20 @@ export class RdService {
   /**
    * Hội đồng khoa học đánh giá nghiệm thu đề tài / dự án (Rào chắn >= 70 điểm để ĐẠT)
    */
-  public static submitCouncilReview(id: string, input: ReviewRdProjectInput): RdProjectDto {
+  public static submitCouncilReview(
+    id: string,
+    input: ReviewRdProjectInput,
+    currentUser?: any
+  ): RdProjectDto {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền đánh giá nghiệm thu đề tài NCKH.");
+    }
+
     const project = this.getProjectById(id);
 
     const isPassed = input.score >= 70;
@@ -327,7 +400,20 @@ export class RdService {
   /**
    * Phân bổ tỷ lệ nhuận bút tác giả và quy đổi giờ NCKH cho các thành viên nhóm đồ án
    */
-  public static allocateRoyalty(id: string, input: AllocateRoyaltyInput): RdProjectDto {
+  public static allocateRoyalty(
+    id: string,
+    input: AllocateRoyaltyInput,
+    currentUser?: any
+  ): RdProjectDto {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền phân bổ tỷ lệ nhuận bút.");
+    }
+
     const project = this.getProjectById(id);
 
     const totalPercentage = input.memberAllocations.reduce(
@@ -377,6 +463,10 @@ export class RdService {
     input: ApproveRdWithPkiInput,
     _currentUser?: any
   ): { project: RdProjectDto; pkiSignature: string; resolutionNumber: string; signedAt: string } {
+    if (_currentUser?.roles && !_currentUser.roles.includes("ROLE_RECTOR")) {
+      throw new AppError(403, "FORBIDDEN", "Chỉ Hiệu trưởng mới có quyền ký số PKI phê duyệt nghiệm thu & chi trả nhuận bút.");
+    }
+
     const project = this.getProjectById(id);
 
     if (!project.councilReview || !project.councilReview.isPassed) {
@@ -447,7 +537,7 @@ export class RdService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
           source: "BAHAU_RD_SERVICE",
         }
       )
@@ -464,8 +554,16 @@ export class RdService {
   /**
    * Xuất Quyết định Nghiệm thu & Phân bổ Nhuận bút tác giả chuẩn Nghị định 30/2020/NĐ-CP (PDF)
    */
-  public static async exportResolutionPdf(id: string): Promise<Uint8Array> {
-    const project = this.getProjectById(id);
+  public static async exportResolutionPdf(id: string, currentUser?: any): Promise<Uint8Array> {
+    const project = this.getProjectById(id, currentUser);
+
+    if (project.status !== "COMPLETED" || !project.pkiSignature) {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Đề tài / Dự án chưa được Hiệu trưởng phê duyệt và ký số PKI nên không thể xuất Quyết định PDF."
+      );
+    }
 
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);

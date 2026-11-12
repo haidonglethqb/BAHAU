@@ -20,13 +20,18 @@ router.get("/postgrad/students", requireAuth, asyncHandler(getAllPostgradStudent
 router.get("/postgrad/students/:id", requireAuth, asyncHandler(getPostgradStudentById));
 
 // Đăng ký đề tài luận văn/luận án & phân công CBHD
-router.post("/postgrad/students", requireAuth, asyncHandler(createPostgradStudent));
+router.post(
+  "/postgrad/students",
+  requireAuth,
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN"]),
+  asyncHandler(createPostgradStudent)
+);
 
 // Thành lập Hội đồng đánh giá luận văn / luận án (5 thành viên)
 router.post(
   "/postgrad/students/:id/schedule-council",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_HR_OFFICER"]),
   asyncHandler(schedulePostgradDefenseCouncil)
 );
 
@@ -34,7 +39,7 @@ router.post(
 router.post(
   "/postgrad/students/:id/score-defense",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"]),
   asyncHandler(scorePostgradThesisDefense)
 );
 
@@ -42,7 +47,7 @@ router.post(
 router.post(
   "/postgrad/students/:id/award-degree",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR"]),
   asyncHandler(awardPostgradDegreeWithPki)
 );
 

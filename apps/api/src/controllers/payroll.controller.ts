@@ -99,7 +99,7 @@ export async function approvePayrollPeriod(req: Request, res: Response): Promise
   const updated = await PayrollService.approvePeriod(
     month,
     year,
-    "GS.TS. Nguyễn Hiệu Trưởng",
+    req.user?.fullName || "Ban Giám hiệu",
     pkiSignature
   );
 
@@ -126,7 +126,7 @@ export async function exportPayslipPdf(req: Request, res: Response): Promise<voi
   // Chống IDOR: Nếu là giảng viên thông thường, chỉ được xuất phiếu lương của chính mình
   if (
     req.user &&
-    !req.user.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)) &&
+    !req.user.roles.some((r) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)) &&
     req.user.employeeId !== targetEmployeeId
   ) {
     throw new AppError(403, "FORBIDDEN", "Bạn không có quyền tải phiếu lương của cán bộ khác.");

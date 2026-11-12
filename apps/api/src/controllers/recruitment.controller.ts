@@ -10,7 +10,7 @@ import {
 
 export async function getRecruitmentCandidates(req: Request, res: Response): Promise<void> {
   const query = RecruitmentFilterQuerySchema.parse(req.query);
-  const data = await RecruitmentService.getAllCandidates(query);
+  const data = await RecruitmentService.getAllCandidates(query, req.user);
 
   res.status(200).json({
     success: true,
@@ -24,7 +24,7 @@ export async function getRecruitmentCandidates(req: Request, res: Response): Pro
 
 export async function getRecruitmentCandidateById(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const data = await RecruitmentService.getCandidateById(id);
+  const data = await RecruitmentService.getCandidateById(id, req.user);
 
   res.status(200).json({
     success: true,
@@ -38,7 +38,7 @@ export async function getRecruitmentCandidateById(req: Request, res: Response): 
 
 export async function createCandidateApplication(req: Request, res: Response): Promise<void> {
   const input = CreateCandidateApplicationInputSchema.parse(req.body);
-  const data = await RecruitmentService.createApplication(input);
+  const data = await RecruitmentService.createApplication(input, req.user);
 
   res.status(201).json({
     success: true,
@@ -97,7 +97,7 @@ export async function appointRecruitmentWithPki(req: Request, res: Response): Pr
 
 export async function downloadAppointmentResolutionPdf(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const pdfBytes = await RecruitmentService.exportAppointmentPdf(id);
+  const pdfBytes = await RecruitmentService.exportAppointmentPdf(id, req.user);
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(

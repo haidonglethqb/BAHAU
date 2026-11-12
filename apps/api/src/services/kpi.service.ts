@@ -913,12 +913,101 @@ export class KpiService {
   /**
    * Lấy danh sách phiếu đánh giá toàn đơn vị (Dành cho Quản lý đơn vị & Hội đồng)
    */
+  /**
+   * Mở rộng danh sách unitId quản lý và tra cứu tên đơn vị tương ứng cho phạm vi KPI
+   */
+  private static async expandManagedUnitScope(unitsManaged: string[]): Promise<{
+    unitIds: Set<string>;
+    unitNames: Set<string>;
+  }> {
+    const unitIds = new Set<string>();
+    const unitNames = new Set<string>();
+
+    for (const rootUnitId of unitsManaged) {
+      unitIds.add(rootUnitId);
+      try {
+        const descendants = await UnitService.getDescendantUnitIds(rootUnitId);
+        for (const id of descendants) {
+          unitIds.add(id);
+        }
+      } catch {
+        // Fallback when DB is unreachable during isolated unit tests
+      }
+    }
+
+    if (unitIds.size > 0) {
+      try {
+        const units = await prisma.organizationalUnit.findMany({
+          where: { id: { in: Array.from(unitIds) } },
+          select: { id: true, name: true },
+        });
+        for (const u of units) {
+          unitNames.add(u.name);
+        }
+      } catch {
+        // Fallback when DB is unreachable
+      }
+    }
+
+    return { unitIds, unitNames };
+  }
+
+  /**
+   * Kiểm tra một phiếu KPI có thuộc phạm vi cây đơn vị quản lý hay không
+   */
+  private static async filterEvaluationsByManagedUnits(
+    evaluations: KpiEvaluationDto[],
+    unitsManaged: string[]
+  ): Promise<KpiEvaluationDto[]> {
+    if (unitsManaged.length === 0) {
+      return [];
+    }
+
+    const { unitIds, unitNames } = await this.expandManagedUnitScope(unitsManaged);
+    const employeeUnitMap = new Map<string, string[]>();
+
+    try {
+      const empIds = Array.from(new Set(evaluations.map((e) => e.employeeId)));
+      if (empIds.length > 0) {
+        const employees = await prisma.employee.findMany({
+          where: { id: { in: empIds } },
+          select: {
+            id: true,
+            assignments: {
+              where: { status: "ACTIVE" },
+              select: { unitId: true },
+            },
+          },
+        });
+        for (const emp of employees) {
+          employeeUnitMap.set(
+            emp.id,
+            emp.assignments.map((a) => a.unitId)
+          );
+        }
+      }
+    } catch {
+      // Fallback to unitName matching if DB is unavailable
+    }
+
+    return evaluations.filter((e) => {
+      const assignedUnitIds = employeeUnitMap.get(e.employeeId);
+      if (assignedUnitIds && assignedUnitIds.length > 0) {
+        return assignedUnitIds.some((uid) => unitIds.has(uid));
+      }
+      return Boolean(e.unitName && unitNames.has(e.unitName));
+    });
+  }
+
+  /**
+   * Danh sách phiếu đánh giá toàn đơn vị (Trưởng khoa / Hội đồng / TCHC)
+   */
   public static async getUnitEvaluations(
     query: KpiFilterQuery,
     currentUser: AuthUser
   ): Promise<KpiEvaluationDto[]> {
     const isGlobalHR = currentUser.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
     );
 
     let list = Array.from(new Set(this.inMemoryEvaluations.values()));
@@ -930,11 +1019,12 @@ export class KpiService {
     }
     let evaluations = Array.from(uniqueMap.values());
 
-    if (!isGlobalHR && currentUser.unitsManaged && currentUser.unitsManaged.length > 0) {
-      // Đơn vị được quản lý
-      evaluations = evaluations.filter((e) =>
-        e.unitName?.includes("Khoa Kiến trúc") || e.unitName?.includes("Khoa Xây dựng")
-      );
+    if (!isGlobalHR) {
+      const managed = currentUser.unitsManaged ?? [];
+      if (managed.length === 0) {
+        return [];
+      }
+      evaluations = await this.filterEvaluationsByManagedUnits(evaluations, managed);
     }
 
     if (query.ranking) {
@@ -981,6 +1071,32 @@ export class KpiService {
       );
     }
 
+    // 2. Unit-tree scoping for ROLE_UNIT_HEAD / ROLE_DEAN
+    const isGlobalScorer = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
+    );
+    const isUnitManager = currentUser.roles.some((r) =>
+      ["ROLE_UNIT_HEAD", "ROLE_DEAN"].includes(r)
+    );
+    if (!isGlobalScorer) {
+      const managed = currentUser.unitsManaged ?? [];
+      if (!isUnitManager || managed.length === 0) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Bạn không có quyền hoặc chưa được phân công đơn vị quản lý để chấm điểm KPI."
+        );
+      }
+      const inScope = await this.filterEvaluationsByManagedUnits([evaluation], managed);
+      if (inScope.length === 0) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Bạn chỉ được phép chấm điểm KPI cho cán bộ thuộc đơn vị mình quản lý."
+        );
+      }
+    }
+
     let totalManagerScore = 0;
     const criteriaMap = new Map(DEFAULT_LECTURER_CRITERIA.map((c) => [c.id, c]));
 
@@ -1005,10 +1121,15 @@ export class KpiService {
 
     this.inMemoryEvaluations.set(evaluation.id, evaluation);
     this.inMemoryEvaluations.set(evaluation.employeeId, evaluation);
+    if (evaluation.employeeCode) {
+      this.inMemoryEvaluations.set(evaluation.employeeCode, evaluation);
+    }
 
     return await this.getMyEvaluation(evaluation.periodId, {
       ...currentUser,
       employeeId: evaluation.employeeId,
+      employeeCode: evaluation.employeeCode ?? null,
+      fullName: evaluation.employeeName ?? currentUser.fullName,
     });
   }
 
@@ -1022,7 +1143,7 @@ export class KpiService {
     currentUser: AuthUser
   ): Promise<KpiEvaluationDto> {
     const isCouncil = currentUser.roles.some((r) =>
-      ["ROLE_DEAN", "ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      ["ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
     );
 
     if (!isCouncil) {
@@ -1127,7 +1248,7 @@ export class KpiService {
     currentUser: AuthUser
   ): Promise<KpiEvaluationDto> {
     const isCouncil = currentUser.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
     );
 
     if (!isCouncil) {
@@ -1171,11 +1292,9 @@ export class KpiService {
     input: FinalizePeriodWithPkiInput,
     currentUser: AuthUser
   ): Promise<CouncilSummaryReportDto> {
-    const isRectorOrHR = currentUser.roles.some((r) =>
-      ["ROLE_RECTOR", "ROLE_SYSADMIN", "ROLE_HR_OFFICER"].includes(r)
-    );
+    const isRector = currentUser.roles.includes("ROLE_RECTOR");
 
-    if (!isRectorOrHR) {
+    if (!isRector) {
       throw new AppError(
         403,
         "FORBIDDEN",

@@ -177,11 +177,35 @@ export class PostgradService {
     }
   }
 
+  private static hasPostgradReadRole(roles: string[]): boolean {
+    return roles.some((r) =>
+      ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"].includes(r)
+    );
+  }
+
+  private static isPostgradParticipant(student: PostgradStudentDto, currentUser: any): boolean {
+    return Boolean(
+      (currentUser?.employeeId &&
+        (student.supervisors.some((s) => s.employeeId === currentUser.employeeId) ||
+          (student.defenseMembers ?? []).some((m) => m.employeeId === currentUser.employeeId))) ||
+        (currentUser?.employeeCode &&
+          (student.supervisors.some((s) => s.employeeCode === currentUser.employeeCode) ||
+            (student.defenseMembers ?? []).some((m) => m.employeeCode === currentUser.employeeCode)))
+    );
+  }
+
   /**
    * Lấy danh sách học viên Sau đại học theo bộ lọc
    */
-  public static getAllStudents(filter?: PostgradFilterQuery): PostgradStudentDto[] {
+  public static getAllStudents(filter?: PostgradFilterQuery, currentUser?: any): PostgradStudentDto[] {
     let list = Array.from(this.students.values());
+
+    if (currentUser?.roles && !this.hasPostgradReadRole(currentUser.roles)) {
+      if (!currentUser.roles.some((r: string) => ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r))) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền truy cập hồ sơ Sau đại học.");
+      }
+      list = list.filter((s) => this.isPostgradParticipant(s, currentUser));
+    }
 
     if (filter?.degreeLevel) {
       list = list.filter((s) => s.degreeLevel === filter.degreeLevel);
@@ -215,10 +239,20 @@ export class PostgradService {
   /**
    * Xem chi tiết hồ sơ học viên Sau đại học theo ID
    */
-  public static getStudentById(id: string): PostgradStudentDto {
+  public static getStudentById(id: string, currentUser?: any): PostgradStudentDto {
     const student = this.students.get(id);
     if (!student) {
       throw new AppError(404, "NOT_FOUND", `Không tìm thấy hồ sơ Sau đại học với ID: ${id}`);
+    }
+    if (
+      currentUser?.roles &&
+      !this.hasPostgradReadRole(currentUser.roles) &&
+      !(
+        currentUser.roles.some((r: string) => ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r)) &&
+        this.isPostgradParticipant(student, currentUser)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem hồ sơ học viên Sau đại học này.");
     }
     return student;
   }
@@ -226,7 +260,16 @@ export class PostgradService {
   /**
    * Đăng ký đề tài luận văn/luận án và phân công cán bộ hướng dẫn khoa học
    */
-  public static createStudent(input: CreatePostgradStudentInput): PostgradStudentDto {
+  public static createStudent(input: CreatePostgradStudentInput, currentUser?: any): PostgradStudentDto {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền đăng ký hồ sơ học viên Sau đại học.");
+    }
+
     const id = `pg-dau-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
     const now = new Date().toISOString();
 
@@ -279,8 +322,18 @@ export class PostgradService {
    */
   public static scheduleDefenseCouncil(
     id: string,
-    input: ScheduleDefenseCouncilInput
+    input: ScheduleDefenseCouncilInput,
+    currentUser?: any
   ): PostgradStudentDto {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền thành lập Hội đồng đánh giá Sau đại học.");
+    }
+
     const student = this.getStudentById(id);
 
     if (input.councilMembers.length !== 5) {
@@ -324,8 +377,18 @@ export class PostgradService {
    */
   public static scoreThesisDefense(
     id: string,
-    input: ScoreThesisDefenseInput
+    input: ScoreThesisDefenseInput,
+    currentUser?: any
   ): PostgradStudentDto {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền chấm điểm Hội đồng bảo vệ luận văn/luận án.");
+    }
+
     const student = this.getStudentById(id);
 
     if (!student.defenseMembers || student.defenseMembers.length !== 5) {
@@ -400,6 +463,10 @@ export class PostgradService {
     input: AwardPostgradDegreeWithPkiInput,
     _currentUser?: any
   ): { student: PostgradStudentDto; pkiSignature: string; resolutionNumber: string; signedAt: string } {
+    if (_currentUser?.roles && !_currentUser.roles.includes("ROLE_RECTOR")) {
+      throw new AppError(403, "FORBIDDEN", "Chỉ Hiệu trưởng mới có quyền ký số PKI công nhận học vị Sau đại học.");
+    }
+
     const student = this.getStudentById(id);
 
     if (!student.defenseResult || !student.defenseResult.isPassed) {
@@ -469,7 +536,7 @@ export class PostgradService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
           source: "BAHAU_POSTGRAD_SERVICE",
         }
       )
@@ -486,8 +553,16 @@ export class PostgradService {
   /**
    * Xuất Quyết định Công nhận học vị Thạc sĩ / Tiến sĩ chuẩn Nghị định 30/2020/NĐ-CP (PDF)
    */
-  public static async exportDegreeResolutionPdf(id: string): Promise<Uint8Array> {
-    const student = this.getStudentById(id);
+  public static async exportDegreeResolutionPdf(id: string, currentUser?: any): Promise<Uint8Array> {
+    const student = this.getStudentById(id, currentUser);
+
+    if (student.status !== "DEGREE_AWARDED" || !student.pkiSignature) {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Học viên chưa được Hiệu trưởng ký số PKI công nhận học vị nên không thể xuất Quyết định PDF."
+      );
+    }
 
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);

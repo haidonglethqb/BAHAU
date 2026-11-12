@@ -25,7 +25,7 @@ router.post("/tenure/applications", requireAuth, asyncHandler(createTenureApplic
 router.post(
   "/tenure/applications/:id/vote",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"]),
   asyncHandler(recordTenureCouncilVote)
 );
 
@@ -33,7 +33,7 @@ router.post(
 router.post(
   "/tenure/applications/:id/appoint",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR"]),
   asyncHandler(appointTenureWithPki)
 );
 

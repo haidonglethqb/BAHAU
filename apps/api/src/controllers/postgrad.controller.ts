@@ -10,7 +10,7 @@ import {
 
 export async function getAllPostgradStudents(req: Request, res: Response): Promise<void> {
   const query = PostgradFilterQuerySchema.parse(req.query);
-  const data = PostgradService.getAllStudents(query);
+  const data = PostgradService.getAllStudents(query, req.user);
 
   res.status(200).json({
     success: true,
@@ -24,7 +24,7 @@ export async function getAllPostgradStudents(req: Request, res: Response): Promi
 
 export async function getPostgradStudentById(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const data = PostgradService.getStudentById(id);
+  const data = PostgradService.getStudentById(id, req.user);
 
   res.status(200).json({
     success: true,
@@ -38,7 +38,7 @@ export async function getPostgradStudentById(req: Request, res: Response): Promi
 
 export async function createPostgradStudent(req: Request, res: Response): Promise<void> {
   const input = CreatePostgradStudentInputSchema.parse(req.body);
-  const data = PostgradService.createStudent(input);
+  const data = PostgradService.createStudent(input, req.user);
 
   res.status(201).json({
     success: true,
@@ -53,7 +53,7 @@ export async function createPostgradStudent(req: Request, res: Response): Promis
 export async function schedulePostgradDefenseCouncil(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = ScheduleDefenseCouncilInputSchema.parse(req.body);
-  const data = PostgradService.scheduleDefenseCouncil(id, input);
+  const data = PostgradService.scheduleDefenseCouncil(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -68,7 +68,7 @@ export async function schedulePostgradDefenseCouncil(req: Request, res: Response
 export async function scorePostgradThesisDefense(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = ScoreThesisDefenseInputSchema.parse(req.body);
-  const data = PostgradService.scoreThesisDefense(id, input);
+  const data = PostgradService.scoreThesisDefense(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -83,7 +83,7 @@ export async function scorePostgradThesisDefense(req: Request, res: Response): P
 export async function awardPostgradDegreeWithPki(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = AwardPostgradDegreeWithPkiInputSchema.parse(req.body);
-  const result = PostgradService.awardDegreeWithPki(id, input);
+  const result = PostgradService.awardDegreeWithPki(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -100,7 +100,7 @@ export async function awardPostgradDegreeWithPki(req: Request, res: Response): P
 
 export async function downloadDegreeResolutionPdf(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const pdfBytes = await PostgradService.exportDegreeResolutionPdf(id);
+  const pdfBytes = await PostgradService.exportDegreeResolutionPdf(id, req.user);
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(

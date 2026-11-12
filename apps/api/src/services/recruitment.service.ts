@@ -137,10 +137,23 @@ export class RecruitmentService {
     }
   }
 
+  private static hasRecruitmentReadRole(roles: string[]): boolean {
+    return roles.some((r) =>
+      ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"].includes(r)
+    );
+  }
+
   /**
    * Lấy danh sách ứng viên tuyển dụng có bộ lọc
    */
-  public static async getAllCandidates(query?: RecruitmentFilterQuery): Promise<RecruitmentCandidateDto[]> {
+  public static async getAllCandidates(
+    query?: RecruitmentFilterQuery,
+    currentUser?: any
+  ): Promise<RecruitmentCandidateDto[]> {
+    if (currentUser?.roles && !this.hasRecruitmentReadRole(currentUser.roles)) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem danh sách ứng viên tuyển dụng.");
+    }
+
     let list = Array.from(this.candidates.values());
 
     if (query?.status) {
@@ -168,7 +181,11 @@ export class RecruitmentService {
   /**
    * Lấy chi tiết hồ sơ ứng viên theo ID
    */
-  public static async getCandidateById(id: string): Promise<RecruitmentCandidateDto> {
+  public static async getCandidateById(id: string, currentUser?: any): Promise<RecruitmentCandidateDto> {
+    if (currentUser?.roles && !this.hasRecruitmentReadRole(currentUser.roles)) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem chi tiết hồ sơ ứng viên tuyển dụng.");
+    }
+
     const candidate = this.candidates.get(id);
     if (!candidate) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
@@ -180,7 +197,8 @@ export class RecruitmentService {
    * Ứng viên đăng ký nộp hồ sơ & e-Portfolio trực tuyến
    */
   public static async createApplication(
-    input: CreateCandidateApplicationInput
+    input: CreateCandidateApplicationInput,
+    _currentUser?: any
   ): Promise<RecruitmentCandidateDto> {
     const candidateId = `cand-dau-${Date.now()}`;
     const candidateCode = `TD2026-${Math.floor(100 + Math.random() * 900)}`;
@@ -224,6 +242,15 @@ export class RecruitmentService {
     input: ScoreRound1Input,
     currentUser: any
   ): Promise<RecruitmentCandidateDto> {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền chấm điểm thẩm định Vòng 1.");
+    }
+
     const candidate = this.candidates.get(id);
     if (!candidate) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
@@ -267,6 +294,15 @@ export class RecruitmentService {
     input: ScoreRound2Input,
     currentUser: any
   ): Promise<RecruitmentCandidateDto> {
+    if (
+      currentUser?.roles &&
+      !currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền chấm điểm giảng thử Vòng 2.");
+    }
+
     const candidate = this.candidates.get(id);
     if (!candidate) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
@@ -317,6 +353,10 @@ export class RecruitmentService {
     input: ApproveRecruitmentWithPkiInput,
     _currentUser: any
   ): Promise<RecruitmentCandidateDto> {
+    if (_currentUser?.roles && !_currentUser.roles.includes("ROLE_RECTOR")) {
+      throw new AppError(403, "FORBIDDEN", "Chỉ Hiệu trưởng mới có quyền phê duyệt bổ nhiệm tuyển dụng bằng PKI.");
+    }
+
     const candidate = this.candidates.get(id);
     if (!candidate) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
@@ -384,7 +424,7 @@ export class RecruitmentService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
           source: "BAHAU_RECRUITMENT_SERVICE",
         }
       )
@@ -397,10 +437,22 @@ export class RecruitmentService {
   /**
    * Xuất Quyết định Tuyển dụng và Bổ nhiệm Tập sự viên chức chuẩn thể thức Nghị định 30/2020/NĐ-CP (PDF)
    */
-  public static async exportAppointmentPdf(id: string): Promise<Uint8Array> {
+  public static async exportAppointmentPdf(id: string, currentUser?: any): Promise<Uint8Array> {
+    if (currentUser?.roles && !this.hasRecruitmentReadRole(currentUser.roles)) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền tải Quyết định tuyển dụng.");
+    }
+
     const candidate = this.candidates.get(id);
     if (!candidate) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
+    }
+
+    if (candidate.status !== "APPOINTED_PROBATION" || !candidate.pkiSignature) {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Ứng viên chưa được Hiệu trưởng phê duyệt bổ nhiệm và ký số PKI nên không thể xuất Quyết định PDF."
+      );
     }
 
     const pdfDoc = await PDFDocument.create();

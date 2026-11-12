@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { ExecutiveService } from "../services/executive.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
 
 export async function getSalaryIncrements(req: Request, res: Response): Promise<void> {
   const candidates = await ExecutiveService.getSalaryIncrementCandidates();
@@ -41,7 +42,22 @@ export async function signResolution(req: Request, res: Response): Promise<void>
 }
 
 export async function verifyResolution(req: Request, res: Response): Promise<void> {
-  const resolutionNumber = decodeURIComponent(String(req.params["resolutionNumber"]));
+  const pathSuffix =
+    typeof req.path === "string"
+      ? req.path.replace(/^\/executive\/verify\/?/, "")
+      : "";
+  const rawParam = req.params[0] ?? req.params["resolutionNumber"] ?? pathSuffix;
+  if (!rawParam) {
+    throw new AppError(400, "BAD_REQUEST", "Thiếu mã số quyết định cần xác thực.");
+  }
+
+  let resolutionNumber: string;
+  try {
+    resolutionNumber = decodeURIComponent(String(rawParam));
+  } catch {
+    throw new AppError(400, "BAD_REQUEST", "Mã số quyết định không hợp lệ (lỗi mã hóa URL).");
+  }
+
   const result = ExecutiveService.verifyResolutionByNumber(resolutionNumber);
 
   res.status(200).json({

@@ -486,20 +486,40 @@ export class PayrollService {
           overtimeTeachingHours: overtimeHours,
         });
       }
-    } catch {
-      // Fallback
+
+      throw new AppError(
+        404,
+        "RESOURCE_NOT_FOUND",
+        `Không tìm thấy hồ sơ cán bộ (${employeeId}) để tính phiếu lương.`
+      );
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      // Chỉ cho phép fallback danh sách mẫu khớp chính xác employeeId khi DB lỗi ở môi trường không phải production
+      if (process.env["NODE_ENV"] !== "production") {
+        const found = DEFAULT_FACULTY_MEMBERS.find(
+          (m) =>
+            m.id === employeeId ||
+            m.employeeId === employeeId ||
+            m.employeeCode === employeeId
+        );
+        if (found) {
+          return this.computeSinglePayslip({
+            ...found,
+            month,
+            year,
+          });
+        }
+      }
+
+      throw new AppError(
+        503,
+        "DATABASE_UNAVAILABLE",
+        "Không thể kết nối cơ sở dữ liệu để tính phiếu lương."
+      );
     }
-
-    // Tra cứu danh sách mẫu nếu DB không có bản ghi
-    const found = DEFAULT_FACULTY_MEMBERS.find(
-      (m) => m.id === employeeId || m.employeeCode === employeeId
-    ) || DEFAULT_FACULTY_MEMBERS[1]!;
-
-    return this.computeSinglePayslip({
-      ...found,
-      month,
-      year,
-    });
   }
 
   /**

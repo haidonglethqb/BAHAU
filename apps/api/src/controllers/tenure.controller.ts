@@ -9,7 +9,7 @@ import {
 
 export async function getTenureApplications(req: Request, res: Response): Promise<void> {
   const query = TenureFilterQuerySchema.parse(req.query);
-  const data = await TenureService.getAllApplications(query);
+  const data = await TenureService.getAllApplications(query, req.user);
 
   res.status(200).json({
     success: true,
@@ -23,7 +23,7 @@ export async function getTenureApplications(req: Request, res: Response): Promis
 
 export async function getTenureApplicationById(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const data = await TenureService.getApplicationById(id);
+  const data = await TenureService.getApplicationById(id, req.user);
 
   res.status(200).json({
     success: true,
@@ -81,7 +81,7 @@ export async function appointTenureWithPki(req: Request, res: Response): Promise
 
 export async function downloadAppointmentResolutionPdf(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const pdfBytes = await TenureService.exportAppointmentResolutionPdf(id);
+  const pdfBytes = await TenureService.exportAppointmentResolutionPdf(id, req.user);
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(

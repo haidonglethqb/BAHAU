@@ -14,7 +14,7 @@ import {
   exportCouncilReportPdf,
 } from "../../controllers/kpi.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
-import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
+import { requireAuth, requirePermission, requireRole } from "../../middlewares/auth.middleware.js";
 import { asyncHandler } from "../../middlewares/async.middleware.js";
 import {
   CreateKpiPeriodSchema,
@@ -92,6 +92,7 @@ router.put(
   "/kpi/evaluations/:id/finalize",
   requireAuth,
   requirePermission("kpi:finalize_council"),
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER"]),
   validateBody(FinalizeCouncilEvaluationSchema),
   asyncHandler(finalizeEvaluation)
 );
@@ -101,6 +102,7 @@ router.post(
   "/kpi/periods/:id/finalize-with-pki",
   requireAuth,
   requirePermission("kpi:finalize_council"),
+  requireRole("ROLE_RECTOR"),
   validateBody(FinalizePeriodWithPkiInputSchema),
   asyncHandler(finalizeWithPki)
 );

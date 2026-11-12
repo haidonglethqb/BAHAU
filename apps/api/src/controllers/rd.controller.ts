@@ -10,7 +10,7 @@ import {
 
 export async function getAllRdProjects(req: Request, res: Response): Promise<void> {
   const query = RdProjectFilterQuerySchema.parse(req.query);
-  const data = RdService.getAllProjects(query);
+  const data = RdService.getAllProjects(query, req.user);
 
   res.status(200).json({
     success: true,
@@ -24,7 +24,7 @@ export async function getAllRdProjects(req: Request, res: Response): Promise<voi
 
 export async function getRdProjectById(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const data = RdService.getProjectById(id);
+  const data = RdService.getProjectById(id, req.user);
 
   res.status(200).json({
     success: true,
@@ -38,7 +38,7 @@ export async function getRdProjectById(req: Request, res: Response): Promise<voi
 
 export async function createRdProject(req: Request, res: Response): Promise<void> {
   const input = CreateRdProjectInputSchema.parse(req.body);
-  const data = RdService.createProject(input);
+  const data = RdService.createProject(input, req.user);
 
   res.status(201).json({
     success: true,
@@ -53,7 +53,7 @@ export async function createRdProject(req: Request, res: Response): Promise<void
 export async function reviewRdProjectCouncil(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = ReviewRdProjectInputSchema.parse(req.body);
-  const data = RdService.submitCouncilReview(id, input);
+  const data = RdService.submitCouncilReview(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -68,7 +68,7 @@ export async function reviewRdProjectCouncil(req: Request, res: Response): Promi
 export async function allocateRdRoyalty(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = AllocateRoyaltyInputSchema.parse(req.body);
-  const data = RdService.allocateRoyalty(id, input);
+  const data = RdService.allocateRoyalty(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -83,7 +83,7 @@ export async function allocateRdRoyalty(req: Request, res: Response): Promise<vo
 export async function approveRdProjectWithPki(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
   const input = ApproveRdWithPkiInputSchema.parse(req.body);
-  const result = RdService.approveAndSignWithPki(id, input);
+  const result = RdService.approveAndSignWithPki(id, input, req.user);
 
   res.status(200).json({
     success: true,
@@ -100,7 +100,7 @@ export async function approveRdProjectWithPki(req: Request, res: Response): Prom
 
 export async function downloadRdResolutionPdf(req: Request, res: Response): Promise<void> {
   const id = String(req.params["id"]);
-  const pdfBytes = await RdService.exportResolutionPdf(id);
+  const pdfBytes = await RdService.exportResolutionPdf(id, req.user);
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(

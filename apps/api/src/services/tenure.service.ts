@@ -353,11 +353,34 @@ export class TenureService {
     return 2.0;
   }
 
+  private static hasTenureReadRole(roles: string[]): boolean {
+    return roles.some((r) =>
+      ["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"].includes(r)
+    );
+  }
+
+  private static isTenureOwner(app: TenureApplicationDto, currentUser: any): boolean {
+    return Boolean(
+      (currentUser?.employeeId && app.employeeId === currentUser.employeeId) ||
+        (currentUser?.employeeCode && app.employeeCode === currentUser.employeeCode)
+    );
+  }
+
   /**
    * Lấy danh sách hồ sơ xét chức danh có bộ lọc
    */
-  public static async getAllApplications(query?: TenureFilterQuery): Promise<TenureApplicationDto[]> {
+  public static async getAllApplications(
+    query?: TenureFilterQuery,
+    currentUser?: any
+  ): Promise<TenureApplicationDto[]> {
     let list = Array.from(this.applications.values());
+
+    if (currentUser?.roles && !this.hasTenureReadRole(currentUser.roles)) {
+      if (!currentUser.roles.some((r: string) => ["ROLE_EMPLOYEE", "ROLE_LECTURER"].includes(r))) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có quyền truy cập danh sách hồ sơ xét chức danh.");
+      }
+      list = list.filter((a) => this.isTenureOwner(a, currentUser));
+    }
 
     if (query?.status) {
       list = list.filter((a) => a.status === query.status);
@@ -387,10 +410,17 @@ export class TenureService {
   /**
    * Lấy chi tiết một hồ sơ theo ID
    */
-  public static async getApplicationById(id: string): Promise<TenureApplicationDto> {
+  public static async getApplicationById(id: string, currentUser?: any): Promise<TenureApplicationDto> {
     const app = this.applications.get(id);
     if (!app) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
+    }
+    if (
+      currentUser?.roles &&
+      !this.hasTenureReadRole(currentUser.roles) &&
+      !this.isTenureOwner(app, currentUser)
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn chỉ được phép xem hồ sơ xét chức danh của chính mình.");
     }
     return app;
   }
@@ -402,7 +432,39 @@ export class TenureService {
     input: CreateTenureApplicationInput,
     currentUser: any
   ): Promise<TenureApplicationDto> {
-    const employeeId = currentUser?.employeeId || currentUser?.id || "DAU260003-ID";
+    if (currentUser?.roles) {
+      const canApply = currentUser.roles.some((r: string) =>
+        [
+          "ROLE_EMPLOYEE",
+          "ROLE_LECTURER",
+          "ROLE_UNIT_HEAD",
+          "ROLE_DEAN",
+          "ROLE_HR_OFFICER",
+          "ROLE_RECTOR",
+        ].includes(r)
+      );
+      if (!canApply) {
+        throw new AppError(403, "FORBIDDEN", "Vai trò hiện tại không có quyền nộp hồ sơ xét chức danh.");
+      }
+
+      const isHrOrRector = currentUser.roles.some((r: string) =>
+        ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
+      );
+      const requestedEmployeeId = (input as any)?.employeeId;
+      if (requestedEmployeeId && requestedEmployeeId !== currentUser.employeeId && !isHrOrRector) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không được phép nộp hồ sơ xét chức danh thay cho cán bộ khác.");
+      }
+      if (!currentUser.employeeId && !requestedEmployeeId) {
+        throw new AppError(400, "BAD_REQUEST", "Tài khoản chưa được liên kết hồ sơ cán bộ.");
+      }
+    }
+
+    const employeeId =
+      (currentUser?.roles?.some((r: string) => ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)) &&
+        (input as any)?.employeeId) ||
+      currentUser?.employeeId ||
+      currentUser?.id ||
+      "DAU260003-ID";
     const employeeCode = currentUser?.employeeCode || "DAU260003";
     const employeeName = currentUser?.fullName || currentUser?.name || "Cán bộ Giảng viên";
     const unitName = currentUser?.unitName || "Khoa Kiến trúc";
@@ -478,9 +540,22 @@ export class TenureService {
     input: TenureCouncilVoteInput,
     _currentUser: any
   ): Promise<TenureApplicationDto> {
+    if (
+      _currentUser?.roles &&
+      !_currentUser.roles.some((r: string) =>
+        ["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"].includes(r)
+      )
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Chỉ thành viên Hội đồng xét chức danh mới có quyền biểu quyết.");
+    }
+
     const app = this.applications.get(id);
     if (!app) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
+    }
+
+    if (_currentUser?.employeeId && _currentUser.employeeId === app.employeeId) {
+      throw new AppError(403, "FORBIDDEN", "Không được phép tự biểu quyết cho hồ sơ xét chức danh của chính mình.");
     }
 
     if (input.totalVoters <= 0) {
@@ -527,6 +602,10 @@ export class TenureService {
     input: AppointTenureWithPkiInput,
     _currentUser: any
   ): Promise<TenureApplicationDto> {
+    if (_currentUser?.roles && !_currentUser.roles.includes("ROLE_RECTOR")) {
+      throw new AppError(403, "FORBIDDEN", "Chỉ Hiệu trưởng mới có quyền phê duyệt bổ nhiệm chức danh bằng PKI.");
+    }
+
     const app = this.applications.get(id);
     if (!app) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
@@ -597,7 +676,7 @@ export class TenureService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
           source: "BAHAU_TENURE_SERVICE",
         }
       )
@@ -610,10 +689,29 @@ export class TenureService {
   /**
    * Xuất Quyết định Bổ nhiệm chức danh chuẩn thể thức Nghị định 30/2020/NĐ-CP (PDF)
    */
-  public static async exportAppointmentResolutionPdf(id: string): Promise<Uint8Array> {
+  public static async exportAppointmentResolutionPdf(
+    id: string,
+    currentUser?: any
+  ): Promise<Uint8Array> {
     const app = this.applications.get(id);
     if (!app) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
+    }
+
+    if (
+      currentUser?.roles &&
+      !this.hasTenureReadRole(currentUser.roles) &&
+      !this.isTenureOwner(app, currentUser)
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền tải Quyết định bổ nhiệm của cán bộ khác.");
+    }
+
+    if (app.status !== "APPOINTED" || !app.pkiSignature) {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Hồ sơ chưa được Hiệu trưởng phê duyệt và ký số PKI nên không thể xuất Quyết định bổ nhiệm PDF."
+      );
     }
 
     const pdfDoc = await PDFDocument.create();

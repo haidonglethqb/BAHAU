@@ -14,10 +14,20 @@ import { asyncHandler } from "../../middlewares/async.middleware.js";
 const router = Router();
 
 // Danh sách ứng viên tuyển dụng
-router.get("/recruitment/candidates", requireAuth, asyncHandler(getRecruitmentCandidates));
+router.get(
+  "/recruitment/candidates",
+  requireAuth,
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"]),
+  asyncHandler(getRecruitmentCandidates)
+);
 
 // Chi tiết hồ sơ ứng viên
-router.get("/recruitment/candidates/:id", requireAuth, asyncHandler(getRecruitmentCandidateById));
+router.get(
+  "/recruitment/candidates/:id",
+  requireAuth,
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"]),
+  asyncHandler(getRecruitmentCandidateById)
+);
 
 // Nộp hồ sơ ứng tuyển & e-Portfolio mới (cho phép nộp hồ sơ)
 router.post("/recruitment/candidates", requireAuth, asyncHandler(createCandidateApplication));
@@ -26,7 +36,7 @@ router.post("/recruitment/candidates", requireAuth, asyncHandler(createCandidate
 router.post(
   "/recruitment/candidates/:id/score-round-1",
   requireAuth,
-  requireRole(["ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER", "ROLE_RECTOR"]),
   asyncHandler(scoreCandidateRound1)
 );
 
@@ -34,7 +44,7 @@ router.post(
 router.post(
   "/recruitment/candidates/:id/score-round-2",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"]),
   asyncHandler(scoreCandidateRound2)
 );
 
@@ -42,7 +52,7 @@ router.post(
 router.post(
   "/recruitment/candidates/:id/appoint",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR"]),
   asyncHandler(appointRecruitmentWithPki)
 );
 
@@ -50,6 +60,7 @@ router.post(
 router.get(
   "/recruitment/candidates/:id/resolution/pdf",
   requireAuth,
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER"]),
   asyncHandler(downloadAppointmentResolutionPdf)
 );
 

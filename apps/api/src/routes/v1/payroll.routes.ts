@@ -27,35 +27,35 @@ router.get(
 router.get(
   "/payroll/period-summary",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER"]),
   asyncHandler(getPeriodSummary)
 );
 
 router.get(
   "/payroll/table",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER"]),
   asyncHandler(getPayrollTable)
 );
 
 router.post(
   "/payroll/calculate",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER"]),
   asyncHandler(calculatePayrollPeriod)
 );
 
 router.post(
   "/payroll/submit",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_HR_OFFICER"]),
   asyncHandler(submitPayrollPeriod)
 );
 
 router.post(
   "/payroll/approve",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR"]),
   asyncHandler(approvePayrollPeriod)
 );
 

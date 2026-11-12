@@ -4,21 +4,98 @@ import {
   WorkforceStatsDto,
   ExecutiveAlertsDto,
 } from "@bahau/contracts";
+import { UnitService } from "./unit.service.js";
+
+export interface DashboardScope {
+  role?: string;
+  unitId?: string;
+  roles?: string[];
+  unitsManaged?: string[];
+  employeeId?: string | null;
+}
 
 export class DashboardService {
   /**
+   * Mở rộng phạm vi cây đơn vị cho ROLE_UNIT_HEAD; trả về isEmptyScope=true nếu không có quyền xem đơn vị nào.
+   */
+  private static async resolveUnitScope(scope?: DashboardScope): Promise<{
+    isEmptyScope: boolean;
+    allowedUnitIds: string[] | null;
+  }> {
+    if (!scope) {
+      return { isEmptyScope: false, allowedUnitIds: null };
+    }
+
+    const roles = scope.roles ?? (scope.role ? [scope.role] : []);
+    const isGlobal = roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    );
+
+    if (scope.unitId) {
+      const expanded = await UnitService.getDescendantUnitIds(scope.unitId);
+      return { isEmptyScope: expanded.length === 0, allowedUnitIds: expanded };
+    }
+
+    if (isGlobal || roles.length === 0) {
+      return { isEmptyScope: false, allowedUnitIds: null };
+    }
+
+    const managed = scope.unitsManaged ?? [];
+    if (managed.length === 0) {
+      return { isEmptyScope: true, allowedUnitIds: [] };
+    }
+
+    const unitSet = new Set<string>();
+    for (const rootUnitId of managed) {
+      const descendants = await UnitService.getDescendantUnitIds(rootUnitId);
+      for (const id of descendants) {
+        unitSet.add(id);
+      }
+    }
+
+    const allowedUnitIds = Array.from(unitSet);
+    return {
+      isEmptyScope: allowedUnitIds.length === 0,
+      allowedUnitIds,
+    };
+  }
+
+  /**
    * Lấy tổng quan các chỉ số vận hành nhân sự toàn trường (hoặc theo đơn vị)
    */
-  static async getOverview(scope?: { role?: string; unitId?: string }): Promise<DashboardOverviewDto> {
-    const whereEmployee = scope?.unitId
+  static async getOverview(scope?: DashboardScope): Promise<DashboardOverviewDto> {
+    const { isEmptyScope, allowedUnitIds } = await this.resolveUnitScope(scope);
+    if (isEmptyScope) {
+      return {
+        totalEmployees: 0,
+        activeEmployees: 0,
+        onLeaveEmployees: 0,
+        probationEmployees: 0,
+        doctorCount: 0,
+        masterCount: 0,
+        bachelorCount: 0,
+        professorCount: 0,
+        associateProfessorCount: 0,
+        verifiedCertificatesCount: 0,
+        expiringCertificatesCount: 0,
+        expiringContractsCount: 0,
+        pendingRequestsCount: 0,
+      };
+    }
+
+    const whereEmployee = allowedUnitIds
       ? {
           assignments: {
             some: {
-              unitId: scope.unitId,
+              unitId: { in: allowedUnitIds },
               status: "ACTIVE" as const,
             },
           },
         }
+      : {};
+
+    const whereEmployeeRelation = allowedUnitIds
+      ? { employee: whereEmployee }
       : {};
 
     const [
@@ -59,7 +136,7 @@ export class DashboardService {
         where: { ...whereEmployee, academicTitle: "ASSOCIATE_PROFESSOR" },
       }),
       prisma.certificate.count({
-        where: { status: "VERIFIED" },
+        where: { status: "VERIFIED", ...whereEmployeeRelation },
       }),
     ]);
 
@@ -76,6 +153,7 @@ export class DashboardService {
               gte: now,
               lte: in90Days,
             },
+            ...whereEmployeeRelation,
           },
         }),
         prisma.employmentContract.count({
@@ -85,20 +163,22 @@ export class DashboardService {
               gte: now,
               lte: in60Days,
             },
+            ...whereEmployeeRelation,
           },
         }),
         prisma.leaveRequest.count({
-          where: { status: "PENDING" },
+          where: { status: "PENDING", ...whereEmployeeRelation },
         }),
         prisma.kpiEvaluation.count({
           where: {
             status: {
               in: ["SUBMITTED", "IN_REVIEW"],
             },
+            ...whereEmployeeRelation,
           },
         }),
         prisma.certificate.count({
-          where: { status: "PENDING" },
+          where: { status: "PENDING", ...whereEmployeeRelation },
         }),
       ]);
 
@@ -122,21 +202,74 @@ export class DashboardService {
   /**
    * Thống kê cơ cấu nhân sự: Học vị, Chức danh, Vị trí việc làm, Hợp đồng và Biến động
    */
-  static async getWorkforceStats(scope?: { role?: string; unitId?: string }): Promise<WorkforceStatsDto> {
-    const total = await prisma.employee.count();
-    const safeTotal = total > 0 ? total : 1;
+  static async getWorkforceStats(scope?: DashboardScope): Promise<WorkforceStatsDto> {
+    const { isEmptyScope, allowedUnitIds } = await this.resolveUnitScope(scope);
 
-    // 1. Phân bố theo Trình độ học vị (Academic Degree)
     const degrees = ["DOCTOR", "MASTER", "BACHELOR"];
     const degreeLabels: Record<string, string> = {
       DOCTOR: "Tiến sĩ",
       MASTER: "Thạc sĩ",
       BACHELOR: "Đại học / KTS / Kỹ sư",
     };
+    const titles = ["PROFESSOR", "ASSOCIATE_PROFESSOR", "NONE"];
+    const titleLabels: Record<string, string> = {
+      PROFESSOR: "Giáo sư",
+      ASSOCIATE_PROFESSOR: "Phó Giáo sư",
+      NONE: "Giảng viên / Chuyên viên",
+    };
+    const positionTypes = ["MANAGEMENT", "ACADEMIC", "ADMINISTRATIVE"];
+    const posLabels: Record<string, string> = {
+      MANAGEMENT: "Cán bộ Quản lý",
+      ACADEMIC: "Giảng viên Giảng dạy",
+      ADMINISTRATIVE: "Chuyên viên Hành chính",
+    };
+    const contractTypes = [
+      "INDEFINITE_TERM",
+      "DEFINITE_TERM_36M",
+      "DEFINITE_TERM_12M",
+      "VISITING_LECTURER",
+      "PROBATION",
+    ];
+    const contractLabels: Record<string, string> = {
+      INDEFINITE_TERM: "Không xác định thời hạn",
+      DEFINITE_TERM_36M: "Xác định thời hạn 36 tháng",
+      DEFINITE_TERM_12M: "Xác định thời hạn 12 tháng",
+      VISITING_LECTURER: "Giảng viên Thỉnh giảng",
+      PROBATION: "Hợp đồng Thử việc",
+    };
+
+    if (isEmptyScope) {
+      return {
+        byDegree: degrees.map((key) => ({ key, label: degreeLabels[key] || key, count: 0, percentage: 0 })),
+        byTitle: titles.map((key) => ({ key, label: titleLabels[key] || key, count: 0, percentage: 0 })),
+        byPositionType: positionTypes.map((key) => ({ key, label: posLabels[key] || key, count: 0, percentage: 0 })),
+        byContractType: contractTypes.map((key) => ({ key, label: contractLabels[key] || key, count: 0, percentage: 0 })),
+        recentTurnover: [],
+      };
+    }
+
+    const whereEmployee = allowedUnitIds
+      ? {
+          assignments: {
+            some: {
+              unitId: { in: allowedUnitIds },
+              status: "ACTIVE" as const,
+            },
+          },
+        }
+      : {};
+    const whereEmployeeRelation = allowedUnitIds
+      ? { employee: whereEmployee }
+      : {};
+
+    const total = await prisma.employee.count({ where: whereEmployee });
+    const safeTotal = total > 0 ? total : 1;
+
+    // 1. Phân bố theo Trình độ học vị (Academic Degree)
     const byDegree = await Promise.all(
       degrees.map(async (deg) => {
         const count = await prisma.employee.count({
-          where: { academicDegree: deg as any },
+          where: { ...whereEmployee, academicDegree: deg as any },
         });
         return {
           key: deg,
@@ -148,16 +281,10 @@ export class DashboardService {
     );
 
     // 2. Phân bố theo Chức danh học thuật (Academic Title)
-    const titles = ["PROFESSOR", "ASSOCIATE_PROFESSOR", "NONE"];
-    const titleLabels: Record<string, string> = {
-      PROFESSOR: "Giáo sư",
-      ASSOCIATE_PROFESSOR: "Phó Giáo sư",
-      NONE: "Giảng viên / Chuyên viên",
-    };
     const byTitle = await Promise.all(
       titles.map(async (t) => {
         const count = await prisma.employee.count({
-          where: { academicTitle: t as any },
+          where: { ...whereEmployee, academicTitle: t as any },
         });
         return {
           key: t,
@@ -169,18 +296,13 @@ export class DashboardService {
     );
 
     // 3. Phân bố theo Vị trí việc làm (Position Type)
-    const positionTypes = ["MANAGEMENT", "ACADEMIC", "ADMINISTRATIVE"];
-    const posLabels: Record<string, string> = {
-      MANAGEMENT: "Cán bộ Quản lý",
-      ACADEMIC: "Giảng viên Giảng dạy",
-      ADMINISTRATIVE: "Chuyên viên Hành chính",
-    };
     const byPositionType = await Promise.all(
       positionTypes.map(async (pt) => {
         const count = await prisma.employee.count({
           where: {
             assignments: {
               some: {
+                ...(allowedUnitIds ? { unitId: { in: allowedUnitIds } } : {}),
                 position: { positionType: pt as any },
                 status: "ACTIVE",
               },
@@ -198,27 +320,13 @@ export class DashboardService {
 
     // 4. Phân bố theo Loại Hợp đồng (Contract Type)
     const totalContracts = await prisma.employmentContract.count({
-      where: { status: "ACTIVE" },
+      where: { status: "ACTIVE", ...whereEmployeeRelation },
     });
     const safeContractTotal = totalContracts > 0 ? totalContracts : 1;
-    const contractTypes = [
-      "INDEFINITE_TERM",
-      "DEFINITE_TERM_36M",
-      "DEFINITE_TERM_12M",
-      "VISITING_LECTURER",
-      "PROBATION",
-    ];
-    const contractLabels: Record<string, string> = {
-      INDEFINITE_TERM: "Không xác định thời hạn",
-      DEFINITE_TERM_36M: "Xác định thời hạn 36 tháng",
-      DEFINITE_TERM_12M: "Xác định thời hạn 12 tháng",
-      VISITING_LECTURER: "Giảng viên Thỉnh giảng",
-      PROBATION: "Hợp đồng Thử việc",
-    };
     const byContractType = await Promise.all(
       contractTypes.map(async (ct) => {
         const count = await prisma.employmentContract.count({
-          where: { contractType: ct as any, status: "ACTIVE" },
+          where: { contractType: ct as any, status: "ACTIVE", ...whereEmployeeRelation },
         });
         return {
           key: ct,
@@ -231,6 +339,7 @@ export class DashboardService {
 
     // 5. Nhật ký Biến động nhân sự gần nhất (Recent Turnover Events)
     const recentEvents = await prisma.employmentEvent.findMany({
+      where: whereEmployeeRelation,
       take: 6,
       orderBy: { effectiveDate: "desc" },
       include: {
@@ -260,7 +369,29 @@ export class DashboardService {
   /**
    * Danh sách cảnh báo điều hành tập trung (Hợp đồng, Chứng chỉ, Việc chờ duyệt)
    */
-  static async getExecutiveAlerts(scope?: { role?: string; unitId?: string }): Promise<ExecutiveAlertsDto> {
+  static async getExecutiveAlerts(scope?: DashboardScope): Promise<ExecutiveAlertsDto> {
+    const { isEmptyScope, allowedUnitIds } = await this.resolveUnitScope(scope);
+    if (isEmptyScope) {
+      return {
+        expiringContracts: [],
+        expiringCertificates: [],
+        pendingApprovals: [],
+      };
+    }
+
+    const whereEmployeeRelation = allowedUnitIds
+      ? {
+          employee: {
+            assignments: {
+              some: {
+                unitId: { in: allowedUnitIds },
+                status: "ACTIVE" as const,
+              },
+            },
+          },
+        }
+      : {};
+
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
@@ -273,6 +404,7 @@ export class DashboardService {
           gte: now,
           lte: in60Days,
         },
+        ...whereEmployeeRelation,
       },
       include: {
         employee: {
@@ -314,6 +446,7 @@ export class DashboardService {
         expiryDate: {
           lte: in90Days,
         },
+        ...whereEmployeeRelation,
       },
       include: {
         employee: {
@@ -367,7 +500,7 @@ export class DashboardService {
     // 3. Hồ sơ chờ phê duyệt (Leave, KPI, Certificate)
     const [pendingLeaves, pendingKpis, pendingCerts] = await Promise.all([
       prisma.leaveRequest.findMany({
-        where: { status: "PENDING" },
+        where: { status: "PENDING", ...whereEmployeeRelation },
         include: {
           employee: {
             include: {
@@ -381,6 +514,7 @@ export class DashboardService {
       prisma.kpiEvaluation.findMany({
         where: {
           status: { in: ["SUBMITTED", "IN_REVIEW"] },
+          ...whereEmployeeRelation,
         },
         include: {
           employee: {
@@ -394,7 +528,7 @@ export class DashboardService {
         orderBy: { updatedAt: "desc" },
       }),
       prisma.certificate.findMany({
-        where: { status: "PENDING" },
+        where: { status: "PENDING", ...whereEmployeeRelation },
         include: {
           employee: {
             include: {

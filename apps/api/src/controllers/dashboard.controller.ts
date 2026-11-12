@@ -7,9 +7,12 @@ export class DashboardController {
    */
   static async getOverview(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = (req as any).user;
+      const user = req.user;
       const data = await DashboardService.getOverview({
         role: user?.roles?.[0],
+        roles: user?.roles,
+        unitsManaged: user?.unitsManaged,
+        employeeId: user?.employeeId,
       });
       res.status(200).json({
         success: true,
@@ -25,9 +28,12 @@ export class DashboardController {
    */
   static async getWorkforceStats(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = (req as any).user;
+      const user = req.user;
       const data = await DashboardService.getWorkforceStats({
         role: user?.roles?.[0],
+        roles: user?.roles,
+        unitsManaged: user?.unitsManaged,
+        employeeId: user?.employeeId,
       });
       res.status(200).json({
         success: true,
@@ -43,9 +49,12 @@ export class DashboardController {
    */
   static async getAlerts(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = (req as any).user;
+      const user = req.user;
       const data = await DashboardService.getExecutiveAlerts({
         role: user?.roles?.[0],
+        roles: user?.roles,
+        unitsManaged: user?.unitsManaged,
+        employeeId: user?.employeeId,
       });
       res.status(200).json({
         success: true,

@@ -26,7 +26,7 @@ router.post("/rd/projects", requireAuth, asyncHandler(createRdProject));
 router.post(
   "/rd/projects/:id/review",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_COUNCIL_MEMBER", "ROLE_HR_OFFICER"]),
   asyncHandler(reviewRdProjectCouncil)
 );
 
@@ -34,7 +34,7 @@ router.post(
 router.post(
   "/rd/projects/:id/allocate",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_DEAN", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR", "ROLE_UNIT_HEAD", "ROLE_DEAN", "ROLE_HR_OFFICER"]),
   asyncHandler(allocateRdRoyalty)
 );
 
@@ -42,7 +42,7 @@ router.post(
 router.post(
   "/rd/projects/:id/approve",
   requireAuth,
-  requireRole(["ROLE_RECTOR", "ROLE_SYSADMIN"]),
+  requireRole(["ROLE_RECTOR"]),
   asyncHandler(approveRdProjectWithPki)
 );
 
