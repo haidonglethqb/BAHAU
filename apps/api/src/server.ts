@@ -4,6 +4,7 @@ dotenv.config();
 import { app } from "./app.js";
 import { prisma } from "@bahau/database";
 import { JobScheduler } from "./jobs/scheduler.js";
+import { WorkerQueue } from "./jobs/worker-queue.js";
 
 const PORT = Number(process.env["PORT"]) || 4000;
 
@@ -20,8 +21,15 @@ const server = app.listen(PORT, () => {
 function handleShutdown(signal: string): void {
   console.log(`[BAHAU API] Received ${signal}, shutting down gracefully...`);
   JobScheduler.getInstance().stop();
+  WorkerQueue.getInstance().pause();
   server.close(async () => {
     console.log("[BAHAU API] HTTP server closed.");
+    try {
+      await WorkerQueue.getInstance().drain();
+      console.log("[BAHAU API] WorkerQueue drained.");
+    } catch (err) {
+      console.error("[BAHAU API] Error during WorkerQueue drain:", err);
+    }
     try {
       await prisma.$disconnect();
       console.log("[BAHAU API] Database disconnected.");

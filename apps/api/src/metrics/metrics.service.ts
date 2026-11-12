@@ -18,7 +18,8 @@ export class MetricsService {
 
   // Duration stats
   private httpDurationSum: Map<string, number> = new Map(); // key: method|route
-  private httpDurationBuckets: Map<string, number[]> = new Map(); // key: method|route, array matching HISTOGRAM_BUCKETS
+  private httpDurationCount: Map<string, number> = new Map(); // key: method|route
+  private httpDurationBuckets: Map<string, number[]> = new Map(); // key: method|route, cumulative array matching HISTOGRAM_BUCKETS
 
   // Gauges
   private outboxLag = 0;
@@ -56,6 +57,10 @@ export class MetricsService {
     this.httpDurationSum.set(
       routeKey,
       (this.httpDurationSum.get(routeKey) || 0) + durationSeconds
+    );
+    this.httpDurationCount.set(
+      routeKey,
+      (this.httpDurationCount.get(routeKey) || 0) + 1
     );
 
     let buckets = this.httpDurationBuckets.get(routeKey);
@@ -141,24 +146,24 @@ export class MetricsService {
     lines.push("# TYPE bahau_http_request_duration_seconds histogram");
     for (const [routeKey, buckets] of this.httpDurationBuckets.entries()) {
       const [method, route] = routeKey.split("|");
-      let cumulative = 0;
+      const routeCount = this.httpDurationCount.get(routeKey) || 0;
       for (let i = 0; i < HISTOGRAM_BUCKETS.length; i++) {
         const bucketLe = HISTOGRAM_BUCKETS[i];
         if (bucketLe !== undefined) {
-          cumulative += buckets[i] || 0;
+          const cumulative = buckets[i] || 0;
           lines.push(
             `bahau_http_request_duration_seconds_bucket{method="${method}",route="${route}",le="${bucketLe}"} ${cumulative}`
           );
         }
       }
       lines.push(
-        `bahau_http_request_duration_seconds_bucket{method="${method}",route="${route}",le="+Inf"} ${this.totalHttpRequests}`
+        `bahau_http_request_duration_seconds_bucket{method="${method}",route="${route}",le="+Inf"} ${routeCount}`
       );
       lines.push(
         `bahau_http_request_duration_seconds_sum{method="${method}",route="${route}"} ${(this.httpDurationSum.get(routeKey) || 0).toFixed(6)}`
       );
       lines.push(
-        `bahau_http_request_duration_seconds_count{method="${method}",route="${route}"} ${this.totalHttpRequests}`
+        `bahau_http_request_duration_seconds_count{method="${method}",route="${route}"} ${routeCount}`
       );
     }
     lines.push("");
@@ -220,6 +225,7 @@ export class MetricsService {
     this.httpRequests.clear();
     this.eventsPublished.clear();
     this.httpDurationSum.clear();
+    this.httpDurationCount.clear();
     this.httpDurationBuckets.clear();
     this.totalHttpRequests = 0;
     this.totalEventsPublished = 0;

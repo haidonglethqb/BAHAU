@@ -5,6 +5,7 @@ import {
   VerifyCertificateInput,
   CreateTrainingCourseInput,
   RegisterTrainingCourseInput,
+  UpdateParticipantStatusInput,
   CertificateFilterQuery,
 } from "@bahau/contracts";
 import { AppError } from "../middlewares/error.middleware.js";
@@ -118,6 +119,27 @@ export async function registerCourse(req: Request, res: Response): Promise<void>
 
   const participant = await TrainingService.registerCourse(id, employeeId, input);
   res.status(201).json({
+    success: true,
+    data: participant,
+  });
+}
+
+export async function updateCourseStatus(req: Request, res: Response): Promise<void> {
+  const id = String(req.params.id);
+  const status = req.body.status as "PLANNING" | "ONGOING" | "COMPLETED" | "CANCELLED";
+  const course = await TrainingService.updateCourseStatus(id, status);
+  res.json({
+    success: true,
+    data: course,
+  });
+}
+
+export async function updateParticipantStatus(req: Request, res: Response): Promise<void> {
+  const courseId = String(req.params.courseId);
+  const employeeId = String(req.params.employeeId);
+  const input: UpdateParticipantStatusInput = req.body;
+  const participant = await TrainingService.updateParticipantStatus(courseId, employeeId, input);
+  res.json({
     success: true,
     data: participant,
   });

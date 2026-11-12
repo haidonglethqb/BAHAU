@@ -1,7 +1,7 @@
 import { DomainEventBus } from "./domain-event-bus.js";
-import { registerPayrollSubscribers } from "./subscribers/payroll.subscriber.js";
-import { registerWorkloadSubscribers } from "./subscribers/workload.subscriber.js";
-import { registerKpiSubscribers } from "./subscribers/kpi.subscriber.js";
+import { registerPayrollSubscribers, resetPayrollSubscriberState } from "./subscribers/payroll.subscriber.js";
+import { registerWorkloadSubscribers, resetWorkloadSubscriberState } from "./subscribers/workload.subscriber.js";
+import { registerKpiSubscribers, resetKpiSubscriberState } from "./subscribers/kpi.subscriber.js";
 
 export * from "./domain-event-bus.js";
 
@@ -28,5 +28,9 @@ export function initEventSubscribers(): void {
  * Reset trạng thái đăng ký subscribers (hữu ích cho Unit Tests)
  */
 export function resetEventSubscribers(): void {
+  DomainEventBus.getInstance().clearHandlers();
+  resetPayrollSubscriberState();
+  resetWorkloadSubscriberState();
+  resetKpiSubscriberState();
   subscribersInitialized = false;
 }

@@ -82,8 +82,18 @@ export class DomainEventBus {
       this.eventStore.shift();
     }
     try {
-      OutboxService.recordDomainEvent(event).catch(() => {});
-    } catch {}
+      OutboxService.recordDomainEvent(event).catch((err) => {
+        console.error(
+          `[DomainEventBus] Async outbox audit error for event "${event.name}" (Event ID: ${event.id}):`,
+          err
+        );
+      });
+    } catch (err) {
+      console.error(
+        `[DomainEventBus] Outbox audit error for event "${event.name}" (Event ID: ${event.id}):`,
+        err
+      );
+    }
 
     // 2. Kích hoạt toàn bộ Subscribers đã đăng ký
     const registeredHandlers = this.handlers.get(event.name) || [];
@@ -133,8 +143,18 @@ export class DomainEventBus {
       this.eventStore.shift();
     }
     try {
-      OutboxService.recordDomainEvent(event).catch(() => {});
-    } catch {}
+      OutboxService.recordDomainEvent(event).catch((err) => {
+        console.error(
+          `[DomainEventBus] Async outbox audit error for event "${event.name}" (Event ID: ${event.id}):`,
+          err
+        );
+      });
+    } catch (err) {
+      console.error(
+        `[DomainEventBus] Outbox audit error for event "${event.name}" (Event ID: ${event.id}):`,
+        err
+      );
+    }
 
     // 2. Kích hoạt toàn bộ Subscribers đã đăng ký
     const registeredHandlers = this.handlers.get(event.name) || [];
@@ -200,6 +220,13 @@ export class DomainEventBus {
     }
 
     return toReplay.length;
+  }
+
+  /**
+   * Xóa toàn bộ subscriber handlers (hữu ích cho unit test clean up)
+   */
+  public clearHandlers(): void {
+    this.handlers.clear();
   }
 
   /**

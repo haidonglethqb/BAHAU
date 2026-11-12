@@ -17,6 +17,13 @@ export class OutboxService {
   private static memoryOutbox = new Map<string, OutboxEventDto>();
   private static memoryNotifications = new Map<string, any[]>();
   private static customDispatchHandlers = new Map<string, Array<(event: any) => Promise<void> | void>>();
+  private static retryAfterMap = new Map<string, number>();
+  private static processingStartedAt = new Map<string, number>();
+
+  public static getNextRunAt(id: string): string | null {
+    const ts = this.retryAfterMap.get(id);
+    return ts ? new Date(ts).toISOString() : null;
+  }
 
   /**
    * Tạo một Transactional Outbox Event mới (hỗ trợ cả DB và In-Memory Fallback)
@@ -48,13 +55,10 @@ export class OutboxService {
       processedAt: status === "PROCESSED" ? now : null,
     };
 
-    // 1. Lưu vào Memory Cache
-    this.memoryOutbox.set(dto.id, dto);
-
-    // 2. Thử lưu vào Prisma OutboxEvent nếu có DB
+    // 1. Thử lưu vào Prisma OutboxEvent nếu có DB (lấy DB id chuẩn khi thành công)
     try {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dto.aggregateId);
-      await prisma.outboxEvent.create({
+      const created = await prisma.outboxEvent.create({
         data: {
           id: crypto.randomUUID(),
           aggregateType: dto.aggregateType,
@@ -68,9 +72,14 @@ export class OutboxService {
           processedAt: dto.processedAt ? new Date(dto.processedAt) : null,
         },
       });
+      dto.id = created.id;
+      dto.createdAt = created.createdAt.toISOString();
     } catch {
       // Resilience fallback khi database offline (Zero-Crash Principle)
     }
+
+    // 2. Lưu vào Memory Cache theo id thực tế
+    this.memoryOutbox.set(dto.id, dto);
 
     return dto;
   }
@@ -108,8 +117,13 @@ export class OutboxService {
   /**
    * Quét và xử lý các sự kiện hàng đợi Transactional Outbox (Batch Processing & Worker Dispatch)
    */
-  public static async processBatch(limit = 10): Promise<ProcessOutboxBatchResponse> {
+  public static async processBatch(
+    limit = 10,
+    options?: { respectBackoff?: boolean }
+  ): Promise<ProcessOutboxBatchResponse> {
     const startTime = Date.now();
+    const respectBackoff = Boolean(options?.respectBackoff);
+    const staleThresholdMs = 5 * 60 * 1000;
     const results: Array<{
       id: string;
       eventType: string;
@@ -123,36 +137,74 @@ export class OutboxService {
     let pendingEvents: Array<any> = [];
     let isDbAvailable = false;
 
-    // 1. Thử lấy danh sách PENDING từ DB
+    // 1. Thử phục hồi PROCESSING bị kẹt & lấy danh sách PENDING từ DB
     try {
-      pendingEvents = await prisma.outboxEvent.findMany({
+      const staleBefore = new Date(Date.now() - staleThresholdMs);
+      await prisma.outboxEvent.updateMany({
+        where: {
+          status: "PROCESSING",
+          createdAt: { lt: staleBefore },
+        },
+        data: { status: "PENDING" },
+      });
+
+      const fetched = await prisma.outboxEvent.findMany({
         where: { status: "PENDING" },
         orderBy: { createdAt: "asc" },
-        take: limit,
+        take: respectBackoff ? Math.max(limit * 3, limit) : limit,
       });
+      pendingEvents = fetched
+        .filter((e) => !respectBackoff || (this.retryAfterMap.get(e.id) || 0) <= Date.now())
+        .slice(0, limit);
       isDbAvailable = true;
     } catch {
+      // Phục hồi PROCESSING bị kẹt trong memory
+      const nowMs = Date.now();
+      for (const evt of this.memoryOutbox.values()) {
+        if (evt.status === "PROCESSING") {
+          const startedAt = this.processingStartedAt.get(evt.id);
+          if (startedAt && nowMs - startedAt > staleThresholdMs) {
+            evt.status = "PENDING";
+            this.processingStartedAt.delete(evt.id);
+          }
+        }
+      }
       // Fallback lấy từ memoryOutbox
       pendingEvents = Array.from(this.memoryOutbox.values())
-        .filter((e) => e.status === "PENDING")
+        .filter(
+          (e) =>
+            e.status === "PENDING" &&
+            (!respectBackoff || (this.retryAfterMap.get(e.id) || 0) <= nowMs)
+        )
         .slice(0, limit);
     }
 
-    // 2. Dispatch từng sự kiện trong lô
+    // 2. Claim nguyên tử và dispatch từng sự kiện trong lô
     for (const event of pendingEvents) {
       if (isDbAvailable) {
         try {
-          await prisma.outboxEvent.update({
-            where: { id: event.id },
+          const claim = await prisma.outboxEvent.updateMany({
+            where: { id: event.id, status: "PENDING" },
             data: { status: "PROCESSING" },
           });
-        } catch {}
+          if (claim.count === 0) {
+            continue; // Worker khác đã claim sự kiện này
+          }
+        } catch {
+          continue;
+        }
+      } else {
+        const memCheck = this.memoryOutbox.get(event.id);
+        if (memCheck && memCheck.status !== "PENDING") {
+          continue;
+        }
       }
 
       const memEvt = this.memoryOutbox.get(event.id);
       if (memEvt) {
         memEvt.status = "PROCESSING";
       }
+      this.processingStartedAt.set(event.id, Date.now());
 
       try {
         await this.handleOutboxEvent(event);
@@ -171,6 +223,8 @@ export class OutboxService {
           memEvt.status = "PROCESSED";
           memEvt.processedAt = now.toISOString();
         }
+        this.retryAfterMap.delete(event.id);
+        this.processingStartedAt.delete(event.id);
 
         processedCount++;
         results.push({
@@ -183,6 +237,14 @@ export class OutboxService {
         const nextRetry = (event.retryCount || 0) + 1;
         const isPermanentlyFailed = nextRetry >= 3;
         const newStatus = isPermanentlyFailed ? "FAILED" : "PENDING";
+        this.processingStartedAt.delete(event.id);
+
+        if (!isPermanentlyFailed) {
+          const backoffMs = Math.min(60_000, 1000 * Math.pow(2, nextRetry - 1));
+          this.retryAfterMap.set(event.id, Date.now() + backoffMs);
+        } else {
+          this.retryAfterMap.delete(event.id);
+        }
 
         if (isDbAvailable) {
           try {
@@ -350,16 +412,49 @@ export class OutboxService {
     this.memoryNotifications.set(notif.userId, list);
 
     try {
-      await prisma.notification.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId: notif.userId.length === 36 ? notif.userId : crypto.randomUUID(),
-          title: notif.title,
-          content: notif.content,
-          type: notif.type as any,
-          isRead: false,
-        },
-      });
+      let resolvedUserId: string | null = null;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        notif.userId
+      );
+
+      if (isUuid) {
+        const directUser = await prisma.user.findUnique({
+          where: { id: notif.userId },
+          select: { id: true },
+        });
+        if (directUser) {
+          resolvedUserId = directUser.id;
+        }
+      }
+
+      if (!resolvedUserId) {
+        const emp = await prisma.employee.findFirst({
+          where: isUuid
+            ? { OR: [{ id: notif.userId }, { userId: notif.userId }, { employeeCode: notif.userId }] }
+            : { employeeCode: notif.userId },
+          select: { userId: true },
+        });
+        if (emp?.userId) {
+          resolvedUserId = emp.userId;
+        }
+      }
+
+      if (resolvedUserId) {
+        await prisma.notification.create({
+          data: {
+            id: crypto.randomUUID(),
+            userId: resolvedUserId,
+            title: notif.title,
+            content: notif.content,
+            type: notif.type as any,
+            isRead: false,
+          },
+        });
+      } else {
+        console.warn(
+          `[OutboxService] Skip DB notification insert: cannot resolve User.id for "${notif.userId}"`
+        );
+      }
     } catch {}
   }
 
@@ -456,16 +551,19 @@ export class OutboxService {
    * Kích hoạt retry một sự kiện Outbox (reset status PENDING)
    */
   public static async retryOutboxEvent(id: string): Promise<OutboxEventDto> {
+    this.retryAfterMap.delete(id);
+    this.processingStartedAt.delete(id);
     const mem = this.memoryOutbox.get(id);
     if (mem) {
       mem.status = "PENDING";
+      mem.retryCount = 0;
       mem.lastError = null;
     }
 
     try {
       const updated = await prisma.outboxEvent.update({
         where: { id },
-        data: { status: "PENDING", lastError: null },
+        data: { status: "PENDING", retryCount: 0, lastError: null },
       });
       return {
         id: updated.id,
@@ -491,13 +589,14 @@ export class OutboxService {
   /**
    * Lấy danh sách thông báo của người dùng đăng nhập
    */
-  public static async getMyNotifications(userId: string): Promise<NotificationListResponse> {
+  public static async getMyNotifications(userId: string, limit = 30): Promise<NotificationListResponse> {
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit || 30)));
     try {
       const [notifications, unreadCount] = await Promise.all([
         prisma.notification.findMany({
           where: { userId },
           orderBy: { createdAt: "desc" },
-          take: 30,
+          take: safeLimit,
         }),
         prisma.notification.count({
           where: { userId, isRead: false },
@@ -520,7 +619,7 @@ export class OutboxService {
     } catch {
       const list = this.memoryNotifications.get(userId) || [];
       return {
-        notifications: list.map((n) => ({
+        notifications: list.slice(0, safeLimit).map((n) => ({
           id: n.id,
           userId: n.userId,
           title: n.title,
@@ -609,5 +708,7 @@ export class OutboxService {
     this.memoryOutbox.clear();
     this.memoryNotifications.clear();
     this.customDispatchHandlers.clear();
+    this.retryAfterMap.clear();
+    this.processingStartedAt.clear();
   }
 }

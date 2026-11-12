@@ -13,8 +13,10 @@ function normalizeRoutePath(originalUrl: string): string {
       /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
       ":id"
     )
-    .replace(/job-[0-9]+-[0-9a-f]+/gi, ":id")
-    .replace(/usr-[a-z0-9-]+/gi, ":id")
+    .replace(
+      /\/(job-[0-9]+-[0-9a-f]+|usr-[a-z0-9-]+|(?:eval|period|outbox|rd|pg)-[a-z0-9_-]+)(?=\/|$)/gi,
+      "/:id"
+    )
     .replace(/DAU[0-9]{6}/gi, ":code")
     .replace(/\/([0-9]+)(\/|$)/g, "/:id$2");
 }

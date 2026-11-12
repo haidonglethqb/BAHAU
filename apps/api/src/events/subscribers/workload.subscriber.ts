@@ -9,6 +9,14 @@ import type {
 import { DomainEventBus } from "../domain-event-bus.js";
 import { WorkloadService } from "../../services/workload.service.js";
 
+const processedResearchHours = new Set<string>();
+const processedSupervisionHours = new Set<string>();
+
+export function resetWorkloadSubscriberState(): void {
+  processedResearchHours.clear();
+  processedSupervisionHours.clear();
+}
+
 /**
  * Subscriber phụ trách phân hệ Định mức Giờ chuẩn & Khối lượng Công tác Giảng dạy (Workload Engine)
  * Lắng nghe các Domain Event để tự động điều chỉnh định mức giờ chuẩn (216h, 50% tập sự, giờ NCKH, giờ hướng dẫn SĐH).
@@ -43,8 +51,14 @@ export function registerWorkloadSubscribers(): void {
     DOMAIN_EVENTS.RD_PROJECT_APPROVED,
     (event: DomainEvent<RdProjectApprovedPayload>) => {
       const payload = event.payload;
+      const sourceId = payload.projectId || event.aggregateId || event.id;
       for (const member of payload.members) {
         if (member.convertedResearchHours > 0) {
+          const empKey = member.employeeCode || member.employeeId;
+          const dedupKey = `${sourceId}:${empKey}`;
+          if (processedResearchHours.has(dedupKey)) continue;
+          processedResearchHours.add(dedupKey);
+
           WorkloadService.addResearchHours(member.employeeCode, member.convertedResearchHours);
           if (member.employeeId && member.employeeId !== member.employeeCode) {
             WorkloadService.addResearchHours(member.employeeId, member.convertedResearchHours);
@@ -59,8 +73,14 @@ export function registerWorkloadSubscribers(): void {
     DOMAIN_EVENTS.POSTGRAD_DEGREE_AWARDED,
     (event: DomainEvent<PostgradDegreeAwardedPayload>) => {
       const payload = event.payload;
+      const sourceId = payload.studentId || event.aggregateId || event.id;
       for (const supervisor of payload.supervisors) {
         if (supervisor.convertedHours > 0) {
+          const empKey = supervisor.employeeCode || supervisor.employeeId;
+          const dedupKey = `${sourceId}:${empKey}`;
+          if (processedSupervisionHours.has(dedupKey)) continue;
+          processedSupervisionHours.add(dedupKey);
+
           WorkloadService.addSupervisionHours(supervisor.employeeCode, supervisor.convertedHours);
           if (supervisor.employeeId && supervisor.employeeId !== supervisor.employeeCode) {
             WorkloadService.addSupervisionHours(supervisor.employeeId, supervisor.convertedHours);

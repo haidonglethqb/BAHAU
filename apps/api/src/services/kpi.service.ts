@@ -211,9 +211,47 @@ export const DEFAULT_STAFF_CRITERIA = [
 ];
 
 export class KpiService {
-  // Kho lưu trữ trong bộ nhớ đảm bảo 100% tính sẵn sàng độc lập (Zero-crash Resilience)
+  // Kho lưu trữ trong bộ nhớ keyed theo `${periodId}:${employeeId}` + index theo evaluation.id
   private static inMemoryEvaluations = new Map<string, KpiEvaluationDto>();
+  private static inMemoryEvaluationIdIndex = new Map<string, string>();
+  private static inMemoryEvaluationItems = new Map<string, any[]>();
+  private static inMemoryPeriods = new Map<string, KpiPeriodDto>();
   private static inMemoryPeriodSigned = new Map<string, { signature: string; signedAt: string }>();
+
+  private static makeEvalKey(periodId: string, employeeId: string): string {
+    return `${periodId}:${employeeId}`;
+  }
+
+  private static upsertInMemoryEvaluation(item: KpiEvaluationDto): void {
+    const key = this.makeEvalKey(item.periodId, item.employeeId);
+    this.inMemoryEvaluations.set(key, item);
+    this.inMemoryEvaluationIdIndex.set(item.id, key);
+  }
+
+  private static findInMemoryEvaluationById(evaluationId: string): KpiEvaluationDto | undefined {
+    const key = this.inMemoryEvaluationIdIndex.get(evaluationId);
+    if (key) {
+      return this.inMemoryEvaluations.get(key);
+    }
+    return this.inMemoryEvaluations.get(evaluationId);
+  }
+
+  private static findInMemoryEvaluationForUser(
+    periodId: string,
+    employeeId: string,
+    employeeCode?: string | null
+  ): KpiEvaluationDto | undefined {
+    const direct = this.inMemoryEvaluations.get(this.makeEvalKey(periodId, employeeId));
+    if (direct) return direct;
+    if (employeeCode) {
+      for (const item of this.inMemoryEvaluations.values()) {
+        if (item.periodId === periodId && item.employeeCode === employeeCode) {
+          return item;
+        }
+      }
+    }
+    return undefined;
+  }
 
   // Tích lũy điểm Trụ cột II từ Đề tài NCKH & Dự án tư vấn thiết kế đã nghiệm thu
   private static accumulatedRdPoints = new Map<string, number>();
@@ -475,12 +513,26 @@ export class KpiService {
       },
     ];
 
+    this.inMemoryPeriods.set("00000000-0000-0000-0000-000000000001", {
+      id: "00000000-0000-0000-0000-000000000001",
+      code: "KPI-2025-2026",
+      name: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
+      academicYear: "2025-2026",
+      semester: null,
+      startDate: "2026-06-01",
+      endDate: "2026-10-31",
+      status: "OPEN",
+      totalEvaluations: mockList.length,
+      submittedCount: mockList.filter((e) => e.status !== "DRAFT").length,
+      finalizedCount: mockList.filter((e) => e.status === "FINALIZED").length,
+      isPkiSigned: false,
+      pkiSignature: null,
+      pkiSignedAt: null,
+      createdAt: "2026-06-01T00:00:00.000Z",
+    });
+
     for (const item of mockList) {
-      this.inMemoryEvaluations.set(item.id, item);
-      this.inMemoryEvaluations.set(item.employeeId, item);
-      if (item.employeeCode) {
-        this.inMemoryEvaluations.set(item.employeeCode, item);
-      }
+      this.upsertInMemoryEvaluation(item);
     }
   }
 
@@ -544,27 +596,24 @@ export class KpiService {
       return result;
     } catch {
       // Resilience fallback
-      const defaultPeriodId = "00000000-0000-0000-0000-000000000001";
-      const pkiInfo = this.inMemoryPeriodSigned.get(defaultPeriodId);
-      return [
-        {
-          id: defaultPeriodId,
-          code: "KPI-2025-2026",
-          name: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
-          academicYear: "2025-2026",
-          semester: null,
-          startDate: "2026-06-01",
-          endDate: "2026-10-31",
-          status: "OPEN",
-          totalEvaluations: 5,
-          submittedCount: 4,
-          finalizedCount: 1,
+      const allPeriods = Array.from(this.inMemoryPeriods.values()).map((p) => {
+        const pkiInfo = this.inMemoryPeriodSigned.get(p.id);
+        const periodEvals = Array.from(this.inMemoryEvaluations.values()).filter(
+          (e) => e.periodId === p.id
+        );
+        return {
+          ...p,
+          totalEvaluations: periodEvals.length || p.totalEvaluations,
+          submittedCount:
+            periodEvals.filter((e) => e.status !== "DRAFT").length || p.submittedCount,
+          finalizedCount:
+            periodEvals.filter((e) => e.status === "FINALIZED").length || p.finalizedCount,
           isPkiSigned: Boolean(pkiInfo),
-          pkiSignature: pkiInfo?.signature || null,
-          pkiSignedAt: pkiInfo?.signedAt || null,
-          createdAt: "2026-06-01T00:00:00.000Z",
-        },
-      ];
+          pkiSignature: pkiInfo?.signature || p.pkiSignature || null,
+          pkiSignedAt: pkiInfo?.signedAt || p.pkiSignedAt || null,
+        };
+      });
+      return allPeriods;
     }
   }
 
@@ -604,7 +653,7 @@ export class KpiService {
         },
       });
 
-      return {
+      const dto: KpiPeriodDto = {
         id: period.id,
         code: period.code,
         name: period.name,
@@ -619,9 +668,11 @@ export class KpiService {
         isPkiSigned: false,
         createdAt: period.createdAt.toISOString(),
       };
+      this.inMemoryPeriods.set(dto.id, dto);
+      return dto;
     } catch (err: any) {
       if (err instanceof AppError) throw err;
-      return {
+      const dto: KpiPeriodDto = {
         id: `period-${Date.now()}`,
         code: input.code,
         name: input.name,
@@ -636,6 +687,8 @@ export class KpiService {
         isPkiSigned: false,
         createdAt: new Date().toISOString(),
       };
+      this.inMemoryPeriods.set(dto.id, dto);
+      return dto;
     }
   }
 
@@ -714,6 +767,170 @@ export class KpiService {
    * Xem hoặc tự động khởi tạo phiếu đánh giá cá nhân (Không gian Cá nhân)
    * Tự động kết nối Trục 1 Workload để nạp giờ chuẩn Studio
    */
+  private static async resolveActivePeriodId(periodIdOpt?: string): Promise<string> {
+    if (periodIdOpt && periodIdOpt !== "undefined") {
+      return periodIdOpt;
+    }
+    try {
+      const activeDbPeriod = await prisma.kpiPeriod.findFirst({
+        where: { status: KpiPeriodStatus.OPEN },
+        orderBy: { createdAt: "desc" },
+      });
+      if (activeDbPeriod) return activeDbPeriod.id;
+    } catch {
+      // fallback to memory
+    }
+    for (const p of this.inMemoryPeriods.values()) {
+      if (p.status === "OPEN") return p.id;
+    }
+    return "00000000-0000-0000-0000-000000000001";
+  }
+
+  private static async ensurePeriodIsOpen(periodId: string): Promise<void> {
+    if (this.inMemoryPeriodSigned.has(periodId)) {
+      throw new AppError(
+        409,
+        "PERIOD_CLOSED",
+        "Kỳ đánh giá đã ký số chốt kết quả, không thể chỉnh sửa."
+      );
+    }
+    const memPeriod = this.inMemoryPeriods.get(periodId);
+    if (memPeriod && memPeriod.status !== "OPEN") {
+      throw new AppError(
+        409,
+        "PERIOD_CLOSED",
+        `Kỳ đánh giá đã đóng (${memPeriod.status}), không thể chỉnh sửa.`
+      );
+    }
+    try {
+      const dbPeriod = await prisma.kpiPeriod.findUnique({
+        where: { id: periodId },
+        select: { status: true },
+      });
+      if (dbPeriod && dbPeriod.status !== KpiPeriodStatus.OPEN) {
+        throw new AppError(
+          409,
+          "PERIOD_CLOSED",
+          `Kỳ đánh giá đã đóng (${dbPeriod.status}), không thể chỉnh sửa.`
+        );
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+    }
+  }
+
+  private static async resolveTemplateForEmployee(
+    employeeId: string,
+    currentUser: AuthUser,
+    forcedTargetType?: "LECTURER" | "STAFF"
+  ): Promise<KpiTemplateDto> {
+    let targetType: "LECTURER" | "STAFF" = forcedTargetType || "LECTURER";
+
+    if (!forcedTargetType) {
+      let resolvedFromDb = false;
+      try {
+        const emp = await prisma.employee.findUnique({
+          where: { id: employeeId },
+          include: {
+            assignments: {
+              where: { status: "ACTIVE" },
+              include: { position: true },
+              take: 1,
+            },
+          },
+        });
+        const pos = emp?.assignments?.[0]?.position;
+        if (pos) {
+          resolvedFromDb = true;
+          const adminCodes = new Set([
+            "CHUYEN_VIEN",
+            "NHAN_VIEN",
+            "KE_TOAN",
+            "VAN_THU",
+            "THU_KY",
+            "TRUONG_PHONG",
+            "PHO_TRUONG_PHONG",
+          ]);
+          if (pos.positionType === "ADMINISTRATIVE" || adminCodes.has(pos.code)) {
+            targetType = "STAFF";
+          } else {
+            targetType = "LECTURER";
+          }
+        }
+      } catch {
+        // fallback to roles
+      }
+
+      if (!resolvedFromDb) {
+        const isTeachingRole = currentUser.roles.some((r) =>
+          ["ROLE_LECTURER", "ROLE_DEAN"].includes(r)
+        );
+        const isStaffRole = currentUser.roles.some((r) =>
+          ["ROLE_HR_OFFICER", "ROLE_STAFF"].includes(r)
+        );
+        if (!isTeachingRole && isStaffRole) {
+          targetType = "STAFF";
+        }
+      }
+    }
+
+    try {
+      const dbTemplate = await prisma.kpiTemplate.findFirst({
+        where: { targetType: targetType as KpiTargetType },
+        include: {
+          criteria: { orderBy: { orderIndex: "asc" } },
+        },
+      });
+      if (dbTemplate && dbTemplate.criteria.length > 0) {
+        return {
+          id: dbTemplate.id,
+          code: dbTemplate.code,
+          name: dbTemplate.name,
+          targetType: dbTemplate.targetType as any,
+          totalMaxScore: Number(dbTemplate.totalMaxScore),
+          criteria: dbTemplate.criteria.map((c) => ({
+            id: c.id,
+            templateId: c.templateId,
+            orderIndex: c.orderIndex,
+            category: c.category,
+            pillar:
+              c.category.toUpperCase().includes("NCKH") || c.category.toUpperCase().includes("RESEARCH")
+                ? ("RESEARCH" as const)
+                : c.category.toUpperCase().includes("ĐÀO TẠO") || c.category.toUpperCase().includes("TEACHING")
+                  ? ("TEACHING" as const)
+                  : ("SERVICE" as const),
+            name: c.name,
+            description: c.description,
+            maxScore: Number(c.maxScore),
+            weight: Number(c.weight),
+          })),
+        };
+      }
+    } catch {
+      // fallback to defaults
+    }
+
+    if (targetType === "STAFF") {
+      return {
+        id: "00000000-0000-0000-0000-000000000002",
+        code: "KPI_STAFF_DIGNITY",
+        name: "Bộ Tiêu chuẩn Đánh giá Chuyên viên & Hành chính DAU",
+        targetType: "STAFF",
+        totalMaxScore: 100,
+        criteria: DEFAULT_STAFF_CRITERIA,
+      };
+    }
+
+    return {
+      id: "00000000-0000-0000-0000-000000000001",
+      code: "KPI_LECTURER_3PILLARS",
+      name: "Bộ Tiêu chuẩn 3 Trụ Cột Đánh giá Giảng viên DAU",
+      targetType: "LECTURER",
+      totalMaxScore: 100,
+      criteria: DEFAULT_LECTURER_CRITERIA,
+    };
+  }
+
   public static async getMyEvaluation(
     periodIdQuery: string | undefined,
     currentUser: AuthUser
@@ -723,12 +940,148 @@ export class KpiService {
       throw new AppError(400, "BAD_REQUEST", "Tài khoản chưa được gán với hồ sơ CBGV.");
     }
 
-    // 1. Kiểm tra kho in-memory
-    const memEval =
-      this.inMemoryEvaluations.get(employeeId) ||
-      (currentUser.employeeCode ? this.inMemoryEvaluations.get(currentUser.employeeCode) : undefined);
+    const periodId = await this.resolveActivePeriodId(periodIdQuery);
 
-    // 2. Kết nối Workload Service để lấy số giờ giảng dạy và vượt giờ Studio
+    try {
+      const dbEval = await prisma.kpiEvaluation.findUnique({
+        where: { periodId_employeeId: { periodId, employeeId } },
+        include: {
+          period: true,
+          template: { include: { criteria: { orderBy: { orderIndex: "asc" } } } },
+          items: { include: { criterion: true } },
+          employee: {
+            include: {
+              assignments: {
+                where: { status: "ACTIVE" },
+                include: { unit: true, position: true },
+                take: 1,
+              },
+            },
+          },
+        },
+      });
+
+      if (dbEval) {
+        const template = await this.resolveTemplateForEmployee(
+          employeeId,
+          currentUser,
+          dbEval.template.targetType as "LECTURER" | "STAFF"
+        );
+        const itemByCrit = new Map(dbEval.items.map((it) => [it.criterionId, it]));
+        let teachingScore = 0;
+        let researchScore = 0;
+        let serviceScore = 0;
+
+        const items = (template.criteria || []).map((crit) => {
+          const saved = itemByCrit.get(crit.id);
+          const effective = Number(
+            saved?.finalScore ?? saved?.managerScore ?? saved?.selfScore ?? 0
+          );
+          if (crit.pillar === "TEACHING") teachingScore += effective;
+          else if (crit.pillar === "RESEARCH") researchScore += effective;
+          else serviceScore += effective;
+
+          return {
+            id: saved?.id || `item-${crit.id}`,
+            criterionId: crit.id,
+            criterionName: crit.name,
+            category: crit.category,
+            pillar: crit.pillar,
+            maxScore: crit.maxScore,
+            selfScore: saved?.selfScore != null ? Number(saved.selfScore) : null,
+            managerScore: saved?.managerScore != null ? Number(saved.managerScore) : null,
+            finalScore: saved?.finalScore != null ? Number(saved.finalScore) : null,
+            selfNote: saved?.selfNote ?? null,
+            evidenceUrl: saved?.evidenceUrl ?? null,
+            managerNote: saved?.managerNote ?? null,
+          };
+        });
+
+        let workloadHours = { actualHours: 0, quotaHours: 270, overtimeHours: 0 };
+        try {
+          const settlement = await WorkloadService.calculateSettlement(employeeId);
+          workloadHours = {
+            actualHours: settlement.totalActualConvertedHours,
+            quotaHours: settlement.effectiveQuota,
+            overtimeHours: settlement.overtimeHours,
+          };
+        } catch {
+          // ignore
+        }
+
+        const evalDto: KpiEvaluationDto = {
+          id: dbEval.id,
+          periodId: dbEval.periodId,
+          periodName: dbEval.period.name,
+          academicYear: dbEval.period.academicYear,
+          templateId: dbEval.templateId,
+          templateName: dbEval.template.name,
+          targetType: dbEval.template.targetType as any,
+          employeeId: dbEval.employeeId,
+          employeeCode: dbEval.employee.employeeCode,
+          employeeName: dbEval.employee.fullName,
+          unitName: dbEval.employee.assignments?.[0]?.unit?.name || "Đơn vị",
+          positionName: dbEval.employee.assignments?.[0]?.position?.name || "Cán bộ",
+          status: dbEval.status as any,
+          totalSelfScore: dbEval.totalSelfScore != null ? Number(dbEval.totalSelfScore) : null,
+          totalManagerScore: dbEval.totalManagerScore != null ? Number(dbEval.totalManagerScore) : null,
+          totalFinalScore: dbEval.totalFinalScore != null ? Number(dbEval.totalFinalScore) : null,
+          ranking: dbEval.ranking as any,
+          teachingScore,
+          researchScore,
+          serviceScore,
+          managerComment: dbEval.managerComment,
+          councilComment: dbEval.councilComment,
+          submittedAt: dbEval.submittedAt?.toISOString() ?? null,
+          reviewedAt: dbEval.reviewedAt?.toISOString() ?? null,
+          finalizedAt: dbEval.finalizedAt?.toISOString() ?? null,
+          createdAt: dbEval.createdAt.toISOString(),
+        };
+        this.upsertInMemoryEvaluation(evalDto);
+        this.inMemoryEvaluationItems.set(evalDto.id, items);
+
+        return {
+          evaluation: evalDto,
+          template,
+          items,
+          pillarBreakdown: {
+            teaching: {
+              score: teachingScore,
+              maxScore: template.targetType === "LECTURER" ? 50 : 0,
+              quotaHours: workloadHours.quotaHours,
+              actualHours: workloadHours.actualHours,
+              overtimeHours: workloadHours.overtimeHours,
+            },
+            research: {
+              score: researchScore,
+              maxScore: template.targetType === "LECTURER" ? 35 : 0,
+              papersCount: 0,
+              projectsCount: 0,
+            },
+            service: {
+              score: serviceScore,
+              maxScore: template.targetType === "LECTURER" ? 15 : 100,
+              activitiesCount: 0,
+            },
+          },
+        };
+      }
+    } catch {
+      // Fallback to memory store
+    }
+
+    const memEval = this.findInMemoryEvaluationForUser(
+      periodId,
+      employeeId,
+      currentUser.employeeCode
+    );
+
+    const template = await this.resolveTemplateForEmployee(
+      employeeId,
+      currentUser,
+      memEval?.targetType as "LECTURER" | "STAFF" | undefined
+    );
+
     let workloadHours = {
       actualHours: 324.0,
       quotaHours: 270.0,
@@ -746,105 +1099,87 @@ export class KpiService {
       // Keep sensible default for architecture faculty
     }
 
-    // Tạo items tương ứng với template
-    const items = DEFAULT_LECTURER_CRITERIA.map((crit) => {
-      let selfScore = 0;
-      let managerScore = 0;
-      let finalScore = 0;
+    // Tạo items tương ứng với template và khôi phục điểm thực đã lưu (không giả lập 0.9 * maxScore)
+    const savedItems = memEval ? this.inMemoryEvaluationItems.get(memEval.id) || [] : [];
+    const savedByCrit = new Map(savedItems.map((it) => [it.criterionId, it]));
 
-      if (crit.id === "00000000-0000-0000-0001-000000000001") {
-        // Định mức giờ giảng Studio: Vượt giờ -> đạt tối đa 25 điểm
-        selfScore = workloadHours.actualHours >= workloadHours.quotaHours ? 25 : 20;
-        managerScore = selfScore;
-        finalScore = selfScore;
-      } else if (crit.id === "00000000-0000-0001-000000000002") {
-        selfScore = 15;
-        managerScore = 15;
-        finalScore = 15;
-      } else {
-        selfScore = Math.min(crit.maxScore, crit.maxScore * 0.9);
-        managerScore = selfScore;
-        finalScore = selfScore;
-      }
-
+    const items = (template.criteria || []).map((crit) => {
+      const saved = savedByCrit.get(crit.id);
       return {
-        id: `item-${crit.id}`,
+        id: saved?.id || `item-${crit.id}`,
         criterionId: crit.id,
         criterionName: crit.name,
         category: crit.category,
         pillar: crit.pillar,
         maxScore: crit.maxScore,
-        selfScore: memEval?.totalSelfScore ? selfScore : null,
-        managerScore: memEval?.totalManagerScore ? managerScore : null,
-        finalScore: memEval?.totalFinalScore ? finalScore : null,
-        selfNote: crit.id === "00000000-0000-0001-000000000001"
-          ? `Tự động đồng bộ từ Trục 1 Workload: Hoàn thành ${workloadHours.actualHours}/${workloadHours.quotaHours} giờ chuẩn (Vượt ${workloadHours.overtimeHours}h)`
-          : null,
-        evidenceUrl: "https://dau.edu.vn/portfolios/academic-proof",
+        selfScore: saved?.selfScore ?? null,
+        managerScore: saved?.managerScore ?? null,
+        finalScore: saved?.finalScore ?? null,
+        selfNote:
+          saved?.selfNote ??
+          (crit.id === "00000000-0000-0000-0001-000000000001"
+            ? `Tự động đồng bộ từ Trục 1 Workload: Hoàn thành ${workloadHours.actualHours}/${workloadHours.quotaHours} giờ chuẩn (Vượt ${workloadHours.overtimeHours}h)`
+            : null),
+        evidenceUrl: saved?.evidenceUrl ?? null,
+        managerNote: saved?.managerNote ?? null,
       };
     });
 
-    const teachingScore = memEval?.teachingScore ?? 48.0;
-    const researchScore = memEval?.researchScore ?? 32.0;
-    const serviceScore = memEval?.serviceScore ?? 14.0;
+    const teachingScore = memEval?.teachingScore ?? 0;
+    const researchScore = memEval?.researchScore ?? 0;
+    const serviceScore = memEval?.serviceScore ?? 0;
     const totalScore = teachingScore + researchScore + serviceScore;
 
     const pillarBreakdown: AcademicPillarBreakdownDto = {
       teaching: {
         score: teachingScore,
-        maxScore: 50,
+        maxScore: template.targetType === "LECTURER" ? 50 : 0,
         quotaHours: workloadHours.quotaHours,
         actualHours: workloadHours.actualHours,
         overtimeHours: workloadHours.overtimeHours,
       },
       research: {
         score: researchScore,
-        maxScore: 35,
-        papersCount: 2,
-        projectsCount: 1,
+        maxScore: template.targetType === "LECTURER" ? 35 : 0,
+        papersCount: memEval ? 2 : 0,
+        projectsCount: memEval ? 1 : 0,
       },
       service: {
         score: serviceScore,
-        maxScore: 15,
-        activitiesCount: 3,
+        maxScore: template.targetType === "LECTURER" ? 15 : 100,
+        activitiesCount: memEval ? 3 : 0,
       },
     };
 
+    const memPeriod = this.inMemoryPeriods.get(periodId);
     const evaluationDto: KpiEvaluationDto = memEval || {
-      id: `eval-${employeeId}`,
-      periodId: periodIdQuery || "00000000-0000-0000-0000-000000000001",
-      periodName: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
-      academicYear: "2025-2026",
-      templateId: "00000000-0000-0000-0000-000000000001",
-      templateName: "Tiêu chuẩn Đánh giá 3 Trụ Cột Giảng viên DAU",
-      targetType: "LECTURER",
-      employeeId: employeeId,
+      id: `eval-${periodId}-${employeeId}`,
+      periodId,
+      periodName: memPeriod?.name || "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
+      academicYear: memPeriod?.academicYear || "2025-2026",
+      templateId: template.id,
+      templateName: template.name,
+      targetType: template.targetType,
+      employeeId,
       employeeCode: currentUser.employeeCode || "DAU260001",
       employeeName: currentUser.fullName || "CBGV",
       unitName: "Khoa Kiến trúc",
-      positionName: "Giảng viên",
+      positionName: template.targetType === "STAFF" ? "Chuyên viên" : "Giảng viên",
       status: "DRAFT",
-      totalSelfScore: totalScore,
+      totalSelfScore: memEval ? totalScore : null,
       totalManagerScore: null,
       totalFinalScore: null,
-      ranking: this.calculateRanking(totalScore),
+      ranking: null,
       teachingScore,
       researchScore,
       serviceScore,
-      honorTitle: "LAO_DONG_TIEN_TIEN",
+      honorTitle: "NONE",
       createdAt: new Date().toISOString(),
     };
 
     return {
       evaluation: evaluationDto,
-      template: {
-        id: "00000000-0000-0000-0000-000000000001",
-        code: "KPI_LECTURER_3PILLARS",
-        name: "Bộ Tiêu chuẩn 3 Trụ Cột Đánh giá Giảng viên DAU",
-        targetType: "LECTURER",
-        totalMaxScore: 100,
-        criteria: DEFAULT_LECTURER_CRITERIA,
-      },
+      template,
       items,
       pillarBreakdown,
     };
@@ -854,7 +1189,7 @@ export class KpiService {
    * Nộp hoặc lưu nháp phiếu tự đánh giá cá nhân (Bước 2)
    */
   public static async submitSelfEvaluation(
-    periodId: string,
+    periodIdOpt: string | undefined,
     input: SubmitSelfEvaluationInput,
     currentUser: AuthUser
   ): Promise<KpiEvaluationDetailDto> {
@@ -863,49 +1198,187 @@ export class KpiService {
       throw new AppError(400, "BAD_REQUEST", "Tài khoản chưa được liên kết hồ sơ CBGV.");
     }
 
+    const periodId = await this.resolveActivePeriodId(periodIdOpt);
+    await this.ensurePeriodIsOpen(periodId);
+
+    const existingMem = this.findInMemoryEvaluationForUser(
+      periodId,
+      employeeId,
+      currentUser.employeeCode
+    );
+
+    const template = await this.resolveTemplateForEmployee(
+      employeeId,
+      currentUser,
+      existingMem?.targetType as "LECTURER" | "STAFF" | undefined
+    );
+    const criteriaMap = new Map((template.criteria || []).map((c) => [c.id, c]));
+
+    const seenCriteria = new Set<string>();
     let totalSelfScore = 0;
     let teachingScore = 0;
     let researchScore = 0;
     let serviceScore = 0;
 
-    const criteriaMap = new Map(DEFAULT_LECTURER_CRITERIA.map((c) => [c.id, c]));
-
     for (const item of input.items) {
-      const crit = criteriaMap.get(item.criterionId);
-      if (crit && item.selfScore > crit.maxScore) {
+      if (seenCriteria.has(item.criterionId)) {
         throw new AppError(
           422,
           "VALIDATION_ERROR",
-          `Điểm tự chấm (${item.selfScore}) cho tiêu chí "${crit.name}" vượt quá điểm tối đa (${crit.maxScore}).`
+          `Tiêu chí (${item.criterionId}) bị trùng lặp trong phiếu đánh giá.`
         );
       }
+      seenCriteria.add(item.criterionId);
+
+      const crit = criteriaMap.get(item.criterionId);
+      if (!crit) {
+        throw new AppError(
+          422,
+          "VALIDATION_ERROR",
+          `Tiêu chí (${item.criterionId}) không thuộc biểu mẫu ${template.name}.`
+        );
+      }
+      if (item.selfScore < 0 || item.selfScore > crit.maxScore) {
+        throw new AppError(
+          422,
+          "VALIDATION_ERROR",
+          `Điểm tự chấm (${item.selfScore}) cho tiêu chí "${crit.name}" không hợp lệ (0 - ${crit.maxScore}).`
+        );
+      }
+      if (!input.isDraft && crit.pillar === "RESEARCH" && item.selfScore > 0) {
+        const evidence = item.evidenceUrl?.trim();
+        if (!evidence) {
+          throw new AppError(
+            422,
+            "VALIDATION_ERROR",
+            `Tiêu chí NCKH "${crit.name}" yêu cầu minh chứng (evidenceUrl) khi nộp đánh giá.`
+          );
+        }
+      }
+
       totalSelfScore += item.selfScore;
-      if (crit?.pillar === "TEACHING") teachingScore += item.selfScore;
-      else if (crit?.pillar === "RESEARCH") researchScore += item.selfScore;
-      else if (crit?.pillar === "SERVICE") serviceScore += item.selfScore;
+      if (crit.pillar === "TEACHING") teachingScore += item.selfScore;
+      else if (crit.pillar === "RESEARCH") researchScore += item.selfScore;
+      else if (crit.pillar === "SERVICE") serviceScore += item.selfScore;
     }
 
-    // Cập nhật in-memory
-    let existing = this.inMemoryEvaluations.get(employeeId);
+    let existing = existingMem;
     if (!existing) {
       const detail = await this.getMyEvaluation(periodId, currentUser);
       existing = detail.evaluation;
     }
+    if (
+      (existing.status as string) === "FINALIZED" ||
+      (existing.status as string) === "APPROVED"
+    ) {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Phiếu đánh giá đã được Hội đồng chốt điểm (FINALIZED), không thể chỉnh sửa."
+      );
+    }
 
     const newStatus: KpiEvaluationStatus = input.isDraft ? "DRAFT" : "SUBMITTED";
+    const nowIso = new Date().toISOString();
+
+    const priorItems = new Map<string, any>(
+      (this.inMemoryEvaluationItems.get(existing.id) || []).map((it) => [it.criterionId, it])
+    );
+    const savedItems = (template.criteria || []).map((crit) => {
+      const submitted = input.items.find((i) => i.criterionId === crit.id);
+      const prev = priorItems.get(crit.id);
+      return {
+        id: prev?.id || `item-${crit.id}`,
+        criterionId: crit.id,
+        criterionName: crit.name,
+        category: crit.category,
+        pillar: crit.pillar,
+        maxScore: crit.maxScore,
+        selfScore: submitted ? submitted.selfScore : (prev?.selfScore ?? null),
+        managerScore: prev?.managerScore ?? null,
+        finalScore: prev?.finalScore ?? null,
+        selfNote: submitted ? (submitted.selfNote ?? null) : (prev?.selfNote ?? null),
+        evidenceUrl: submitted ? (submitted.evidenceUrl ?? null) : (prev?.evidenceUrl ?? null),
+        managerNote: prev?.managerNote ?? null,
+      };
+    });
+
+    try {
+      const [dbPeriod, dbEmp, dbTpl] = await Promise.all([
+        prisma.kpiPeriod.findUnique({ where: { id: periodId }, select: { id: true } }),
+        prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true } }),
+        prisma.kpiTemplate.findUnique({ where: { id: template.id }, select: { id: true } }),
+      ]);
+      if (dbPeriod && dbEmp && dbTpl) {
+        const upsertedEval = await prisma.$transaction(async (tx) => {
+          const ev = await tx.kpiEvaluation.upsert({
+            where: { periodId_employeeId: { periodId, employeeId } },
+            update: {
+              totalSelfScore,
+              status: newStatus,
+              ranking: this.calculateRanking(totalSelfScore),
+              submittedAt: input.isDraft ? undefined : new Date(),
+            },
+            create: {
+              periodId,
+              templateId: template.id,
+              employeeId,
+              status: newStatus,
+              totalSelfScore,
+              ranking: this.calculateRanking(totalSelfScore),
+              submittedAt: input.isDraft ? null : new Date(),
+            },
+          });
+
+          for (const item of input.items) {
+            await tx.kpiEvaluationItem.upsert({
+              where: {
+                evaluationId_criterionId: {
+                  evaluationId: ev.id,
+                  criterionId: item.criterionId,
+                },
+              },
+              update: {
+                selfScore: item.selfScore,
+                selfNote: item.selfNote ?? null,
+                evidenceUrl: item.evidenceUrl ?? null,
+              },
+              create: {
+                evaluationId: ev.id,
+                criterionId: item.criterionId,
+                selfScore: item.selfScore,
+                selfNote: item.selfNote ?? null,
+                evidenceUrl: item.evidenceUrl ?? null,
+              },
+            });
+          }
+
+          return ev;
+        });
+
+        existing = { ...existing, id: upsertedEval.id };
+      }
+    } catch {
+      // Fallback safely when DB is offline or using mock IDs
+    }
+
     const updatedEval: KpiEvaluationDto = {
       ...existing,
+      periodId,
+      templateId: template.id,
+      templateName: template.name,
+      targetType: template.targetType,
       totalSelfScore,
       teachingScore,
       researchScore,
       serviceScore,
       ranking: this.calculateRanking(totalSelfScore),
       status: newStatus as any,
-      submittedAt: input.isDraft ? existing.submittedAt : new Date().toISOString(),
+      submittedAt: input.isDraft ? existing.submittedAt : nowIso,
     };
 
-    this.inMemoryEvaluations.set(existing.id, updatedEval);
-    this.inMemoryEvaluations.set(employeeId, updatedEval);
+    this.inMemoryEvaluationItems.set(updatedEval.id, savedItems);
+    this.upsertInMemoryEvaluation(updatedEval);
 
     return await this.getMyEvaluation(periodId, currentUser);
   }
@@ -1027,6 +1500,9 @@ export class KpiService {
       evaluations = await this.filterEvaluationsByManagedUnits(evaluations, managed);
     }
 
+    if (query.periodId) {
+      evaluations = evaluations.filter((e) => e.periodId === query.periodId);
+    }
     if (query.ranking) {
       evaluations = evaluations.filter((e) => e.ranking === query.ranking);
     }
@@ -1057,9 +1533,27 @@ export class KpiService {
     input: ScoreManagerEvaluationInput,
     currentUser: AuthUser
   ): Promise<KpiEvaluationDetailDto> {
-    const evaluation = this.inMemoryEvaluations.get(evaluationId);
+    const evaluation = this.findInMemoryEvaluationById(evaluationId);
     if (!evaluation) {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy phiếu đánh giá cần chấm điểm.");
+    }
+
+    if (
+      (evaluation.status as string) === "FINALIZED" ||
+      (evaluation.status as string) === "APPROVED"
+    ) {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Phiếu đánh giá đã được chốt điểm (FINALIZED), không thể chấm lại."
+      );
+    }
+    if (evaluation.status === "DRAFT") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Cán bộ chưa nộp phiếu tự đánh giá (trạng thái hiện tại: DRAFT)."
+      );
     }
 
     // 1. Anti-Self-Approval
@@ -1097,12 +1591,26 @@ export class KpiService {
       }
     }
 
-    let totalManagerScore = 0;
-    const criteriaMap = new Map(DEFAULT_LECTURER_CRITERIA.map((c) => [c.id, c]));
+    const template = await this.resolveTemplateForEmployee(
+      evaluation.employeeId,
+      currentUser,
+      evaluation.targetType as "LECTURER" | "STAFF" | undefined
+    );
+    const criteriaMap = new Map((template.criteria || []).map((c) => [c.id, c]));
 
+    let totalManagerScore = 0;
+    const seen = new Set<string>();
     for (const item of input.items) {
+      if (seen.has(item.criterionId)) {
+        throw new AppError(422, "VALIDATION_ERROR", `Tiêu chí (${item.criterionId}) bị trùng lặp.`);
+      }
+      seen.add(item.criterionId);
+
       const crit = criteriaMap.get(item.criterionId);
-      if (crit && item.managerScore > crit.maxScore) {
+      if (!crit) {
+        throw new AppError(422, "VALIDATION_ERROR", `Tiêu chí (${item.criterionId}) không hợp lệ.`);
+      }
+      if (item.managerScore < 0 || item.managerScore > crit.maxScore) {
         throw new AppError(
           422,
           "VALIDATION_ERROR",
@@ -1119,10 +1627,46 @@ export class KpiService {
     evaluation.status = "IN_REVIEW";
     evaluation.reviewedAt = new Date().toISOString();
 
-    this.inMemoryEvaluations.set(evaluation.id, evaluation);
-    this.inMemoryEvaluations.set(evaluation.employeeId, evaluation);
-    if (evaluation.employeeCode) {
-      this.inMemoryEvaluations.set(evaluation.employeeCode, evaluation);
+    const priorItems = new Map<string, any>(
+      (this.inMemoryEvaluationItems.get(evaluation.id) || []).map((it) => [it.criterionId, it])
+    );
+    const updatedItems = (template.criteria || []).map((crit) => {
+      const scored = input.items.find((i) => i.criterionId === crit.id);
+      const prev = priorItems.get(crit.id);
+      return {
+        id: prev?.id || `item-${crit.id}`,
+        criterionId: crit.id,
+        criterionName: crit.name,
+        category: crit.category,
+        pillar: crit.pillar,
+        maxScore: crit.maxScore,
+        selfScore: prev?.selfScore ?? null,
+        managerScore: scored ? scored.managerScore : (prev?.managerScore ?? null),
+        finalScore: prev?.finalScore ?? null,
+        selfNote: prev?.selfNote ?? null,
+        evidenceUrl: prev?.evidenceUrl ?? null,
+        managerNote: scored ? (scored.managerNote ?? null) : (prev?.managerNote ?? null),
+      };
+    });
+    this.inMemoryEvaluationItems.set(evaluation.id, updatedItems);
+    this.upsertInMemoryEvaluation(evaluation);
+
+    try {
+      const dbEval = await prisma.kpiEvaluation.findUnique({ where: { id: evaluation.id } });
+      if (dbEval) {
+        await prisma.kpiEvaluation.update({
+          where: { id: evaluation.id },
+          data: {
+            totalManagerScore,
+            managerComment: input.managerComment ?? null,
+            managerEmployeeId: currentUser.employeeId ?? null,
+            status: KpiEvaluationStatus.IN_REVIEW,
+            reviewedAt: new Date(),
+          },
+        });
+      }
+    } catch {
+      // fallback safely
     }
 
     return await this.getMyEvaluation(evaluation.periodId, {
@@ -1154,9 +1698,20 @@ export class KpiService {
       );
     }
 
-    const evaluation = this.inMemoryEvaluations.get(evaluationId);
+    const evaluation = this.findInMemoryEvaluationById(evaluationId);
     if (!evaluation) {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy phiếu đánh giá để bình bầu.");
+    }
+
+    if (
+      (evaluation.status as string) === "FINALIZED" ||
+      (evaluation.status as string) === "APPROVED"
+    ) {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Phiếu đánh giá đã chốt kết quả, không thể bỏ phiếu lại."
+      );
     }
 
     if (input.votesYes > input.totalVoters) {
@@ -1184,12 +1739,14 @@ export class KpiService {
       }
     }
 
-    // 2. Rào chắn khống chế tỷ lệ <= 15% Chiến sĩ thi đua cơ sở (theo đơn vị cơ sở / cấp Khoa)
+    // 2. Rào chắn khống chế tỷ lệ <= 15% Chiến sĩ thi đua cơ sở (theo kỳ đánh giá & đơn vị cơ sở)
     if (input.proposedHonorTitle === "CHIEN_SI_THI_DUA_CO_SO") {
-      const allFaculty = Array.from(new Set(this.inMemoryEvaluations.values()));
+      const allInPeriod = Array.from(this.inMemoryEvaluations.values()).filter(
+        (e) => e.periodId === evaluation.periodId
+      );
       const relevantFaculty = evaluation.unitName
-        ? allFaculty.filter((e) => e.unitName === evaluation.unitName)
-        : allFaculty;
+        ? allInPeriod.filter((e) => e.unitName === evaluation.unitName)
+        : allInPeriod;
 
       // Đếm số Lao động tiên tiến (điểm >= 70)
       const ldttCount = relevantFaculty.filter(
@@ -1231,10 +1788,11 @@ export class KpiService {
 
     if (isApproved) {
       evaluation.honorTitle = input.proposedHonorTitle;
+    } else {
+      evaluation.honorTitle = "NONE";
     }
 
-    this.inMemoryEvaluations.set(evaluation.id, evaluation);
-    this.inMemoryEvaluations.set(evaluation.employeeId, evaluation);
+    this.upsertInMemoryEvaluation(evaluation);
 
     return evaluation;
   }
@@ -1255,9 +1813,36 @@ export class KpiService {
       throw new AppError(403, "FORBIDDEN", "Chỉ Hội đồng Thi đua hoặc Phòng TCHC mới có quyền chốt xếp loại thi đua.");
     }
 
-    const evaluation = this.inMemoryEvaluations.get(evaluationId);
+    const evaluation = this.findInMemoryEvaluationById(evaluationId);
     if (!evaluation) {
       throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy phiếu đánh giá cần phê duyệt.");
+    }
+
+    if (
+      (evaluation.status as string) === "FINALIZED" ||
+      (evaluation.status as string) === "APPROVED"
+    ) {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Phiếu đánh giá đã được chốt điểm (FINALIZED)."
+      );
+    }
+    if (evaluation.status === "DRAFT") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "Không thể chốt điểm cho phiếu đánh giá đang ở trạng thái DRAFT."
+      );
+    }
+
+    const expectedRanking = this.calculateRanking(input.finalScore);
+    if (input.ranking !== expectedRanking) {
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        `Xếp loại (${input.ranking}) không khớp với tổng điểm (${input.finalScore}, xếp loại đúng: ${expectedRanking}).`
+      );
     }
 
     evaluation.totalFinalScore = input.finalScore;
@@ -1277,8 +1862,25 @@ export class KpiService {
       PayrollService.updateFacultyKpiRanking(evaluation.employeeCode, rankingLetter);
     }
 
-    this.inMemoryEvaluations.set(evaluation.id, evaluation);
-    this.inMemoryEvaluations.set(evaluation.employeeId, evaluation);
+    this.upsertInMemoryEvaluation(evaluation);
+
+    try {
+      const dbEval = await prisma.kpiEvaluation.findUnique({ where: { id: evaluation.id } });
+      if (dbEval) {
+        await prisma.kpiEvaluation.update({
+          where: { id: evaluation.id },
+          data: {
+            totalFinalScore: input.finalScore,
+            ranking: input.ranking as KpiRanking,
+            councilComment: input.councilComment ?? null,
+            status: KpiEvaluationStatus.FINALIZED,
+            finalizedAt: new Date(),
+          },
+        });
+      }
+    } catch {
+      // fallback safely
+    }
 
     return evaluation;
   }
@@ -1302,11 +1904,13 @@ export class KpiService {
       );
     }
 
-    const allFaculty = Array.from(new Set(this.inMemoryEvaluations.values()));
+    const periodEvaluations = Array.from(this.inMemoryEvaluations.values()).filter(
+      (e) => e.periodId === periodId
+    );
     const signerName = input.signerName || currentUser.fullName || "GS.TS. Nguyễn Hiệu Trưởng";
 
     // Ký số PKI RSA-2048
-    const canonicalPayload = `KPI_COUNCIL_RESOLUTION##PERIOD:${periodId}##ACADEMIC_YEAR:2025-2026##TOTAL:${allFaculty.length}##SIGNER:${signerName}##TIMESTAMP:${new Date().toISOString()}`;
+    const canonicalPayload = `KPI_COUNCIL_RESOLUTION##PERIOD:${periodId}##ACADEMIC_YEAR:2025-2026##TOTAL:${periodEvaluations.length}##SIGNER:${signerName}##TIMESTAMP:${new Date().toISOString()}`;
     const pkiResult = PkiService.signData(canonicalPayload);
 
     this.inMemoryPeriodSigned.set(periodId, {
@@ -1314,8 +1918,19 @@ export class KpiService {
       signedAt: pkiResult.signedAt,
     });
 
-    // Chốt kết quả và đồng bộ Payroll
-    for (const item of allFaculty) {
+    const memPeriod = this.inMemoryPeriods.get(periodId);
+    if (memPeriod) {
+      this.inMemoryPeriods.set(periodId, {
+        ...memPeriod,
+        status: "FINALIZED",
+        isPkiSigned: true,
+        pkiSignature: pkiResult.signatureValue,
+        pkiSignedAt: pkiResult.signedAt,
+      });
+    }
+
+    // Chốt kết quả và đồng bộ Payroll (cô lập theo periodId)
+    for (const item of periodEvaluations) {
       const finalScore = item.totalFinalScore ?? item.totalManagerScore ?? item.totalSelfScore ?? 80;
       item.totalFinalScore = finalScore;
       item.status = "FINALIZED";
@@ -1333,8 +1948,25 @@ export class KpiService {
         PayrollService.updateFacultyKpiRanking(item.employeeCode, rankingLetter);
       }
 
-      this.inMemoryEvaluations.set(item.id, item);
-      this.inMemoryEvaluations.set(item.employeeId, item);
+      this.upsertInMemoryEvaluation(item);
+    }
+
+    try {
+      const dbPeriod = await prisma.kpiPeriod.findUnique({ where: { id: periodId } });
+      if (dbPeriod) {
+        await prisma.$transaction([
+          prisma.kpiPeriod.update({
+            where: { id: periodId },
+            data: { status: KpiPeriodStatus.FINALIZED },
+          }),
+          prisma.kpiEvaluation.updateMany({
+            where: { periodId },
+            data: { status: KpiEvaluationStatus.FINALIZED, finalizedAt: new Date() },
+          }),
+        ]);
+      }
+    } catch {
+      // fallback safely
     }
 
     return await this.getCouncilSummary(periodId, currentUser);
@@ -1347,8 +1979,11 @@ export class KpiService {
     periodId: string,
     _currentUser?: AuthUser
   ): Promise<CouncilSummaryReportDto> {
-    const allFaculty = Array.from(new Set(this.inMemoryEvaluations.values()));
+    const allFaculty = Array.from(this.inMemoryEvaluations.values()).filter(
+      (e) => e.periodId === periodId
+    );
     const pkiInfo = this.inMemoryPeriodSigned.get(periodId);
+    const memPeriod = this.inMemoryPeriods.get(periodId);
 
     const excellentCount = allFaculty.filter((e) => e.ranking === "EXCELLENT").length;
     const goodCount = allFaculty.filter((e) => e.ranking === "GOOD").length;
@@ -1371,8 +2006,8 @@ export class KpiService {
 
     return {
       periodId,
-      periodName: "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
-      academicYear: "2025-2026",
+      periodName: memPeriod?.name || "Đánh giá & Xếp loại Cán bộ, Giảng viên Năm học 2025-2026",
+      academicYear: memPeriod?.academicYear || "2025-2026",
       totalFaculty: allFaculty.length,
       excellentCount,
       goodCount,
@@ -1394,13 +2029,13 @@ export class KpiService {
    */
   public static async exportCouncilReportPdf(
     periodId: string,
-    _unitId?: string
+    unitId?: string
   ): Promise<Uint8Array> {
     const summary = await this.getCouncilSummary(periodId);
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);
 
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4 Portrait
+    let page = pdfDoc.addPage([595.28, 841.89]); // A4 Portrait
     const { width, height } = page.getSize();
 
     let fontRegular: any;
@@ -1547,41 +2182,57 @@ export class KpiService {
     let y = height - 215;
     const rowHeight = 22;
 
-    // Header bảng
-    page.drawRectangle({
-      x: 45,
-      y,
-      width: width - 90,
-      height: rowHeight,
-      color: rgb(0.1, 0.2, 0.4),
-    });
-
-    const headers = [
-      { text: "STT", x: 50 },
-      { text: "Mã CB", x: 75 },
-      { text: "Họ và tên", x: 130 },
-      { text: "Đơn vị", x: 250 },
-      { text: "3 Trụ cột", x: 330 },
-      { text: "Tổng", x: 395 },
-      { text: "Xếp loại", x: 430 },
-      { text: "Danh hiệu", x: 480 },
-    ];
-
-    for (const h of headers) {
-      page.drawText(sanitize(h.text), {
-        x: h.x,
-        y: y + 6,
-        size: 8.5,
-        font: fontBold,
-        color: rgb(1, 1, 1),
+    const drawTableHeader = (targetPage: any, headerY: number) => {
+      targetPage.drawRectangle({
+        x: 45,
+        y: headerY,
+        width: width - 90,
+        height: rowHeight,
+        color: rgb(0.1, 0.2, 0.4),
       });
-    }
 
+      const headers = [
+        { text: "STT", x: 50 },
+        { text: "Mã CB", x: 75 },
+        { text: "Họ và tên", x: 130 },
+        { text: "Đơn vị", x: 250 },
+        { text: "3 Trụ cột", x: 330 },
+        { text: "Tổng", x: 395 },
+        { text: "Xếp loại", x: 430 },
+        { text: "Danh hiệu", x: 480 },
+      ];
+
+      for (const h of headers) {
+        targetPage.drawText(sanitize(h.text), {
+          x: h.x,
+          y: headerY + 6,
+          size: 8.5,
+          font: fontBold,
+          color: rgb(1, 1, 1),
+        });
+      }
+    };
+
+    // Header bảng
+    drawTableHeader(page, y);
     y -= rowHeight;
 
-    // Dòng dữ liệu
+    const filteredEvaluations = unitId
+      ? (summary.evaluations || []).filter(
+          (e) => (e as any).unitId === unitId || e.unitName === unitId
+        )
+      : summary.evaluations || [];
+
+    // Dòng dữ liệu (hỗ trợ phân trang nhiều trang)
     let index = 1;
-    for (const emp of summary.evaluations || []) {
+    for (const emp of filteredEvaluations) {
+      if (y < 140) {
+        page = pdfDoc.addPage([595.28, 841.89]);
+        y = height - 60;
+        drawTableHeader(page, y);
+        y -= rowHeight;
+      }
+
       const isEven = index % 2 === 0;
       if (isEven) {
         page.drawRectangle({
@@ -1617,11 +2268,15 @@ export class KpiService {
       });
 
       y -= rowHeight;
-      if (y < 120) break;
     }
 
-    // Khối chữ ký & Dấu điện tử PKI RSA-2048
-    const signY = 100;
+    if (y < 140) {
+      page = pdfDoc.addPage([595.28, 841.89]);
+      y = height - 80;
+    }
+
+    // Khối chữ ký & Dấu điện tử PKI RSA-2048 (chỉ in con dấu PKI khi thực sự đã ký số)
+    const signY = Math.min(100, y - 30);
     page.drawText(sanitize("THƯ KÝ HỘI ĐỒNG"), {
       x: 70,
       y: signY,
@@ -1645,38 +2300,48 @@ export class KpiService {
       color: rgb(0.1, 0.2, 0.4),
     });
 
-    // Con dấu số điện tử PKI SmartCA (Red Seal)
-    page.drawRectangle({
-      x: 330,
-      y: signY - 60,
-      width: 200,
-      height: 42,
-      color: rgb(0.99, 0.94, 0.94),
-      borderColor: rgb(0.85, 0.15, 0.15),
-      borderWidth: 1.5,
-    });
+    if (summary.isPkiSigned) {
+      // Con dấu số điện tử PKI SmartCA (Red Seal) chỉ in khi isPkiSigned === true
+      page.drawRectangle({
+        x: 330,
+        y: signY - 60,
+        width: 200,
+        height: 42,
+        color: rgb(0.99, 0.94, 0.94),
+        borderColor: rgb(0.85, 0.15, 0.15),
+        borderWidth: 1.5,
+      });
 
-    page.drawText(sanitize("[ ĐÃ KÝ SỐ PKI RSA-2048 ]"), {
-      x: 350,
-      y: signY - 30,
-      size: 8.5,
-      font: fontBold,
-      color: rgb(0.8, 0.1, 0.1),
-    });
-    page.drawText(sanitize("Trường Đại học Kiến trúc Đà Nẵng"), {
-      x: 345,
-      y: signY - 42,
-      size: 7.5,
-      font: fontRegular,
-      color: rgb(0.6, 0.1, 0.1),
-    });
-    page.drawText(sanitize(`Thời gian: ${new Date().toISOString().split("T")[0]}`), {
-      x: 345,
-      y: signY - 54,
-      size: 7,
-      font: fontRegular,
-      color: rgb(0.5, 0.1, 0.1),
-    });
+      page.drawText(sanitize("[ ĐÃ KÝ SỐ PKI RSA-2048 ]"), {
+        x: 350,
+        y: signY - 30,
+        size: 8.5,
+        font: fontBold,
+        color: rgb(0.8, 0.1, 0.1),
+      });
+      page.drawText(sanitize("Trường Đại học Kiến trúc Đà Nẵng"), {
+        x: 345,
+        y: signY - 42,
+        size: 7.5,
+        font: fontRegular,
+        color: rgb(0.6, 0.1, 0.1),
+      });
+      page.drawText(sanitize(`Thời gian: ${(summary.pkiSignedAt || new Date().toISOString()).split("T")[0]}`), {
+        x: 345,
+        y: signY - 54,
+        size: 7,
+        font: fontRegular,
+        color: rgb(0.5, 0.1, 0.1),
+      });
+    } else {
+      page.drawText(sanitize("(Chưa ký số PKI - Bản dự thảo biên bản)"), {
+        x: 340,
+        y: signY - 18,
+        size: 8,
+        font: fontRegular,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+    }
 
     return await pdfDoc.save();
   }

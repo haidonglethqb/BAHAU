@@ -9,6 +9,14 @@ import type {
 import { DomainEventBus } from "../domain-event-bus.js";
 import { PayrollService } from "../../services/payroll.service.js";
 
+const processedRoyaltyDispatches = new Set<string>();
+const processedHonorariumDispatches = new Set<string>();
+
+export function resetPayrollSubscriberState(): void {
+  processedRoyaltyDispatches.clear();
+  processedHonorariumDispatches.clear();
+}
+
 /**
  * Subscriber phụ trách phân hệ Tiền lương & Thu nhập (Payroll Engine)
  * Lắng nghe các Domain Event phát sinh từ toàn hệ thống và đồng bộ thu nhập/ngạch bậc.
@@ -60,8 +68,14 @@ export function registerPayrollSubscribers(): void {
     DOMAIN_EVENTS.RD_PROJECT_APPROVED,
     (event: DomainEvent<RdProjectApprovedPayload>) => {
       const payload = event.payload;
+      const sourceId = payload.projectId || event.aggregateId || event.id;
       for (const member of payload.members) {
         if (member.allocatedAmount > 0) {
+          const empKey = member.employeeCode || member.employeeId;
+          const dedupKey = `${sourceId}:${empKey}`;
+          if (processedRoyaltyDispatches.has(dedupKey)) continue;
+          processedRoyaltyDispatches.add(dedupKey);
+
           PayrollService.addRoyaltyPayment(member.employeeCode, member.allocatedAmount);
           if (member.employeeId && member.employeeId !== member.employeeCode) {
             PayrollService.addRoyaltyPayment(member.employeeId, member.allocatedAmount);
@@ -76,9 +90,15 @@ export function registerPayrollSubscribers(): void {
     DOMAIN_EVENTS.POSTGRAD_DEGREE_AWARDED,
     (event: DomainEvent<PostgradDegreeAwardedPayload>) => {
       const payload = event.payload;
+      const sourceId = payload.studentId || event.aggregateId || event.id;
       if (payload.defenseMembers && payload.defenseMembers.length > 0) {
         for (const member of payload.defenseMembers) {
           if (member.honorariumAmount > 0) {
+            const empKey = member.employeeCode || member.employeeId;
+            const dedupKey = `${sourceId}:${empKey}`;
+            if (processedHonorariumDispatches.has(dedupKey)) continue;
+            processedHonorariumDispatches.add(dedupKey);
+
             PayrollService.addPostgradCouncilHonorarium(member.employeeCode, member.honorariumAmount);
             if (member.employeeId && member.employeeId !== member.employeeCode) {
               PayrollService.addPostgradCouncilHonorarium(member.employeeId, member.honorariumAmount);

@@ -20,6 +20,7 @@ export type JobHandlerFn<TPayload = any, TResult = any> = (
 interface InternalJobRecord extends JobDto {
   priorityScore: number;
   retryTimer?: NodeJS.Timeout;
+  nextRunAt?: number;
 }
 
 const PRIORITY_SCORES: Record<JobPriority, number> = {
@@ -29,6 +30,7 @@ const PRIORITY_SCORES: Record<JobPriority, number> = {
 };
 
 export class WorkerQueue extends EventEmitter {
+  private static readonly MAX_STORED_JOBS = 500;
   private static instance: WorkerQueue;
   private jobs: Map<string, InternalJobRecord> = new Map();
   private handlers: Map<string, JobHandlerFn> = new Map();
@@ -109,6 +111,7 @@ export class WorkerQueue extends EventEmitter {
     };
 
     this.jobs.set(jobId, record);
+    this.evictTerminalJobsIfNeeded();
     this.emit("job:enqueued", this.sanitizeJob(record));
 
     // Kích hoạt worker xử lý ngay
@@ -205,8 +208,15 @@ export class WorkerQueue extends EventEmitter {
       );
     }
 
+    if (job.retryTimer) {
+      clearTimeout(job.retryTimer);
+      delete job.retryTimer;
+    }
+    delete job.nextRunAt;
+
     job.status = "PENDING";
     job.progress = 0;
+    job.attempts = 0;
     job.error = null;
     job.startedAt = null;
     job.completedAt = null;
@@ -246,9 +256,10 @@ export class WorkerQueue extends EventEmitter {
    * 2. Thời gian tạo sớm hơn (FIFO cho cùng mức ưu tiên)
    */
   private getNextPendingJob(): InternalJobRecord | null {
+    const now = Date.now();
     const pendingJobs: InternalJobRecord[] = [];
     for (const job of this.jobs.values()) {
-      if (job.status === "PENDING") {
+      if (job.status === "PENDING" && (!job.nextRunAt || job.nextRunAt <= now)) {
         pendingJobs.push(job);
       }
     }
@@ -263,6 +274,29 @@ export class WorkerQueue extends EventEmitter {
     });
 
     return pendingJobs[0] || null;
+  }
+
+  private hasAnyPendingJob(): boolean {
+    for (const job of this.jobs.values()) {
+      if (job.status === "PENDING") return true;
+    }
+    return false;
+  }
+
+  private evictTerminalJobsIfNeeded(): void {
+    if (this.jobs.size <= WorkerQueue.MAX_STORED_JOBS) return;
+    const terminalJobs: Array<{ id: string; time: number }> = [];
+    for (const [id, job] of this.jobs.entries()) {
+      if (job.status === "COMPLETED" || job.status === "FAILED" || job.status === "CANCELLED") {
+        const ts = new Date(job.completedAt || job.createdAt).getTime();
+        terminalJobs.push({ id, time: Number.isFinite(ts) ? ts : 0 });
+      }
+    }
+    terminalJobs.sort((a, b) => a.time - b.time);
+    for (const entry of terminalJobs) {
+      if (this.jobs.size <= WorkerQueue.MAX_STORED_JOBS) break;
+      this.jobs.delete(entry.id);
+    }
   }
 
   /**
@@ -301,18 +335,22 @@ export class WorkerQueue extends EventEmitter {
       nextJob.progress = 100;
       nextJob.result = result || {};
       nextJob.completedAt = new Date().toISOString();
+      delete nextJob.nextRunAt;
+      this.evictTerminalJobsIfNeeded();
       this.emit("job:completed", this.sanitizeJob(nextJob));
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       nextJob.error = errorMsg;
 
       if (nextJob.attempts < nextJob.maxAttempts) {
-        // Thử lại với Exponential Backoff
+        // Thử lại với Exponential Backoff (tránh processNext() ở finally chạy trước backoff)
         const backoffMs = Math.min(1000 * Math.pow(2, nextJob.attempts - 1), 10000);
         nextJob.status = "PENDING";
+        nextJob.nextRunAt = Date.now() + backoffMs;
         nextJob.statusMessage = `Lỗi lần ${nextJob.attempts}, thử lại sau ${backoffMs}ms: ${errorMsg}`;
 
         nextJob.retryTimer = setTimeout(() => {
+          delete nextJob.retryTimer;
           this.processNext();
         }, backoffMs);
         if (typeof nextJob.retryTimer.unref === "function") {
@@ -322,6 +360,8 @@ export class WorkerQueue extends EventEmitter {
         // Vượt quá maxAttempts -> chuyển sang FAILED (Dead-Letter)
         nextJob.status = "FAILED";
         nextJob.completedAt = new Date().toISOString();
+        delete nextJob.nextRunAt;
+        this.evictTerminalJobsIfNeeded();
         this.emit("job:failed", this.sanitizeJob(nextJob));
       }
     } finally {
@@ -335,7 +375,7 @@ export class WorkerQueue extends EventEmitter {
    * Chờ tất cả job đang active hoàn tất (dùng cho testing/graceful shutdown)
    */
   public async drain(): Promise<void> {
-    while (this.activeWorkers > 0 || this.getNextPendingJob() !== null) {
+    while (this.activeWorkers > 0 || (this.isRunning && this.hasAnyPendingJob())) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
@@ -366,7 +406,7 @@ export class WorkerQueue extends EventEmitter {
   }
 
   private sanitizeJob(job: InternalJobRecord): JobDto {
-    const { priorityScore, retryTimer, ...sanitized } = job;
+    const { priorityScore, retryTimer, nextRunAt, ...sanitized } = job;
     return sanitized;
   }
 }

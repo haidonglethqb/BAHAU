@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { OutboxService } from "../services/outbox.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
 
 export class NotificationController {
   /**
@@ -8,7 +9,16 @@ export class NotificationController {
   static async getMyNotifications(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user.id;
-      const data = await OutboxService.getMyNotifications(userId);
+      const rawLimit = req.query.limit;
+      let limit = 30;
+      if (rawLimit !== undefined && rawLimit !== "") {
+        const num = Number(rawLimit);
+        if (!Number.isInteger(num) || num < 1 || num > 100) {
+          throw new AppError(422, "VALIDATION_ERROR", "Tham số limit phải là số nguyên từ 1 đến 100.");
+        }
+        limit = num;
+      }
+      const data = await OutboxService.getMyNotifications(userId, limit);
       res.status(200).json({
         success: true,
         data,
@@ -56,7 +66,15 @@ export class NotificationController {
    */
   static async processBatch(req: Request, res: Response, next: NextFunction) {
     try {
-      const limit = req.body?.limit ? Number(req.body.limit) : 10;
+      const rawLimit = req.body?.limit;
+      let limit = 10;
+      if (rawLimit !== undefined && rawLimit !== null && rawLimit !== "") {
+        const num = Number(rawLimit);
+        if (!Number.isInteger(num) || num < 1 || num > 100) {
+          throw new AppError(422, "VALIDATION_ERROR", "Tham số limit phải là số nguyên từ 1 đến 100.");
+        }
+        limit = num;
+      }
       const data = await OutboxService.processBatch(limit);
       res.status(200).json({
         success: true,

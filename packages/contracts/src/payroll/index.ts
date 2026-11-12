@@ -49,6 +49,8 @@ export const PayslipDtoSchema = z.object({
   kpiExtraIncome: z.number().nonnegative(),
   overtimeTeachingHours: z.number().nonnegative(),
   overtimeTeachingPay: z.number().nonnegative(),
+  royaltyPayment: z.number().nonnegative().optional(),
+  postgradHonorarium: z.number().nonnegative().optional(),
 
   // Tổng thu nhập trước thuế & bảo hiểm
   grossIncome: z.number().nonnegative(),
@@ -108,9 +110,23 @@ export type PayrollPeriodDetailDto = z.infer<typeof PayrollPeriodDetailSchema>;
 // ACTION INPUT SCHEMAS
 // =============================================================================
 
+export const PayrollPeriodQuerySchema = z.object({
+  month: z.coerce.number().int().min(1).max(12).optional(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
+});
+
+export type PayrollPeriodQuery = z.infer<typeof PayrollPeriodQuerySchema>;
+
+export const PayrollTableQuerySchema = PayrollPeriodQuerySchema.extend({
+  unitName: z.string().optional(),
+  search: z.string().optional(),
+});
+
+export type PayrollTableQuery = z.infer<typeof PayrollTableQuerySchema>;
+
 export const CalculatePayrollInputSchema = z.object({
   month: z.number().int().min(1).max(12),
-  year: z.number().int(),
+  year: z.number().int().min(2000).max(2100),
   recalculate: z.boolean().optional().default(false),
 });
 
@@ -118,7 +134,7 @@ export type CalculatePayrollInput = z.infer<typeof CalculatePayrollInputSchema>;
 
 export const SubmitPayrollInputSchema = z.object({
   month: z.number().int().min(1).max(12),
-  year: z.number().int(),
+  year: z.number().int().min(2000).max(2100),
   note: z.string().optional(),
 });
 
@@ -126,8 +142,15 @@ export type SubmitPayrollInput = z.infer<typeof SubmitPayrollInputSchema>;
 
 export const ApprovePayrollInputSchema = z.object({
   month: z.number().int().min(1).max(12),
-  year: z.number().int(),
+  year: z.number().int().min(2000).max(2100),
   pkiSignature: z.string().optional(),
 });
 
 export type ApprovePayrollInput = z.infer<typeof ApprovePayrollInputSchema>;
+
+export const LockPayrollInputSchema = z.object({
+  month: z.number().int().min(1).max(12),
+  year: z.number().int().min(2000).max(2100),
+});
+
+export type LockPayrollInput = z.infer<typeof LockPayrollInputSchema>;

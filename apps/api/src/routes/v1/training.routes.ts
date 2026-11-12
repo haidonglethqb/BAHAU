@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { z } from "zod";
 import {
   getMyCertificates,
   submitCertificate,
@@ -8,6 +9,8 @@ import {
   getCourses,
   createCourse,
   registerCourse,
+  updateCourseStatus,
+  updateParticipantStatus,
 } from "../../controllers/training.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
 import { requireAuth, requirePermission, requireRole } from "../../middlewares/auth.middleware.js";
@@ -18,8 +21,14 @@ import {
   VerifyCertificateSchema,
   CreateTrainingCourseSchema,
   RegisterTrainingCourseSchema,
+  UpdateParticipantStatusSchema,
+  TrainingCourseStatusEnum,
   CertificateFilterQuerySchema,
 } from "@bahau/contracts";
+
+const UpdateCourseStatusSchema = z.object({
+  status: TrainingCourseStatusEnum,
+});
 
 const router = Router();
 
@@ -116,6 +125,26 @@ router.post(
   requirePermission("training:register_course"),
   validateBody(RegisterTrainingCourseSchema),
   asyncHandler(registerCourse)
+);
+
+// Chuyển trạng thái khóa đào tạo (Phòng TCHC / Ban Giám hiệu)
+router.patch(
+  "/training/courses/:id/status",
+  requireAuth,
+  requirePermission("training:manage_courses"),
+  requireRole(["ROLE_HR_OFFICER", "ROLE_RECTOR"]),
+  validateBody(UpdateCourseStatusSchema),
+  asyncHandler(updateCourseStatus)
+);
+
+// Cập nhật kết quả / hoàn thành / cấp chứng nhận học viên khóa đào tạo
+router.put(
+  "/training/courses/:courseId/participants/:employeeId",
+  requireAuth,
+  requirePermission("training:manage_courses"),
+  requireRole(["ROLE_HR_OFFICER", "ROLE_RECTOR"]),
+  validateBody(UpdateParticipantStatusSchema),
+  asyncHandler(updateParticipantStatus)
 );
 
 export default router;

@@ -8,8 +8,8 @@ export async function getMyPayslip(req: Request, res: Response): Promise<void> {
     throw new AppError(400, "BAD_REQUEST", "Tài khoản chưa được liên kết hồ sơ cán bộ.");
   }
 
-  const month = req.query["month"] ? Number(req.query["month"]) : 9;
-  const year = req.query["year"] ? Number(req.query["year"]) : 2026;
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : 9;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : 2026;
 
   const payslip = await PayrollService.calculateEmployeePayslip(employeeId, month, year);
 
@@ -24,8 +24,8 @@ export async function getMyPayslip(req: Request, res: Response): Promise<void> {
 }
 
 export async function getPeriodSummary(req: Request, res: Response): Promise<void> {
-  const month = req.query["month"] ? Number(req.query["month"]) : 9;
-  const year = req.query["year"] ? Number(req.query["year"]) : 2026;
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : 9;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : 2026;
 
   const summary = await PayrollService.getPeriodSummary(month, year);
 
@@ -57,8 +57,8 @@ export async function calculatePayrollPeriod(req: Request, res: Response): Promi
 }
 
 export async function getPayrollTable(req: Request, res: Response): Promise<void> {
-  const month = req.query["month"] ? Number(req.query["month"]) : 9;
-  const year = req.query["year"] ? Number(req.query["year"]) : 2026;
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : 9;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : 2026;
   const unitName = req.query["unitName"] as string | undefined;
   const search = req.query["search"] as string | undefined;
 
@@ -113,6 +113,22 @@ export async function approvePayrollPeriod(req: Request, res: Response): Promise
   });
 }
 
+export async function lockPayrollPeriod(req: Request, res: Response): Promise<void> {
+  const month = Number(req.body["month"] ?? 9);
+  const year = Number(req.body["year"] ?? 2026);
+
+  const updated = await PayrollService.lockPeriod(month, year);
+
+  res.status(200).json({
+    success: true,
+    data: updated,
+    meta: {
+      timestamp: new Date().toISOString(),
+      requestId: req.id || "00000000-0000-0000-0000-000000000000",
+    },
+  });
+}
+
 export async function exportPayslipPdf(req: Request, res: Response): Promise<void> {
   const paramEmpId = String(req.params["employeeId"] || "");
   let targetEmployeeId = paramEmpId;
@@ -132,8 +148,8 @@ export async function exportPayslipPdf(req: Request, res: Response): Promise<voi
     throw new AppError(403, "FORBIDDEN", "Bạn không có quyền tải phiếu lương của cán bộ khác.");
   }
 
-  const month = req.query["month"] ? Number(req.query["month"]) : 9;
-  const year = req.query["year"] ? Number(req.query["year"]) : 2026;
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : 9;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : 2026;
 
   const payslip = await PayrollService.calculateEmployeePayslip(targetEmployeeId, month, year);
   const pdfBytes = await PayrollService.exportPayslipPdf(payslip);

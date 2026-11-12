@@ -60,7 +60,8 @@ export async function getMyEvaluation(req: Request, res: Response): Promise<void
 }
 
 export async function submitSelfEvaluation(req: Request, res: Response): Promise<void> {
-  const periodId = String(req.query["periodId"] || req.body["periodId"]);
+  const rawPeriodId = req.query["periodId"] || req.body["periodId"];
+  const periodId = rawPeriodId ? String(rawPeriodId) : undefined;
   const data = await KpiService.submitSelfEvaluation(periodId, req.body, req.user!);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 

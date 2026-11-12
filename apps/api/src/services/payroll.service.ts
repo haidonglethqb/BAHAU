@@ -13,6 +13,64 @@ import type {
 
 const BASE_SALARY_RATE = 2340000; // Mức lương cơ sở hiện hành 2.340.000 VNĐ từ 01/07/2024 theo NĐ 73/2024/NĐ-CP
 const BASE_KPI_FUND_PER_CAPITA = 4000000; // Định mức quỹ thu nhập tăng thêm theo KPI / người / tháng
+const BHXH_BHYT_INSURANCE_CAP = 20 * BASE_SALARY_RATE; // Trần đóng BHXH/BHYT = 20 lần lương cơ sở (46.800.000 VNĐ)
+const BHTN_INSURANCE_CAP = 88200000; // Trần đóng BHTN = 20 lần lương tối thiểu vùng (88.200.000 VNĐ)
+
+const NON_TEACHING_POSITION_CODES = new Set([
+  "CHUYEN_VIEN",
+  "NHAN_VIEN",
+  "KE_TOAN",
+  "VAN_THU",
+  "THU_KY",
+  "TRUONG_PHONG",
+  "PHO_TRUONG_PHONG",
+  "BAO_VE",
+  "TAP_VU",
+  "KY_THUAT_VIEN",
+  "Y_TE",
+  "THU_VIEN",
+]);
+
+function isTeachingPosition(positionType?: string, positionCode?: string): boolean {
+  if (positionType === "ADMINISTRATIVE") return false;
+  if (positionCode && NON_TEACHING_POSITION_CODES.has(positionCode)) return false;
+  if (positionType === "ACADEMIC") return true;
+  if (positionCode && (positionCode.startsWith("GIANG_VIEN") || positionCode === "TRO_GIANG")) {
+    return true;
+  }
+  if (
+    positionCode === "HIEU_TRUONG" ||
+    positionCode === "PHO_HIEU_TRUONG" ||
+    positionCode === "TRUONG_KHOA" ||
+    positionCode === "PHO_TRUONG_KHOA" ||
+    positionCode === "TRUONG_BO_MON" ||
+    positionCode === "PHO_TRUONG_BO_MON"
+  ) {
+    return true;
+  }
+  if (positionType === "MANAGEMENT") return false;
+  // Fallback cho các mock test giảng viên không truyền positionType/positionCode
+  return true;
+}
+
+function mapKpiRankingToLetter(ranking?: string | null): "A" | "B" | "C" | "D" {
+  switch (ranking) {
+    case "EXCELLENT":
+    case "A":
+      return "A";
+    case "GOOD":
+    case "B":
+      return "B";
+    case "SATISFACTORY":
+    case "C":
+      return "C";
+    case "UNSATISFACTORY":
+    case "D":
+      return "D";
+    default:
+      return "B";
+  }
+}
 
 export interface FacultyMemberRecord {
   id: string;
@@ -185,8 +243,14 @@ export class PayrollService {
       }
       if (newCareerClass === "SENIOR_LECTURER") {
         member.positionName = "Giảng viên cao cấp";
+        if (member.positionCode === "GIANG_VIEN" || member.positionCode === "GIANG_VIEN_CHINH" || member.positionCode === "GIANG_VIEN_TAP_SU") {
+          member.positionCode = "GIANG_VIEN_CAO_CAP";
+        }
       } else if (newCareerClass === "PRINCIPAL_LECTURER") {
         member.positionName = "Giảng viên chính";
+        if (member.positionCode === "GIANG_VIEN" || member.positionCode === "GIANG_VIEN_TAP_SU") {
+          member.positionCode = "GIANG_VIEN_CHINH";
+        }
       }
     }
   }
@@ -256,7 +320,7 @@ export class PayrollService {
    * Tính toán thuế TNCN theo biểu thuế lũy tiến từng phần 7 bậc (Thông tư 111/2013/TT-BTC)
    */
   public static calculatePit(taxableIncome: number): number {
-    if (taxableIncome <= 0) return 0;
+    if (!Number.isFinite(taxableIncome) || taxableIncome <= 0) return 0;
     if (taxableIncome <= 5000000) {
       return Math.round(taxableIncome * 0.05);
     } else if (taxableIncome <= 10000000) {
@@ -285,10 +349,12 @@ export class PayrollService {
     academicTitle?: string;
     positionName?: string;
     positionCode?: string;
+    positionType?: string;
     month: number;
     year: number;
     salaryCoefficient: number;
     hireYear: number;
+    hireDate?: string | Date;
     kpiRanking: "A" | "B" | "C" | "D";
     dependentCount: number;
     standardWorkDays?: number;
@@ -304,10 +370,12 @@ export class PayrollService {
       academicTitle,
       positionName,
       positionCode,
+      positionType,
       month,
       year,
       salaryCoefficient,
       hireYear,
+      hireDate,
       kpiRanking,
       dependentCount,
       standardWorkDays = 22,
@@ -316,8 +384,15 @@ export class PayrollService {
       overtimeTeachingHours = 0,
     } = params;
 
+    const safeSalaryCoeff = Number.isFinite(salaryCoefficient) && salaryCoefficient >= 0 ? salaryCoefficient : 0;
+    const safeDependentCount = Number.isFinite(dependentCount) && dependentCount >= 0 ? Math.floor(dependentCount) : 0;
+    const safeStdDays = Number.isFinite(standardWorkDays) && standardWorkDays > 0 ? standardWorkDays : 0;
+    const safeActualDays = Number.isFinite(actualWorkDays) ? Math.max(0, actualWorkDays) : 0;
+    const safeUnpaidDays = Number.isFinite(unpaidLeaveDays) ? Math.max(0, unpaidLeaveDays) : 0;
+    const safeOvertimeHours = Number.isFinite(overtimeTeachingHours) && overtimeTeachingHours >= 0 ? overtimeTeachingHours : 0;
+
     // 1. Thành phần Cố định: Lương ngạch bậc
-    const baseSalary = Math.round(salaryCoefficient * BASE_SALARY_RATE);
+    const baseSalary = Math.round(safeSalaryCoeff * BASE_SALARY_RATE);
 
     // 2. Phụ cấp chức vụ lãnh đạo
     let leadershipCoefficient = 0;
@@ -327,53 +402,111 @@ export class PayrollService {
     else if (positionCode === "PHO_TRUONG_KHOA" || positionCode === "TRUONG_BO_MON") leadershipCoefficient = 0.4;
     else if (positionCode === "PHO_TRUONG_BO_MON") leadershipCoefficient = 0.25;
 
-    const leadershipAllowance = Math.round(leadershipCoefficient * BASE_SALARY_RATE);
+    const rawLeadershipAllowance = Math.round(leadershipCoefficient * BASE_SALARY_RATE);
 
-    // 3. Phụ cấp thâm niên nhà giáo (>= 5 năm: mỗi năm 1%)
-    const seniorityYears = Math.max(0, year - hireYear);
-    const seniorityRate = seniorityYears >= 5 ? seniorityYears / 100 : 0;
-    const seniorityAllowance = Math.round(baseSalary * seniorityRate);
+    // 3. Phụ cấp thâm niên nhà giáo (chỉ áp dụng cho vị trí giảng dạy, tính chính xác theo tháng khi có hireDate)
+    const isTeaching = isTeachingPosition(positionType, positionCode);
+    let seniorityYears = Math.max(0, year - hireYear);
+    if (hireDate) {
+      const parsedHireDate = new Date(hireDate);
+      if (!Number.isNaN(parsedHireDate.getTime())) {
+        const totalMonths =
+          (year - parsedHireDate.getUTCFullYear()) * 12 +
+          (month - (parsedHireDate.getUTCMonth() + 1));
+        seniorityYears = Math.max(0, Math.floor(totalMonths / 12));
+      }
+    }
+    const seniorityRate = isTeaching && seniorityYears >= 5 ? seniorityYears / 100 : 0;
+    const rawSeniorityAllowance = Math.round(baseSalary * seniorityRate);
 
-    // 4. Phụ cấp ưu đãi nhà giáo (30% lương ngạch bậc + phụ cấp chức vụ)
-    const pedagogicalAllowance = Math.round((baseSalary + leadershipAllowance) * 0.3);
-
-    // 5. Khấu trừ ngày nghỉ không phép / nghỉ không lương theo Bảng công
-    const workDaysDeduction = unpaidLeaveDays > 0
-      ? Math.round((baseSalary / standardWorkDays) * unpaidLeaveDays)
+    // 4. Phụ cấp ưu đãi nhà giáo (chỉ áp dụng cho giảng viên / vị trí giảng dạy: 30% lương ngạch bậc + phụ cấp chức vụ)
+    const rawPedagogicalAllowance = isTeaching
+      ? Math.round((baseSalary + rawLeadershipAllowance) * 0.3)
       : 0;
+
+    // 5. Khấu trừ ngày nghỉ không lương & phân bổ lương theo ngày công thực tế (mid-month / probation / resigned)
+    let workDaysDeduction = 0;
+    let leadershipAllowance = rawLeadershipAllowance;
+    let seniorityAllowance = rawSeniorityAllowance;
+    let pedagogicalAllowance = rawPedagogicalAllowance;
+
+    if (safeStdDays > 0) {
+      const expectedAttendedDays = Math.max(0, safeStdDays - safeUnpaidDays);
+      if (safeActualDays < expectedAttendedDays) {
+        const prorateRatio = Math.max(0, Math.min(1, safeActualDays / safeStdDays));
+        workDaysDeduction = baseSalary - Math.round(baseSalary * prorateRatio);
+        leadershipAllowance = Math.round(rawLeadershipAllowance * prorateRatio);
+        seniorityAllowance = Math.round(rawSeniorityAllowance * prorateRatio);
+        pedagogicalAllowance = Math.round(rawPedagogicalAllowance * prorateRatio);
+      } else {
+        // Giữ nguyên công thức khấu trừ chính xác cho nghỉ không lương (TC-PAY-01)
+        workDaysDeduction =
+          safeUnpaidDays > 0
+            ? Math.min(baseSalary, Math.round((baseSalary / safeStdDays) * safeUnpaidDays))
+            : 0;
+      }
+    }
 
     // 6. Thu nhập tăng thêm theo KPI tháng
     const kpiBonusMap: Record<string, number> = { A: 1.3, B: 1.0, C: 0.7, D: 0.0 };
     const kpiBonusCoefficient = kpiBonusMap[kpiRanking] ?? 1.0;
     const kpiExtraIncome = Math.round(BASE_KPI_FUND_PER_CAPITA * kpiBonusCoefficient);
 
-    // 7. Thù lao vượt giờ giảng dạy / Đồ án Studio Kiến trúc
+    // 7. Thù lao vượt giờ giảng dạy / Đồ án Studio Kiến trúc & Thu nhập NCKH / Hội đồng sau đại học
     const isSeniorOrProf =
       academicTitle === "PROFESSOR" ||
       academicTitle === "ASSOCIATE_PROFESSOR" ||
-      positionCode === "GIANG_VIEN_CHINH";
+      positionCode === "GIANG_VIEN_CHINH" ||
+      positionCode === "GIANG_VIEN_CAO_CAP" ||
+      WorkloadService.isPromotedSenior(employeeId) ||
+      WorkloadService.isPromotedSenior(employeeCode);
     const hourlyRate = isSeniorOrProf ? 200000 : 160000;
-    const overtimeTeachingPay = Math.round(overtimeTeachingHours * hourlyRate);
+    const overtimeTeachingPay = Math.round(safeOvertimeHours * hourlyRate);
+
+    const royaltyPayment =
+      this.getRoyaltyPayment(employeeId) ||
+      (employeeCode ? this.getRoyaltyPayment(employeeCode) : 0);
+    const postgradHonorarium =
+      this.getPostgradCouncilHonorarium(employeeId) ||
+      (employeeCode ? this.getPostgradCouncilHonorarium(employeeCode) : 0);
 
     // 8. Tổng thu nhập trước thuế & bảo hiểm (Gross Income)
+    const effectiveBaseSalary = Math.max(0, baseSalary - workDaysDeduction);
     const grossIncome =
-      Math.max(0, baseSalary - workDaysDeduction) +
+      effectiveBaseSalary +
       leadershipAllowance +
       seniorityAllowance +
       pedagogicalAllowance +
       kpiExtraIncome +
-      overtimeTeachingPay;
+      overtimeTeachingPay +
+      royaltyPayment +
+      postgradHonorarium;
 
-    // 9. Khấu trừ bảo hiểm pháp định (10.5%: BHXH 8%, BHYT 1.5%, BHTN 1%)
-    const insurableBase = baseSalary + leadershipAllowance + seniorityAllowance;
-    const socialInsurance = Math.round(insurableBase * 0.08);
-    const healthInsurance = Math.round(insurableBase * 0.015);
-    const unemploymentInsurance = Math.round(baseSalary * 0.01);
-    const totalInsurance = socialInsurance + healthInsurance + unemploymentInsurance;
+    // 9. Khấu trừ bảo hiểm pháp định (miễn đóng nếu nghỉ không lương >= 14 ngày hoặc không có ngày công; trần 20x lương cơ sở cho BHXH/BHYT và 20x lương tối thiểu vùng cho BHTN)
+    const nonWorkingDays = safeStdDays > 0 ? Math.max(safeUnpaidDays, safeStdDays - safeActualDays) : safeUnpaidDays;
+    const waiveInsurance = safeUnpaidDays >= 14 || nonWorkingDays >= 14 || safeActualDays <= 0;
+
+    let insurableBase = 0;
+    let socialInsurance = 0;
+    let healthInsurance = 0;
+    let unemploymentInsurance = 0;
+    let totalInsurance = 0;
+
+    if (!waiveInsurance) {
+      const rawInsurableBase =
+        baseSalary + rawLeadershipAllowance + rawSeniorityAllowance;
+      const bhxhBhytBase = Math.min(rawInsurableBase, BHXH_BHYT_INSURANCE_CAP);
+      const bhtnBase = Math.min(rawInsurableBase, BHTN_INSURANCE_CAP);
+      insurableBase = bhxhBhytBase;
+      socialInsurance = Math.round(bhxhBhytBase * 0.08);
+      healthInsurance = Math.round(bhxhBhytBase * 0.015);
+      unemploymentInsurance = Math.round(bhtnBase * 0.01);
+      totalInsurance = socialInsurance + healthInsurance + unemploymentInsurance;
+    }
 
     // 10. Giảm trừ gia cảnh & Thuế TNCN lũy tiến 7 bậc
     const personalDeduction = 11000000;
-    const dependentDeduction = dependentCount * 4400000;
+    const dependentDeduction = safeDependentCount * 4400000;
     const taxableIncome = Math.max(
       0,
       grossIncome - totalInsurance - personalDeduction - dependentDeduction
@@ -393,20 +526,22 @@ export class PayrollService {
       month,
       year,
       baseSalaryRate: BASE_SALARY_RATE,
-      salaryCoefficient,
+      salaryCoefficient: safeSalaryCoeff,
       baseSalary,
       leadershipAllowance,
       seniorityAllowance,
       pedagogicalAllowance,
-      standardWorkDays,
-      actualWorkDays,
-      unpaidLeaveDays,
+      standardWorkDays: safeStdDays,
+      actualWorkDays: safeActualDays,
+      unpaidLeaveDays: safeUnpaidDays,
       workDaysDeduction,
       kpiRanking,
       kpiBonusCoefficient,
       kpiExtraIncome,
-      overtimeTeachingHours,
+      overtimeTeachingHours: safeOvertimeHours,
       overtimeTeachingPay,
+      royaltyPayment,
+      postgradHonorarium,
       grossIncome,
       insurableBase,
       socialInsurance,
@@ -414,7 +549,7 @@ export class PayrollService {
       unemploymentInsurance,
       totalInsurance,
       personalDeduction,
-      dependentCount,
+      dependentCount: safeDependentCount,
       dependentDeduction,
       taxableIncome,
       personalIncomeTax,
@@ -437,30 +572,63 @@ export class PayrollService {
         where: { id: employeeId },
         include: {
           assignments: {
-            where: { status: "ACTIVE" },
+            orderBy: { startDate: "desc" },
             include: { position: true, unit: true },
           },
           contracts: {
-            where: { status: "ACTIVE" },
             orderBy: { effectiveDate: "desc" },
+          },
+          monthlyTimesheets: {
+            where: { period: { month, year } },
+            include: { period: true },
+            take: 1,
+          },
+          kpiEvaluations: {
+            where: { period: { academicYear: { contains: String(year) } } },
+            orderBy: { finalizedAt: "desc" },
             take: 1,
           },
         },
       }) as any;
 
       if (employee) {
-        const activeContract = employee.contracts?.[0];
+        const activeContract =
+          employee.contracts?.find((c: any) => c.status === "ACTIVE") ||
+          employee.contracts?.[0];
         const salaryCoefficient = activeContract?.salaryCoefficient
           ? Number(activeContract.salaryCoefficient)
           : 4.98;
-        const activeAssignment = employee.assignments?.[0];
+        const activeAssignment =
+          employee.assignments?.find((a: any) => a.status === "ACTIVE") ||
+          employee.assignments?.[0];
         const hireYear = employee.hireDate ? new Date(employee.hireDate).getFullYear() : 2020;
+
+        const timesheet = employee.monthlyTimesheets?.[0];
+        let standardWorkDays = 22;
+        if (timesheet?.standardDays !== undefined) {
+          standardWorkDays = Number(timesheet.standardDays);
+        } else {
+          const attPeriod = await prisma.attendancePeriod.findFirst({
+            where: { month, year },
+          });
+          if (attPeriod?.standardWorkingDays) {
+            standardWorkDays = Number(attPeriod.standardWorkingDays);
+          }
+        }
+        const unpaidLeaveDays = timesheet ? Number(timesheet.unpaidLeaveDays || 0) : 0;
+        const actualWorkDays = timesheet
+          ? Number(timesheet.totalPayableDays ?? timesheet.actualWorkingDays ?? standardWorkDays)
+          : standardWorkDays;
+
+        const kpiEval = employee.kpiEvaluations?.[0];
+        const kpiRanking = mapKpiRankingToLetter(kpiEval?.ranking);
 
         let overtimeHours = 0;
         try {
           const quota = await WorkloadService.getEmployeeQuota(employee.id, `${year - 1}-${year}`);
           if (quota && quota.overtimeHours > 0) {
-            overtimeHours = Math.round(quota.overtimeHours * 10) / 10;
+            // Định mức vượt giờ tính theo năm học -> chia đều 12 tháng, không nhân 12 lần
+            overtimeHours = Math.round((quota.overtimeHours / 12) * 10) / 10;
           }
         } catch {
           overtimeHours = 0;
@@ -474,15 +642,17 @@ export class PayrollService {
           academicTitle: employee.academicTitle,
           positionName: activeAssignment?.position?.name || "Giảng viên",
           positionCode: activeAssignment?.position?.code || "GIANG_VIEN",
+          positionType: activeAssignment?.position?.positionType,
           month,
           year,
           salaryCoefficient,
           hireYear,
-          kpiRanking: "A",
+          hireDate: employee.hireDate,
+          kpiRanking,
           dependentCount: 0,
-          standardWorkDays: 22,
-          actualWorkDays: 22,
-          unpaidLeaveDays: 0,
+          standardWorkDays,
+          actualWorkDays,
+          unpaidLeaveDays,
           overtimeTeachingHours: overtimeHours,
         });
       }
@@ -531,64 +701,149 @@ export class PayrollService {
     recalculate = false
   ): Promise<PayrollPeriodDetailDto> {
     const periodKey = `${month}-${year}`;
+    const existing = this.periodsStore.get(periodKey);
 
-    if (!recalculate && this.periodsStore.has(periodKey)) {
-      return this.periodsStore.get(periodKey)!;
+    if (!recalculate && existing) {
+      return existing;
+    }
+
+    if (
+      recalculate &&
+      existing &&
+      (existing.status === "APPROVED" ||
+        existing.status === "LOCKED" ||
+        existing.status === "PAID")
+    ) {
+      throw new AppError(
+        409,
+        "PERIOD_LOCKED",
+        "Kỳ lương đã được phê duyệt, khóa hoặc chi trả, không thể tính lại."
+      );
     }
 
     let items: PayslipDto[] = [];
+    let dbQueried = false;
+
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
     try {
-      const activeEmployees = await prisma.employee.findMany({
-        where: { employmentStatus: "ACTIVE" },
+      const attPeriod = await prisma.attendancePeriod.findFirst({
+        where: { month, year },
+      });
+      const defaultStdDays = attPeriod?.standardWorkingDays
+        ? Number(attPeriod.standardWorkingDays)
+        : 22;
+
+      const eligibleEmployees = await prisma.employee.findMany({
+        where: {
+          OR: [
+            {
+              employmentStatus: { in: ["ACTIVE", "PROBATION"] },
+              hireDate: { lte: monthEnd },
+            },
+            {
+              employmentStatus: { in: ["RESIGNED", "RETIRED"] },
+              monthlyTimesheets: { some: { period: { month, year } } },
+            },
+            {
+              employmentStatus: { in: ["RESIGNED", "RETIRED"] },
+              contracts: {
+                some: {
+                  effectiveDate: { lte: monthEnd },
+                  OR: [{ expiryDate: null }, { expiryDate: { gte: monthStart } }],
+                },
+              },
+            },
+          ],
+        },
         include: {
           assignments: {
-            where: { status: "ACTIVE" },
+            orderBy: { startDate: "desc" },
             include: { position: true, unit: true },
           },
           contracts: {
-            where: { status: "ACTIVE" },
             orderBy: { effectiveDate: "desc" },
+          },
+          monthlyTimesheets: {
+            where: { period: { month, year } },
+            take: 1,
+          },
+          kpiEvaluations: {
+            where: { period: { academicYear: { contains: String(year) } } },
+            orderBy: { finalizedAt: "desc" },
             take: 1,
           },
         },
       }) as any[];
 
-      if (activeEmployees && activeEmployees.length > 0) {
-        items = activeEmployees.map((emp) => {
-          const contract = emp.contracts?.[0];
-          const assignment = emp.assignments?.[0];
-          const salaryCoefficient = contract?.salaryCoefficient
-            ? Number(contract.salaryCoefficient)
-            : 4.98;
-          const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : 2020;
+      dbQueried = true;
 
-          return this.computeSinglePayslip({
-            employeeId: emp.id,
-            employeeName: emp.fullName,
-            employeeCode: emp.employeeCode,
-            departmentName: assignment?.unit?.name || "Khoa Kiến trúc",
-            academicTitle: emp.academicTitle,
-            positionName: assignment?.position?.name || "Giảng viên",
-            positionCode: assignment?.position?.code || "GIANG_VIEN",
-            month,
-            year,
-            salaryCoefficient,
-            hireYear,
-            kpiRanking: "A",
-            dependentCount: 0,
-            standardWorkDays: 22,
-            actualWorkDays: 22,
-            unpaidLeaveDays: 0,
-            overtimeTeachingHours: 6.0,
-          });
-        });
+      if (eligibleEmployees && eligibleEmployees.length > 0) {
+        items = await Promise.all(
+          eligibleEmployees.map(async (emp) => {
+            const contract =
+              emp.contracts?.find((c: any) => c.status === "ACTIVE") ||
+              emp.contracts?.[0];
+            const assignment =
+              emp.assignments?.find((a: any) => a.status === "ACTIVE") ||
+              emp.assignments?.[0];
+            const salaryCoefficient = contract?.salaryCoefficient
+              ? Number(contract.salaryCoefficient)
+              : 4.98;
+            const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : 2020;
+
+            const ts = emp.monthlyTimesheets?.[0];
+            const standardWorkDays = ts?.standardDays !== undefined
+              ? Number(ts.standardDays)
+              : defaultStdDays;
+            const unpaidLeaveDays = ts ? Number(ts.unpaidLeaveDays || 0) : 0;
+            const actualWorkDays = ts
+              ? Number(ts.totalPayableDays ?? ts.actualWorkingDays ?? standardWorkDays)
+              : standardWorkDays;
+
+            const kpiEval = emp.kpiEvaluations?.[0];
+            const kpiRanking = mapKpiRankingToLetter(kpiEval?.ranking);
+
+            let overtimeTeachingHours = 0;
+            try {
+              const quota = await WorkloadService.getEmployeeQuota(emp.id, `${year - 1}-${year}`);
+              if (quota && quota.overtimeHours > 0) {
+                overtimeTeachingHours = Math.round((quota.overtimeHours / 12) * 10) / 10;
+              }
+            } catch {
+              overtimeTeachingHours = 0;
+            }
+
+            return this.computeSinglePayslip({
+              employeeId: emp.id,
+              employeeName: emp.fullName,
+              employeeCode: emp.employeeCode,
+              departmentName: assignment?.unit?.name || "Khoa Kiến trúc",
+              academicTitle: emp.academicTitle,
+              positionName: assignment?.position?.name || "Giảng viên",
+              positionCode: assignment?.position?.code || "GIANG_VIEN",
+              positionType: assignment?.position?.positionType,
+              month,
+              year,
+              salaryCoefficient,
+              hireYear,
+              hireDate: emp.hireDate,
+              kpiRanking,
+              dependentCount: 0,
+              standardWorkDays,
+              actualWorkDays,
+              unpaidLeaveDays,
+              overtimeTeachingHours,
+            });
+          })
+        );
       }
     } catch {
-      // Fallback to standard faculty
+      // Fallback to standard faculty only when DB is offline
     }
 
-    if (items.length === 0) {
+    if (!dbQueried && items.length === 0 && process.env["NODE_ENV"] !== "production") {
       items = DEFAULT_FACULTY_MEMBERS.map((member) =>
         this.computeSinglePayslip({
           ...member,
@@ -719,8 +974,12 @@ export class PayrollService {
     submitterName = "Kế toán viên KHTC"
   ): Promise<PayrollPeriodDetailDto> {
     const detail = await this.getPeriodDetail(month, year);
-    if (detail.status === "LOCKED" || detail.status === "PAID") {
-      throw new AppError(400, "BAD_REQUEST", "Kỳ lương đã được khóa hoặc chi trả, không thể chỉnh sửa.");
+    if (detail.status !== "DRAFT") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        `Chỉ có thể trình duyệt kỳ lương ở trạng thái DRAFT (trạng thái hiện tại: ${detail.status}).`
+      );
     }
     detail.status = "SUBMITTED";
     detail.submittedBy = submitterName;
@@ -739,8 +998,12 @@ export class PayrollService {
     customSignature?: string
   ): Promise<PayrollPeriodDetailDto> {
     const detail = await this.getPeriodDetail(month, year);
-    if (detail.status === "LOCKED" || detail.status === "PAID") {
-      throw new AppError(400, "BAD_REQUEST", "Kỳ lương đã được khóa hoặc chi trả.");
+    if (detail.status !== "SUBMITTED") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        `Kỳ lương phải ở trạng thái SUBMITTED trước khi phê duyệt (trạng thái hiện tại: ${detail.status}).`
+      );
     }
 
     detail.status = "APPROVED";
@@ -767,6 +1030,13 @@ export class PayrollService {
     year: number
   ): Promise<PayrollPeriodDetailDto> {
     const detail = await this.getPeriodDetail(month, year);
+    if (detail.status !== "APPROVED") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        `Kỳ lương phải ở trạng thái APPROVED trước khi khóa (trạng thái hiện tại: ${detail.status}).`
+      );
+    }
     detail.status = "LOCKED";
     this.periodsStore.set(`${month}-${year}`, detail);
     return detail;

@@ -130,8 +130,8 @@ async function runPayrollEngineTests() {
     const insurableBase = expectedBaseSalary + expectedSeniority;
     const expectedBHXH = Math.round(insurableBase * 0.08); // 988,191đ
     const expectedBHYT = Math.round(insurableBase * 0.015); // 185,286đ
-    const expectedBHTN = Math.round(expectedBaseSalary * 0.01); // 116,532đ
-    const expectedTotalInsurance = expectedBHXH + expectedBHYT + expectedBHTN; // 1,290,009đ
+    const expectedBHTN = Math.round(insurableBase * 0.01); // 123,524đ (trên tổng quỹ lương đóng BH)
+    const expectedTotalInsurance = expectedBHXH + expectedBHYT + expectedBHTN; // 1,297,001đ
 
     assert.strictEqual(testPayslipWithLeave.socialInsurance, expectedBHXH);
     assert.strictEqual(testPayslipWithLeave.healthInsurance, expectedBHYT);

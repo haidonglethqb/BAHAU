@@ -16,8 +16,10 @@ import { AppError } from "../middlewares/error.middleware.js";
 import { UnitService } from "./unit.service.js";
 
 export class TrainingService {
+  private static courseMaxParticipants = new Map<string, number>();
+
   /**
-   * Tính toán tình trạng cảnh báo hạn sử dụng của chứng chỉ
+   * Tính toán tình trạng cảnh báo hạn sử dụng của chứng chỉ (so sánh ngày lịch theo UTC+7)
    */
   private static calculateExpiryAlert(expiryDate: Date | null): {
     daysUntilExpiry: number | null;
@@ -27,14 +29,23 @@ export class TrainingService {
       return { daysUntilExpiry: null, alertStatus: null };
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+    const nowVn = new Date(Date.now() + VN_OFFSET_MS);
+    const todayUtcMidnight = Date.UTC(
+      nowVn.getUTCFullYear(),
+      nowVn.getUTCMonth(),
+      nowVn.getUTCDate()
+    );
 
-    const exp = new Date(expiryDate);
-    exp.setHours(0, 0, 0, 0);
+    const expDate = new Date(expiryDate);
+    const expUtcMidnight = Date.UTC(
+      expDate.getUTCFullYear(),
+      expDate.getUTCMonth(),
+      expDate.getUTCDate()
+    );
 
-    const diffTime = exp.getTime() - today.getTime();
-    const daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffTime = expUtcMidnight - todayUtcMidnight;
+    const daysUntilExpiry = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
     let alertStatus: CertificateExpiryAlertStatus;
     if (daysUntilExpiry < 0) {
@@ -121,42 +132,79 @@ export class TrainingService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ nhân sự của bạn trong hệ thống");
     }
 
-    // Kiểm tra trùng số hiệu chứng chỉ
-    const existing = await prisma.certificate.findFirst({
+    const certNumber = input.certificateNumber.trim();
+
+    // Kiểm tra trùng số hiệu chứng chỉ trên toàn hệ thống (ngoại trừ các chứng chỉ đã REJECTED)
+    const existingActive = await prisma.certificate.findFirst({
       where: {
-        employeeId,
-        certificateNumber: input.certificateNumber.trim(),
+        certificateNumber: certNumber,
+        status: { not: "REJECTED" },
       },
     });
 
-    if (existing) {
-      throw new AppError(409, "DUPLICATE_ENTRY", `Số hiệu chứng chỉ '${input.certificateNumber}' đã được bạn khai báo trước đó`);
+    if (existingActive) {
+      throw new AppError(
+        409,
+        "DUPLICATE_ENTRY",
+        existingActive.employeeId === employeeId
+          ? `Số hiệu chứng chỉ '${input.certificateNumber}' đã được bạn khai báo trước đó`
+          : `Số hiệu chứng chỉ '${input.certificateNumber}' đã được khai báo trên hệ thống`
+      );
     }
 
-    const created = await prisma.certificate.create({
-      data: {
+    // Cho phép CBGV nộp lại chứng chỉ nếu bản ghi trước đó của chính họ bị REJECTED
+    const existingRejected = await prisma.certificate.findFirst({
+      where: {
         employeeId,
-        certificateType: input.certificateType,
-        name: input.name.trim(),
-        certificateNumber: input.certificateNumber.trim(),
-        issuedBy: input.issuedBy.trim(),
-        issuedDate: new Date(input.issuedDate),
-        expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
-        score: input.score ? input.score.trim() : null,
-        fileUrl: input.fileUrl || null,
-        status: "PENDING",
+        certificateNumber: certNumber,
+        status: "REJECTED",
       },
-      include: {
-        employee: {
-          include: {
-            assignments: {
-              where: { assignmentType: "PRIMARY", status: "ACTIVE" },
-              include: { unit: true },
-            },
+    });
+
+    const certInclude = {
+      employee: {
+        include: {
+          assignments: {
+            where: { assignmentType: "PRIMARY" as const, status: "ACTIVE" as const },
+            include: { unit: true },
           },
         },
       },
-    });
+    };
+
+    const created = existingRejected
+      ? await prisma.certificate.update({
+          where: { id: existingRejected.id },
+          data: {
+            certificateType: input.certificateType,
+            name: input.name.trim(),
+            issuedBy: input.issuedBy.trim(),
+            issuedDate: new Date(input.issuedDate),
+            expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
+            score: input.score ? input.score.trim() : null,
+            fileUrl: input.fileUrl || null,
+            status: "PENDING",
+            verifiedById: null,
+            verifiedAt: null,
+            rejectionReason: null,
+          },
+          include: certInclude,
+        })
+      : await prisma.certificate.create({
+          data: {
+            employeeId,
+            certificateType: input.certificateType,
+            name: input.name.trim(),
+            certificateNumber: certNumber,
+            issuedBy: input.issuedBy.trim(),
+            issuedDate: new Date(input.issuedDate),
+            expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
+            score: input.score ? input.score.trim() : null,
+            fileUrl: input.fileUrl || null,
+            status: "PENDING",
+          },
+          include: certInclude,
+        });
 
     const primaryAssignment = created.employee.assignments[0];
     const { daysUntilExpiry, alertStatus } = this.calculateExpiryAlert(created.expiryDate);
@@ -373,6 +421,25 @@ export class TrainingService {
       );
     }
 
+    if (certificate.status !== "PENDING") {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        `Chỉ có thể thẩm định chứng chỉ đang ở trạng thái PENDING (trạng thái hiện tại: ${certificate.status}).`
+      );
+    }
+
+    if (input.status === "VERIFIED" && certificate.expiryDate) {
+      const { alertStatus } = this.calculateExpiryAlert(certificate.expiryDate);
+      if (alertStatus === "EXPIRED") {
+        throw new AppError(
+          422,
+          "CERTIFICATE_EXPIRED",
+          "Chứng chỉ đã hết hạn sử dụng, không thể phê duyệt VERIFIED."
+        );
+      }
+    }
+
     const updated = await prisma.certificate.update({
       where: { id: certificateId },
       data: {
@@ -430,9 +497,13 @@ export class TrainingService {
     days: number = 90,
     currentUser?: AuthUser
   ): Promise<CertificateDto[]> {
+    if (!Number.isFinite(days) || days < 0 || days > 3650) {
+      throw new AppError(422, "VALIDATION_FAILED", "Tham số days phải nằm trong khoảng 0 đến 3650.");
+    }
     const certs = await this.getAllCertificates({}, currentUser);
     return certs.filter(
       (c) =>
+        c.status !== "REJECTED" &&
         c.daysUntilExpiry !== null &&
         c.daysUntilExpiry !== undefined &&
         c.daysUntilExpiry <= days
@@ -536,6 +607,12 @@ export class TrainingService {
   ): Promise<TrainingParticipantDto> {
     const course = await prisma.trainingCourse.findUnique({
       where: { id: courseId },
+      include: {
+        participants: {
+          where: { status: { not: "DROPPED" } },
+          select: { id: true },
+        },
+      },
     });
 
     if (!course) {
@@ -544,6 +621,23 @@ export class TrainingService {
 
     if (course.status === "COMPLETED" || course.status === "CANCELLED") {
       throw new AppError(400, "INVALID_STATE", "Khóa đào tạo đã kết thúc hoặc bị hủy, không thể đăng ký");
+    }
+
+    if (new Date() > new Date(course.startDate)) {
+      throw new AppError(
+        409,
+        "REGISTRATION_CLOSED",
+        "Đã quá thời hạn đăng ký (khóa đào tạo đã bắt đầu)."
+      );
+    }
+
+    const maxParticipants = this.courseMaxParticipants.get(courseId);
+    if (maxParticipants !== undefined && course.participants.length >= maxParticipants) {
+      throw new AppError(
+        409,
+        "COURSE_FULL",
+        `Khóa đào tạo đã đạt sĩ số tối đa (${maxParticipants} học viên).`
+      );
     }
 
     const existing = await prisma.trainingParticipant.findUnique({
@@ -555,29 +649,50 @@ export class TrainingService {
       },
     });
 
-    if (existing) {
+    if (existing && existing.status !== "DROPPED") {
       throw new AppError(409, "DUPLICATE_ENTRY", "Bạn đã đăng ký tham gia khóa đào tạo này rồi");
     }
 
-    const participant = await prisma.trainingParticipant.create({
-      data: {
-        courseId,
-        employeeId,
-        status: "REGISTERED",
-        note: input.note || null,
-      },
-      include: {
-        course: true,
-        employee: {
-          include: {
-            assignments: {
-              where: { assignmentType: "PRIMARY", status: "ACTIVE" },
-              include: { unit: true },
-            },
+    const participantInclude = {
+      course: true,
+      employee: {
+        include: {
+          assignments: {
+            where: { assignmentType: "PRIMARY" as const, status: "ACTIVE" as const },
+            include: { unit: true },
           },
         },
       },
-    });
+    };
+
+    let participant;
+    try {
+      participant = existing
+        ? await prisma.trainingParticipant.update({
+            where: { id: existing.id },
+            data: {
+              status: "REGISTERED",
+              grade: null,
+              certificateIssued: false,
+              note: input.note || null,
+            },
+            include: participantInclude,
+          })
+        : await prisma.trainingParticipant.create({
+            data: {
+              courseId,
+              employeeId,
+              status: "REGISTERED",
+              note: input.note || null,
+            },
+            include: participantInclude,
+          });
+    } catch (err: any) {
+      if (err?.code === "P2002") {
+        throw new AppError(409, "DUPLICATE_ENTRY", "Bạn đã đăng ký tham gia khóa đào tạo này rồi");
+      }
+      throw err;
+    }
 
     const primaryAssignment = participant.employee.assignments[0];
 
@@ -596,6 +711,133 @@ export class TrainingService {
       note: participant.note,
       createdAt: participant.createdAt.toISOString(),
       updatedAt: participant.updatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * 9. Chuyển đổi trạng thái vòng đời khóa đào tạo (PLANNING -> ONGOING -> COMPLETED | CANCELLED)
+   */
+  static async updateCourseStatus(
+    courseId: string,
+    nextStatus: "PLANNING" | "ONGOING" | "COMPLETED" | "CANCELLED"
+  ): Promise<TrainingCourseDto> {
+    const course = await prisma.trainingCourse.findUnique({
+      where: { id: courseId },
+      include: { participants: true },
+    });
+
+    if (!course) {
+      throw new AppError(404, "NOT_FOUND", "Không tìm thấy khóa đào tạo");
+    }
+
+    const allowedTransitions: Record<string, string[]> = {
+      PLANNING: ["ONGOING", "CANCELLED"],
+      ONGOING: ["COMPLETED", "CANCELLED"],
+      COMPLETED: [],
+      CANCELLED: [],
+    };
+
+    const allowed = allowedTransitions[course.status] || [];
+    if (!allowed.includes(nextStatus)) {
+      throw new AppError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        `Không thể chuyển trạng thái khóa đào tạo từ ${course.status} sang ${nextStatus}.`
+      );
+    }
+
+    const updated = await prisma.trainingCourse.update({
+      where: { id: courseId },
+      data: { status: nextStatus },
+      include: { participants: true },
+    });
+
+    return {
+      id: updated.id,
+      code: updated.code,
+      name: updated.name,
+      category: updated.category,
+      provider: updated.provider,
+      startDate: updated.startDate.toISOString().split("T")[0],
+      endDate: updated.endDate.toISOString().split("T")[0],
+      location: updated.location,
+      budget: updated.budget ? Number(updated.budget) : 0,
+      status: updated.status,
+      description: updated.description,
+      participantCount: updated.participants.filter((p) => p.status !== "DROPPED").length,
+      isRegisteredByMe: false,
+      myParticipantStatus: null,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  /**
+   * 10. Cập nhật trạng thái học viên, chấm điểm & cấp chứng nhận hoàn thành khóa đào tạo
+   */
+  static async updateParticipantStatus(
+    courseId: string,
+    employeeId: string,
+    input: UpdateParticipantStatusInput
+  ): Promise<TrainingParticipantDto> {
+    const existing = await prisma.trainingParticipant.findUnique({
+      where: {
+        courseId_employeeId: {
+          courseId,
+          employeeId,
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new AppError(
+        404,
+        "NOT_FOUND",
+        "Không tìm thấy học viên trong danh sách khóa đào tạo này"
+      );
+    }
+
+    const updated = await prisma.trainingParticipant.update({
+      where: { id: existing.id },
+      data: {
+        status: input.status,
+        grade: input.grade !== undefined ? input.grade : existing.grade,
+        certificateIssued:
+          input.certificateIssued !== undefined
+            ? input.certificateIssued
+            : existing.certificateIssued,
+        note: input.note !== undefined ? input.note : existing.note,
+      },
+      include: {
+        course: true,
+        employee: {
+          include: {
+            assignments: {
+              where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+              include: { unit: true },
+            },
+          },
+        },
+      },
+    });
+
+    const primaryAssignment = updated.employee.assignments[0];
+
+    return {
+      id: updated.id,
+      courseId: updated.courseId,
+      courseCode: updated.course.code,
+      courseName: updated.course.name,
+      employeeId: updated.employeeId,
+      employeeCode: updated.employee.employeeCode,
+      employeeName: updated.employee.fullName,
+      unitName: primaryAssignment?.unit?.name || "Chưa phân bổ",
+      status: updated.status,
+      grade: updated.grade,
+      certificateIssued: updated.certificateIssued,
+      note: updated.note,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
     };
   }
 }
