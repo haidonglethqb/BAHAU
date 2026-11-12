@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, AlertTriangle, X } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
 
@@ -25,65 +25,29 @@ interface BusinessTripItem {
   }[];
 }
 
+function getAuthHeaders(includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (includeJson) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("bahau_session_id");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function diffVnCalendarDays(startYmd: string, endYmd: string): number {
+  const [sy, sm, sd] = startYmd.split("-").map(Number);
+  const [ey, em, ed] = endYmd.split("-").map(Number);
+  const startUtc = Date.UTC(sy, sm - 1, sd);
+  const endUtc = Date.UTC(ey, em - 1, ed);
+  return Math.round((endUtc - startUtc) / (1000 * 60 * 60 * 24)) + 1;
+}
+
 export default function BusinessTripsPage() {
-  const [trips, setTrips] = useState<BusinessTripItem[]>([
-    {
-      id: "trip-req-001",
-      purpose: "Tham dự Hội thảo Quốc tế về Quy hoạch Đô thị Xanh & Công trình Sinh thái 2026",
-      destination: "Trường Đại học Kiến trúc Hà Nội, TP. Hà Nội",
-      startDate: "2026-11-05",
-      endDate: "2026-11-08",
-      totalDays: 4,
-      budgetEstimate: 9500000,
-      fundingSource: "Ngân sách Trường (Quỹ NCKH & Hợp tác đối ngoại)",
-      status: "PENDING",
-      createdAt: "2026-09-17T09:00:00Z",
-      steps: [
-        {
-          stepName: "Trưởng Khoa Kiến trúc phê duyệt kế hoạch",
-          approverRoleCode: "ROLE_UNIT_HEAD",
-          approverEmployeeName: "Trần Kiến Trúc",
-          status: "WAITING",
-        },
-        {
-          stepName: "Ban Giám hiệu phê duyệt quyết định cử đi công tác",
-          approverRoleCode: "ROLE_RECTOR",
-          approverEmployeeName: "GS.TS. Nguyễn Hiệu Trưởng",
-          status: "WAITING",
-        },
-      ],
-    },
-    {
-      id: "trip-req-002",
-      purpose: "Khảo sát thực địa và giám sát công trình đồ án tốt nghiệp sinh viên Khoa Xây dựng",
-      destination: "Khu Kinh tế Dung Quất, Tỉnh Quảng Ngãi",
-      startDate: "2026-04-10",
-      endDate: "2026-04-12",
-      totalDays: 3,
-      budgetEstimate: 5000000,
-      fundingSource: "Kinh phí Đề tài NCKH cấp Bộ",
-      status: "APPROVED",
-      createdAt: "2026-04-01T14:00:00Z",
-      steps: [
-        {
-          stepName: "Trưởng Khoa phê duyệt kế hoạch",
-          approverRoleCode: "ROLE_UNIT_HEAD",
-          approverEmployeeName: "Trần Kiến Trúc",
-          status: "APPROVED",
-          comment: "Kế hoạch khảo sát chi tiết, đã bố trí giảng viên dạy bù.",
-          actionAt: "2026-04-02T10:00:00Z",
-        },
-        {
-          stepName: "Ban Giám hiệu phê duyệt quyết định cử đi công tác",
-          approverRoleCode: "ROLE_RECTOR",
-          approverEmployeeName: "GS.TS. Nguyễn Hiệu Trưởng",
-          status: "APPROVED",
-          comment: "Đồng ý cấp kinh phí công tác theo định mức quy chế chi tiêu nội bộ.",
-          actionAt: "2026-04-03T16:30:00Z",
-        },
-      ],
-    },
-  ]);
+  const [trips, setTrips] = useState<BusinessTripItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<BusinessTripItem | null>(null);
@@ -101,19 +65,43 @@ export default function BusinessTripsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
+  const fetchTrips = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/v1/trips/requests/my", {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false) {
+        setTrips([]);
+        setErrorMsg(json?.error?.message || `Không thể tải danh sách công tác (HTTP ${res.status}).`);
+        return;
+      }
+      setTrips(Array.isArray(json?.data) ? json.data : []);
+    } catch (err) {
+      setTrips([]);
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi kết nối máy chủ.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (formData.startDate && formData.endDate) {
-      const start = new Date(formData.startDate);
-      const end = new Date(formData.endDate);
-      if (end >= start) {
-        const diffTime = Math.abs(end.getTime() - start.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    fetchTrips();
+  }, [fetchTrips]);
+
+  useEffect(() => {
+    if (formData.startDate && formData.endDate && formData.endDate >= formData.startDate) {
+      const diffDays = diffVnCalendarDays(formData.startDate, formData.endDate);
+      if (diffDays > 0) {
         setFormData((prev) => ({ ...prev, totalDays: String(diffDays) }));
       }
     }
   }, [formData.startDate, formData.endDate]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     setFormSuccess(null);
@@ -134,54 +122,69 @@ export default function BusinessTripsPage() {
       return;
     }
 
-    const newTripId = "trip-req-" + Date.now().toString().slice(-4);
-    const newTrip: BusinessTripItem = {
-      id: newTripId,
-      purpose: formData.purpose,
-      destination: formData.destination,
-      startDate: formData.startDate,
-      endDate: formData.endDate,
-      totalDays: days,
-      budgetEstimate: formData.budgetEstimate ? parseFloat(formData.budgetEstimate) : null,
-      fundingSource: formData.fundingSource,
-      status: "PENDING",
-      createdAt: new Date().toISOString(),
-      steps: [
-        {
-          stepName: "Trưởng đơn vị phê duyệt kế hoạch",
-          approverRoleCode: "ROLE_UNIT_HEAD",
-          approverEmployeeName: "Trần Kiến Trúc",
-          status: "WAITING",
-        },
-        {
-          stepName: "Ban Giám hiệu phê duyệt quyết định cử đi công tác",
-          approverRoleCode: "ROLE_RECTOR",
-          approverEmployeeName: "GS.TS. Nguyễn Hiệu Trưởng",
-          status: "WAITING",
-        },
-      ],
-    };
-
-    setTrips([newTrip, ...trips]);
-    setFormSuccess("Đăng ký chuyến công tác thành công! Hồ sơ đã được chuyển đến Trưởng đơn vị phê duyệt.");
-    setTimeout(() => {
-      setShowModal(false);
-      setFormSuccess(null);
-      setFormData({
-        purpose: "",
-        destination: "",
-        startDate: "",
-        endDate: "",
-        totalDays: "1",
-        budgetEstimate: "",
-        fundingSource: "Ngân sách Trường",
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/v1/trips/requests", {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(true),
+        body: JSON.stringify({
+          purpose: formData.purpose.trim(),
+          destination: formData.destination.trim(),
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          totalDays: days,
+          budgetEstimate: formData.budgetEstimate ? parseFloat(formData.budgetEstimate) : null,
+          fundingSource: formData.fundingSource.trim() || null,
+        }),
       });
-    }, 1500);
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false) {
+        setFormError(json?.error?.message || `Không thể đăng ký công tác (HTTP ${res.status}).`);
+        return;
+      }
+
+      setFormSuccess("Đăng ký chuyến công tác thành công! Hồ sơ đã được chuyển đến luồng phê duyệt.");
+      fetchTrips();
+      setTimeout(() => {
+        setShowModal(false);
+        setFormSuccess(null);
+        setFormData({
+          purpose: "",
+          destination: "",
+          startDate: "",
+          endDate: "",
+          totalDays: "1",
+          budgetEstimate: "",
+          fundingSource: "Ngân sách Trường",
+        });
+      }, 1000);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Lỗi kết nối máy chủ.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleCancelTrip = (id: string) => {
+  const handleCancelTrip = async (id: string) => {
     if (!confirm("Bạn có chắc chắn muốn hủy đăng ký chuyến công tác này?")) return;
-    setTrips(trips.map((t) => (t.id === id ? { ...t, status: "CANCELLED" as const } : t)));
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/v1/trips/requests/${id}/cancel`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(true),
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false) {
+        setErrorMsg(json?.error?.message || `Không thể hủy chuyến công tác (HTTP ${res.status}).`);
+        return;
+      }
+      fetchTrips();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi hủy chuyến công tác.");
+    }
   };
 
   const totalBudgetApproved = trips
@@ -219,6 +222,13 @@ export default function BusinessTripsPage() {
           Đăng ký chuyến công tác mới
         </button>
       </div>
+
+      {errorMsg && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-800 flex items-center gap-2">
+          <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -281,7 +291,20 @@ export default function BusinessTripsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {trips.map((t) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-8 text-center text-xs text-slate-500">
+                    Đang tải danh sách công tác...
+                  </td>
+                </tr>
+              ) : trips.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-8 text-center text-xs text-slate-500">
+                    Chưa có chuyến công tác nào được ghi nhận.
+                  </td>
+                </tr>
+              ) : (
+                trips.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-50/70 transition">
                   <td className="px-6 py-4">
                     <div className="font-semibold text-slate-900">{t.id}</div>
@@ -341,7 +364,8 @@ export default function BusinessTripsPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>

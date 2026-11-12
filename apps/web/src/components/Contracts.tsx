@@ -1,263 +1,434 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
   Building2,
-  Calendar,
   CheckCircle2,
   Clock,
   Download,
-  Eye,
   FileCheck,
   FileSignature,
-  FileSpreadsheet,
   FileText,
   Filter,
-  GraduationCap,
+  Loader2,
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
-  UserCheck,
-  Users,
   X,
 } from 'lucide-react'
 import { Badge, Button, Card, StatCard, StatusPill, Tabs } from './ui'
 import { useAuth } from '../context/AuthContext'
 
-interface ContractItem {
+type ContractType =
+  | 'PROBATION'
+  | 'DEFINITE_TERM_12M'
+  | 'DEFINITE_TERM_36M'
+  | 'INDEFINITE_TERM'
+  | 'VISITING_LECTURER'
+
+type ContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'TERMINATED' | 'RENEWED'
+
+type ContractAlertLevel = 'NORMAL' | 'WARNING_90' | 'WARNING_60' | 'CRITICAL_30' | 'EXPIRED' | 'INDEFINITE'
+
+interface ContractDto {
   id: string
-  code: string
-  name: string
-  unit: string
-  position: string
-  contractNo: string
-  type: 'INDEFINITE' | 'DEFINITE_36M' | 'DEFINITE_12M' | 'PROBATION' | 'VISITING'
-  typeLabel: string
-  salaryCoefficient: number
-  salaryRank: string
+  employeeId: string
+  employeeCode: string
+  employeeName: string
+  unitName?: string | null
+  positionName?: string | null
+  contractNumber: string
+  contractType: ContractType
+  signedDate: string
   effectiveDate: string
   expiryDate: string | null
-  daysLeft: number | null
-  status: 'ACTIVE' | 'EXPIRING_CRITICAL' | 'EXPIRING_WARNING' | 'RENEWED'
+  salaryCoefficient: number
+  status: ContractStatus
+  daysRemaining?: number | null
+  alertLevel?: ContractAlertLevel
+  parentContractId?: string | null
+  createdAt: string
 }
 
-const SAMPLE_CONTRACTS: ContractItem[] = [
-  {
-    id: 'ct-01',
-    code: 'DAU260001',
-    name: 'PGS.TS. Trần Thị Bình',
-    unit: 'Khoa Kiến trúc',
-    position: 'Trưởng khoa',
-    contractNo: 'HĐLĐ-DAU/2021-001',
-    type: 'INDEFINITE',
-    typeLabel: 'Không xác định thời hạn',
-    salaryCoefficient: 6.78,
-    salaryRank: 'Bậc 6/8',
-    effectiveDate: '2021-01-01',
-    expiryDate: null,
-    daysLeft: null,
-    status: 'ACTIVE',
-  },
-  {
-    id: 'ct-02',
-    code: 'DAU260002',
-    name: 'TS. Phạm Văn Dũng',
-    unit: 'Khoa Xây dựng',
-    position: 'Trưởng khoa',
-    contractNo: 'HĐLĐ-DAU/2021-004',
-    type: 'INDEFINITE',
-    typeLabel: 'Không xác định thời hạn',
-    salaryCoefficient: 6.44,
-    salaryRank: 'Bậc 5/8',
-    effectiveDate: '2021-03-01',
-    expiryDate: null,
-    daysLeft: null,
-    status: 'ACTIVE',
-  },
-  {
-    id: 'ct-03',
-    code: 'DAU260003',
-    name: 'ThS. Nguyễn Văn An',
-    unit: 'Khoa Kiến trúc',
-    position: 'Giảng viên',
-    contractNo: 'HĐLĐ-DAU/2023-018',
-    type: 'DEFINITE_36M',
-    typeLabel: 'Xác định thời hạn 36 tháng',
-    salaryCoefficient: 4.98,
-    salaryRank: 'Bậc 5/8',
-    effectiveDate: '2023-11-01',
-    expiryDate: '2026-10-31',
-    daysLeft: 26,
-    status: 'EXPIRING_CRITICAL',
-  },
-  {
-    id: 'ct-04',
-    code: 'DAU260004',
-    name: 'TS. Lê Thị Hà',
-    unit: 'Khoa CNTT',
-    position: 'Phó Trưởng khoa',
-    contractNo: 'HĐLĐ-DAU/2022-022',
-    type: 'INDEFINITE',
-    typeLabel: 'Không xác định thời hạn',
-    salaryCoefficient: 5.42,
-    salaryRank: 'Bậc 4/8',
-    effectiveDate: '2022-09-01',
-    expiryDate: null,
-    daysLeft: null,
-    status: 'ACTIVE',
-  },
-  {
-    id: 'ct-05',
-    code: 'DAU260005',
-    name: 'ThS. Võ Hoàng Long',
-    unit: 'Khoa Kiến trúc',
-    position: 'Giảng viên',
-    contractNo: 'HĐLĐ-DAU/2023-089',
-    type: 'DEFINITE_36M',
-    typeLabel: 'Xác định thời hạn 36 tháng',
-    salaryCoefficient: 4.65,
-    salaryRank: 'Bậc 4/8',
-    effectiveDate: '2023-12-15',
-    expiryDate: '2026-12-14',
-    daysLeft: 70,
-    status: 'EXPIRING_WARNING',
-  },
-  {
-    id: 'ct-06',
-    code: 'DAU260006',
-    name: 'KS. Đặng Thu Hương',
-    unit: 'Khoa Xây dựng',
-    position: 'Trợ giảng',
-    contractNo: 'HĐLĐ-DAU/2025-112',
-    type: 'DEFINITE_12M',
-    typeLabel: 'Xác định thời hạn 12 tháng',
-    salaryCoefficient: 3.0,
-    salaryRank: 'Bậc 1/8',
-    effectiveDate: '2025-10-15',
-    expiryDate: '2026-10-14',
-    daysLeft: 9,
-    status: 'EXPIRING_CRITICAL',
-  },
-  {
-    id: 'ct-07',
-    code: 'DAU260007',
-    name: 'TS. Bùi Quốc Việt',
-    unit: 'Khoa Mỹ thuật ứng dụng',
-    position: 'Trưởng bộ môn',
-    contractNo: 'HĐLĐ-DAU/2020-008',
-    type: 'INDEFINITE',
-    typeLabel: 'Không xác định thời hạn',
-    salaryCoefficient: 6.1,
-    salaryRank: 'Bậc 5/8',
-    effectiveDate: '2020-08-01',
-    expiryDate: null,
-    daysLeft: null,
-    status: 'ACTIVE',
-  },
-  {
-    id: 'ct-08',
-    code: 'DAU260012',
-    name: 'KTS. Nguyễn Hoàng Nam',
-    unit: 'Khoa Kiến trúc',
-    position: 'Giảng viên tập sự',
-    contractNo: 'HĐTV-DAU/2026-003',
-    type: 'PROBATION',
-    typeLabel: 'Hợp đồng Thử việc (12 tháng)',
-    salaryCoefficient: 2.67,
-    salaryRank: 'Tập sự (85%)',
-    effectiveDate: '2026-09-01',
-    expiryDate: '2027-08-31',
-    daysLeft: 330,
-    status: 'ACTIVE',
-  },
-]
+interface ContractAlertSummary {
+  totalActive: number
+  totalDefinite: number
+  totalIndefinite: number
+  totalExpiring30: number
+  totalExpiring60: number
+  totalExpiring90: number
+}
 
-const UNITS = [
-  'Tất cả đơn vị',
-  'Khoa Kiến trúc',
-  'Khoa Xây dựng',
-  'Khoa CNTT',
-  'Khoa Mỹ thuật ứng dụng',
-  'Phòng Đào tạo',
-  'Ban Giám hiệu',
-]
+interface PaginationMeta {
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+}
+
+interface EmployeeOption {
+  id: string
+  employeeCode: string
+  fullName: string
+}
+
+const CONTRACT_TYPE_LABEL: Record<ContractType, string> = {
+  INDEFINITE_TERM: 'Không xác định thời hạn',
+  DEFINITE_TERM_36M: 'Xác định thời hạn 36 tháng',
+  DEFINITE_TERM_12M: 'Xác định thời hạn 12 tháng',
+  PROBATION: 'Thử việc / Tập sự',
+  VISITING_LECTURER: 'Giảng viên thỉnh giảng',
+}
+
+const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
+  DRAFT: 'Dự thảo',
+  ACTIVE: 'Đang hiệu lực',
+  EXPIRED: 'Đã hết hạn',
+  TERMINATED: 'Chấm dứt',
+  RENEWED: 'Đã tái ký',
+}
+
+function getVnTodayStr(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
+function getAuthHeaders(includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (includeJson) headers['Content-Type'] = 'application/json'
+  if (typeof window !== 'undefined') {
+    const token = window.localStorage.getItem('bahau_session_id')
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
+  return headers
+}
+
+async function authFetchJson<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<{ ok: boolean; status: number; data?: T; pagination?: PaginationMeta; error?: string }> {
+  try {
+    const res = await fetch(url, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...getAuthHeaders(Boolean(init?.body)),
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    })
+    const json = await res.json().catch(() => null)
+    const pagination: PaginationMeta | undefined = json?.pagination ?? json?.meta?.pagination
+    if (!res.ok || json?.success === false) {
+      return {
+        ok: false,
+        status: res.status,
+        error: json?.error?.message || json?.message || `Yêu cầu thất bại (HTTP ${res.status})`,
+      }
+    }
+    return {
+      ok: true,
+      status: res.status,
+      data: (json?.data ?? json) as T,
+      pagination,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : 'Không thể kết nối máy chủ.',
+    }
+  }
+}
 
 export function Contracts() {
   const { user } = useAuth()
   const role = user?.role || 'LECTURER'
+  const canManageContracts = role === 'HR_SPECIALIST' || role === 'RECTOR'
+  const canReadAlerts = role === 'DEAN' || role === 'HR_SPECIALIST' || role === 'RECTOR'
 
-  const [contracts, setContracts] = useState<ContractItem[]>(SAMPLE_CONTRACTS)
+  const [contracts, setContracts] = useState<ContractDto[]>([])
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null)
+  const [alerts, setAlerts] = useState<ContractAlertSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
   const [activeTab, setActiveTab] = useState<'all' | 'expiring' | 'indefinite' | 'term36' | 'probation'>('all')
+  const [expiringBucket, setExpiringBucket] = useState<'ALL' | '30' | '60' | '90'>('ALL')
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedUnit, setSelectedUnit] = useState(() => {
-    if (role === 'DEAN') return 'Khoa Kiến trúc'
-    return UNITS[0]
-  })
-  const [selectedContract, setSelectedContract] = useState<ContractItem | null>(null)
+  const [selectedUnit, setSelectedUnit] = useState('Tất cả đơn vị')
+  const [selectedContract, setSelectedContract] = useState<ContractDto | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
-  // Calculations for overview stats
-  const stats = useMemo(() => {
-    if (role === 'DEAN') {
-      const facultyContracts = contracts.filter((c) => c.unit.includes('Khoa Kiến trúc'))
-      return {
-        total: 48,
-        indefinite: 28,
-        term36: 16,
-        expiring: facultyContracts.filter((c) => c.daysLeft !== null && c.daysLeft <= 90).length + 2,
-      }
-    }
-    const total = 428
-    const indefinite = 236
-    const term36 = 124
-    const expiring = contracts.filter((c) => c.daysLeft !== null && c.daysLeft <= 90).length + 10
-    return { total, indefinite, term36, expiring }
-  }, [contracts, role])
+  // Renew modal state
+  const [renewTarget, setRenewTarget] = useState<ContractDto | null>(null)
+  const [renewForm, setRenewForm] = useState({
+    contractNumber: '',
+    contractType: 'DEFINITE_TERM_36M' as ContractType,
+    signedDate: getVnTodayStr(),
+    effectiveDate: getVnTodayStr(),
+    expiryDate: '',
+    salaryCoefficient: '4.98',
+    note: '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
 
-  // Filtered rows
+  // Create contract modal state
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [employees, setEmployees] = useState<EmployeeOption[]>([])
+  const [createForm, setCreateForm] = useState({
+    employeeId: '',
+    contractNumber: '',
+    contractType: 'DEFINITE_TERM_36M' as ContractType,
+    signedDate: getVnTodayStr(),
+    effectiveDate: getVnTodayStr(),
+    expiryDate: '',
+    salaryCoefficient: '3.00',
+  })
+
+  const fetchData = useCallback(async () => {
+    if (role === 'SYSTEM_ADMIN') {
+      setLoading(false)
+      setContracts([])
+      setAlerts(null)
+      setErrorMsg('Vai trò Quản trị Hệ thống (SYSTEM_ADMIN) không có quyền truy cập dữ liệu hợp đồng lao động.')
+      return
+    }
+
+    setLoading(true)
+    setErrorMsg(null)
+
+    const listPromise = authFetchJson<ContractDto[]>('/api/v1/contracts?page=1&pageSize=100')
+    const alertPromise = canReadAlerts
+      ? authFetchJson<ContractAlertSummary>('/api/v1/contracts/summary/alerts')
+      : Promise.resolve(null)
+
+    const [listRes, alertRes] = await Promise.all([listPromise, alertPromise])
+
+    if (listRes.ok && Array.isArray(listRes.data)) {
+      setContracts(listRes.data)
+      setPagination(listRes.pagination ?? null)
+    } else {
+      setContracts([])
+      setPagination(null)
+      setErrorMsg(listRes.error || 'Không thể tải danh sách hợp đồng lao động.')
+    }
+
+    if (alertRes) {
+      if (alertRes.ok && alertRes.data) {
+        setAlerts(alertRes.data)
+      } else if (!alertRes.ok && alertRes.status !== 403) {
+        setErrorMsg((prev) => prev || alertRes.error || 'Không thể tải cảnh báo hết hạn hợp đồng.')
+      }
+    } else {
+      setAlerts(null)
+    }
+
+    setLoading(false)
+  }, [role, canReadAlerts])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  const unitOptions = useMemo(() => {
+    const names = Array.from(new Set(contracts.map((c) => c.unitName).filter((u): u is string => Boolean(u))))
+    return ['Tất cả đơn vị', ...names]
+  }, [contracts])
+
+  const computedStats = useMemo(() => {
+    const total = alerts?.totalActive ?? pagination?.totalItems ?? contracts.length
+    const indefinite =
+      alerts?.totalIndefinite ?? contracts.filter((c) => c.contractType === 'INDEFINITE_TERM' && c.status === 'ACTIVE').length
+    const definite =
+      alerts?.totalDefinite ?? contracts.filter((c) => c.contractType !== 'INDEFINITE_TERM' && c.status === 'ACTIVE').length
+    const exp30 =
+      alerts?.totalExpiring30 ??
+      contracts.filter((c) => c.daysRemaining != null && c.daysRemaining >= 0 && c.daysRemaining <= 30).length
+    const exp60 =
+      alerts?.totalExpiring60 ??
+      contracts.filter((c) => c.daysRemaining != null && c.daysRemaining >= 31 && c.daysRemaining <= 60).length
+    const exp90 =
+      alerts?.totalExpiring90 ??
+      contracts.filter((c) => c.daysRemaining != null && c.daysRemaining >= 61 && c.daysRemaining <= 90).length
+    return {
+      total,
+      indefinite,
+      definite,
+      exp30,
+      exp60,
+      exp90,
+      expiringTotal: exp30 + exp60 + exp90,
+    }
+  }, [alerts, pagination, contracts])
+
   const filteredContracts = useMemo(() => {
     return contracts.filter((item) => {
-      // Force dean to their department
-      if (role === 'DEAN' && !item.unit.includes('Khoa Kiến trúc')) {
+      if (activeTab === 'expiring') {
+        if (item.daysRemaining == null || item.daysRemaining < 0 || item.daysRemaining > 90) return false
+        if (expiringBucket === '30' && item.daysRemaining > 30) return false
+        if (expiringBucket === '60' && (item.daysRemaining < 31 || item.daysRemaining > 60)) return false
+        if (expiringBucket === '90' && (item.daysRemaining < 61 || item.daysRemaining > 90)) return false
+      }
+      if (activeTab === 'indefinite' && item.contractType !== 'INDEFINITE_TERM') return false
+      if (activeTab === 'term36' && item.contractType !== 'DEFINITE_TERM_36M') return false
+      if (activeTab === 'probation' && item.contractType !== 'PROBATION') return false
+
+      if (role !== 'DEAN' && selectedUnit !== 'Tất cả đơn vị' && item.unitName !== selectedUnit) {
         return false
       }
 
-      // Tab filter
-      if (activeTab === 'expiring' && (item.daysLeft === null || item.daysLeft > 90)) return false
-      if (activeTab === 'indefinite' && item.type !== 'INDEFINITE') return false
-      if (activeTab === 'term36' && item.type !== 'DEFINITE_36M') return false
-      if (activeTab === 'probation' && item.type !== 'PROBATION') return false
-
-      // Unit filter (for HR & Rector)
-      if (role !== 'DEAN' && selectedUnit !== UNITS[0] && !item.unit.includes(selectedUnit) && !selectedUnit.includes(item.unit)) {
-        return false
-      }
-
-      // Query filter
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase()
         return (
-          item.name.toLowerCase().includes(q) ||
-          item.code.toLowerCase().includes(q) ||
-          item.contractNo.toLowerCase().includes(q)
+          item.employeeName.toLowerCase().includes(q) ||
+          item.employeeCode.toLowerCase().includes(q) ||
+          item.contractNumber.toLowerCase().includes(q)
         )
       }
 
       return true
     })
-  }, [contracts, activeTab, selectedUnit, searchQuery, role])
+  }, [contracts, activeTab, expiringBucket, selectedUnit, searchQuery, role])
 
-  const handleRenewProposal = (item: ContractItem) => {
+  const openRenewModal = (item: ContractDto) => {
+    const today = getVnTodayStr()
     setSelectedContract(null)
-    setToastMessage(`Đã lập hồ sơ đề xuất tái ký hợp đồng cho ${item.name} (${item.code}). Đã chuyển Phòng TCHC thẩm định.`)
-    setTimeout(() => setToastMessage(null), 5000)
+    setModalError(null)
+    setRenewTarget(item)
+    setRenewForm({
+      contractNumber: `${item.contractNumber}-GH`,
+      contractType: item.contractType === 'PROBATION' ? 'DEFINITE_TERM_12M' : 'INDEFINITE_TERM',
+      signedDate: today,
+      effectiveDate: today,
+      expiryDate: '',
+      salaryCoefficient: String(item.salaryCoefficient || 4.98),
+      note: '',
+    })
+  }
+
+  const handleRenewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!renewTarget) return
+    setSubmitting(true)
+    setModalError(null)
+
+    const payload = {
+      contractNumber: renewForm.contractNumber.trim(),
+      contractType: renewForm.contractType,
+      signedDate: renewForm.signedDate,
+      effectiveDate: renewForm.effectiveDate,
+      expiryDate: renewForm.contractType === 'INDEFINITE_TERM' ? null : renewForm.expiryDate || null,
+      salaryCoefficient: Number(renewForm.salaryCoefficient),
+      note: renewForm.note.trim() || null,
+    }
+
+    const res = await authFetchJson<ContractDto>(`/api/v1/contracts/${renewTarget.id}/renew`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+
+    setSubmitting(false)
+    if (!res.ok) {
+      setModalError(res.error || 'Không thể tái ký / gia hạn hợp đồng.')
+      return
+    }
+
+    setRenewTarget(null)
+    setToastMessage(`Đã tái ký hợp đồng ${payload.contractNumber} cho ${renewTarget.employeeName}.`)
+    fetchData()
+  }
+
+  const openCreateModal = async () => {
+    setModalError(null)
+    setShowCreateModal(true)
+    if (employees.length === 0) {
+      const empRes = await authFetchJson<EmployeeOption[]>('/api/v1/employees?page=1&pageSize=100')
+      if (empRes.ok && Array.isArray(empRes.data)) {
+        setEmployees(empRes.data)
+        if (empRes.data[0]) {
+          setCreateForm((prev) => ({ ...prev, employeeId: prev.employeeId || empRes.data![0].id }))
+        }
+      }
+    }
+  }
+
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
+    setModalError(null)
+
+    const payload = {
+      employeeId: createForm.employeeId,
+      contractNumber: createForm.contractNumber.trim(),
+      contractType: createForm.contractType,
+      signedDate: createForm.signedDate,
+      effectiveDate: createForm.effectiveDate,
+      expiryDate: createForm.contractType === 'INDEFINITE_TERM' ? null : createForm.expiryDate || null,
+      salaryCoefficient: Number(createForm.salaryCoefficient),
+    }
+
+    const res = await authFetchJson<ContractDto>('/api/v1/contracts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+
+    setSubmitting(false)
+    if (!res.ok) {
+      setModalError(res.error || 'Không thể tạo hợp đồng lao động mới.')
+      return
+    }
+
+    setShowCreateModal(false)
+    setToastMessage(`Đã tạo mới hợp đồng ${payload.contractNumber}.`)
+    fetchData()
+  }
+
+  const handleExportCsv = () => {
+    if (filteredContracts.length === 0) return
+    const headers = ['Ma CBGV', 'Ho va ten', 'Don vi', 'Chuc vu', 'So hop dong', 'Loai hop dong', 'He so luong', 'Ngay hieu luc', 'Ngay het han', 'Trang thai']
+    const rows = filteredContracts.map((c) => [
+      c.employeeCode,
+      c.employeeName,
+      c.unitName || '',
+      c.positionName || '',
+      c.contractNumber,
+      CONTRACT_TYPE_LABEL[c.contractType] || c.contractType,
+      String(c.salaryCoefficient),
+      c.effectiveDate,
+      c.expiryDate || 'Khong thoi han',
+      CONTRACT_STATUS_LABEL[c.status] || c.status,
+    ])
+    const csvContent =
+      '\uFEFF' +
+      [headers, ...rows]
+        .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `danh-sach-hop-dong-${getVnTodayStr()}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
   }
 
   // VIEW FOR LECTURER: PERSONAL CONTRACT WORKSPACE
   if (role === 'LECTURER') {
+    const activeContract = contracts.find((c) => c.status === 'ACTIVE') || contracts[0] || null
+    const expiringSoon =
+      activeContract && activeContract.daysRemaining != null && activeContract.daysRemaining >= 0 && activeContract.daysRemaining <= 90
+
     return (
       <div className="mx-auto max-w-5xl space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
@@ -266,152 +437,132 @@ export function Contracts() {
               <span className="rounded bg-brand-50 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-brand-700 border border-brand-200">
                 Hồ Sơ Hợp Đồng Cá Nhân
               </span>
-              <span className="text-xs text-muted">Mã CBGV: DAU260003 · Khoa Kiến trúc</span>
+              {activeContract && (
+                <span className="text-xs text-muted">
+                  Mã CBGV: {activeContract.employeeCode}
+                  {activeContract.unitName ? ` · ${activeContract.unitName}` : ''}
+                </span>
+              )}
             </div>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">
-              Hợp Đồng Lao Động & Quá Trình Công Tác — ThS. Nguyễn Văn An
+              Hợp Đồng Lao Động & Quá Trình Công Tác — {user?.fullName || activeContract?.employeeName || 'Cán bộ giảng viên'}
             </h1>
             <p className="text-xs sm:text-sm text-muted">
-              Tra cứu văn bản hợp đồng điện tử, quá trình đóng bảo hiểm xã hội và thời hạn tái ký hợp đồng
+              Tra cứu hợp đồng lao động, hệ số lương và thời hạn tái ký hợp đồng từ CSDL nhân sự
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setToastMessage('Đang tải bản sao HĐLĐ điện tử có chữ ký số trường dạng PDF...')
-                setTimeout(() => setToastMessage(null), 4000)
-              }}
-            >
-              <Download size={15} /> Tải Bản Sao HĐLĐ (PDF)
-            </Button>
-            <Button
-              onClick={() => {
-                setToastMessage('Đã gửi yêu cầu cấp Giấy xác nhận công tác & thu nhập tới Phòng TCHC.')
-                setTimeout(() => setToastMessage(null), 5000)
-              }}
-            >
-              <FileText size={15} /> Xin Xác Nhận Công Tác
-            </Button>
-          </div>
+          <Button variant="outline" onClick={fetchData} disabled={loading}>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Làm mới
+          </Button>
         </div>
 
-        {toastMessage && (
-          <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs sm:text-sm font-medium text-emerald-800 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={17} className="text-emerald-600 shrink-0" />
-              <span>{toastMessage}</span>
-            </div>
-            <button onClick={() => setToastMessage(null)} className="p-1 text-emerald-600 hover:text-emerald-900">
-              <X size={15} />
-            </button>
+        {errorMsg && (
+          <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-800">
+            <AlertCircle size={17} className="shrink-0 text-rose-600" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* Expiry Warning Notice */}
-        <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 sm:p-5 text-rose-900">
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="text-rose-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <h4 className="text-sm font-bold">Thông Báo Thời Hạn Hợp Đồng: Còn 26 ngày (Hết hạn 31/10/2026)</h4>
-              <p className="text-xs leading-relaxed text-rose-800">
-                Thầy/cô đang giữ Hợp đồng xác định thời hạn 36 tháng (`HĐLĐ-DAU/2023-018`). Theo quy định của Luật Viên chức
-                và Bộ luật Lao động, Thầy/cô đủ điều kiện chuyển đổi sang <strong>Hợp đồng không xác định thời hạn</strong>.
-                Khoa Kiến trúc đã lập tờ trình chuyển Phòng TCHC tiếp nhận hồ sơ.
-              </p>
-              <div className="pt-2">
-                <Button
-                  size="sm"
-                  className="bg-rose-600 hover:bg-rose-700 text-white"
-                  onClick={() => {
-                    setToastMessage('Đã gửi văn bản xác nhận nguyện vọng tái ký HĐLĐ không xác định thời hạn tới Khoa & TCHC.')
-                    setTimeout(() => setToastMessage(null), 5000)
-                  }}
-                >
-                  <FileSignature size={14} /> Gửi Đơn Đề Đạt Nguyện Vọng Tái Ký
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 4 Summary Stat Cards */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="p-4">
-            <span className="text-xs text-muted block">Số hợp đồng hiện hành</span>
-            <span className="text-sm font-mono font-bold text-ink mt-1 block">HĐLĐ-DAU/2023-018</span>
-            <span className="text-[11px] text-emerald-600 mt-2 block font-medium">Ký ngày 01/11/2023</span>
+        {loading ? (
+          <Card className="flex items-center justify-center gap-2 p-10 text-sm text-muted">
+            <Loader2 size={18} className="animate-spin text-brand-600" /> Đang tải dữ liệu hợp đồng cá nhân...
           </Card>
-          <Card className="p-4">
-            <span className="text-xs text-muted block">Loại hợp đồng</span>
-            <span className="text-sm font-bold text-ink mt-1 block">Xác định thời hạn 36T</span>
-            <span className="text-[11px] text-brand-600 mt-2 block font-medium">Viên chức giảng dạy</span>
+        ) : !activeContract ? (
+          <Card className="p-8 text-center text-sm text-muted">
+            Chưa ghi nhận hợp đồng lao động nào trong hồ sơ của bạn.
           </Card>
-          <Card className="p-4">
-            <span className="text-xs text-muted block">Ngạch bậc & Hệ số</span>
-            <span className="text-sm font-bold text-ink mt-1 block">4.98 (Bậc 5/8)</span>
-            <span className="text-[11px] text-slate-500 mt-2 block">Mã ngạch: V.07.01.03</span>
-          </Card>
-          <Card className="p-4">
-            <span className="text-xs text-muted block">Bảo hiểm xã hội</span>
-            <span className="text-sm font-mono font-bold text-ink mt-1 block">Sổ: 7912345678</span>
-            <span className="text-[11px] text-emerald-600 mt-2 block font-medium">8 năm 6 tháng liên tục</span>
-          </Card>
-        </div>
-
-        {/* Contract History Timeline */}
-        <Card className="p-6 space-y-4">
-          <h3 className="text-base font-bold text-ink flex items-center gap-2">
-            <Clock size={18} className="text-brand-600" />
-            Lịch Sử Ký Kết Hợp Đồng & Quá Trình Công Tác Tại DAU
-          </h3>
-
-          <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-line">
-            <div className="relative">
-              <div className="absolute -left-6 top-1 h-3.5 w-3.5 rounded-full bg-brand-600 ring-4 ring-brand-100" />
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-ink">Hợp đồng Xác định thời hạn 36 tháng</span>
-                  <Badge tone="warning">Đang có hiệu lực</Badge>
+        ) : (
+          <>
+            {expiringSoon && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 sm:p-5 text-rose-900">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={20} className="text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold">
+                      Thông Báo Thời Hạn Hợp Đồng: Còn {activeContract.daysRemaining} ngày (Hết hạn {activeContract.expiryDate})
+                    </h4>
+                    <p className="text-xs leading-relaxed text-rose-800">
+                      Hợp đồng <span className="font-mono font-semibold">{activeContract.contractNumber}</span> (
+                      {CONTRACT_TYPE_LABEL[activeContract.contractType]}) sắp đến hạn. Vui lòng liên hệ Trưởng đơn vị và Phòng Tổ chức - Hành chính để thực hiện thủ tục tái ký theo quy định.
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xs text-muted">Số: HĐLĐ-DAU/2023-018 · Thời hạn: 01/11/2023 → 31/10/2026</p>
-                <p className="text-xs text-slate-600">
-                  Vị trí: Giảng viên Bộ môn Kiến trúc công trình. Hệ số khởi điểm: 4.65, nâng lương định kỳ lên 4.98 ngày 01/11/2025.
-                </p>
               </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="p-4">
+                <span className="text-xs text-muted block">Số hợp đồng hiện hành</span>
+                <span className="text-sm font-mono font-bold text-ink mt-1 block">{activeContract.contractNumber}</span>
+                <span className="text-[11px] text-emerald-600 mt-2 block font-medium">
+                  Ký ngày {activeContract.signedDate}
+                </span>
+              </Card>
+              <Card className="p-4">
+                <span className="text-xs text-muted block">Loại hợp đồng</span>
+                <span className="text-sm font-bold text-ink mt-1 block">
+                  {CONTRACT_TYPE_LABEL[activeContract.contractType] || activeContract.contractType}
+                </span>
+                <span className="text-[11px] text-brand-600 mt-2 block font-medium">
+                  {CONTRACT_STATUS_LABEL[activeContract.status] || activeContract.status}
+                </span>
+              </Card>
+              <Card className="p-4">
+                <span className="text-xs text-muted block">Hệ số lương hiện hưởng</span>
+                <span className="text-sm font-bold text-ink mt-1 block">{activeContract.salaryCoefficient.toFixed(2)}</span>
+                <span className="text-[11px] text-slate-500 mt-2 block">Hiệu lực từ {activeContract.effectiveDate}</span>
+              </Card>
+              <Card className="p-4">
+                <span className="text-xs text-muted block">Ngày hết hạn</span>
+                <span className="text-sm font-mono font-bold text-ink mt-1 block">
+                  {activeContract.expiryDate || 'Không xác định thời hạn'}
+                </span>
+                <span className="text-[11px] text-slate-500 mt-2 block">
+                  {activeContract.daysRemaining != null ? `Còn ${activeContract.daysRemaining} ngày` : 'Biên chế ổn định'}
+                </span>
+              </Card>
             </div>
 
-            <div className="relative">
-              <div className="absolute -left-6 top-1 h-3.5 w-3.5 rounded-full bg-slate-300" />
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-ink">Hợp đồng Xác định thời hạn 12 tháng</span>
-                  <Badge tone="success">Đã hoàn thành</Badge>
-                </div>
-                <p className="text-xs text-muted">Số: HĐLĐ-DAU/2021-042 · Thời hạn: 01/11/2021 → 31/10/2022</p>
-                <p className="text-xs text-slate-600">Được đánh giá Hoàn thành xuất sắc nhiệm vụ giảng dạy và nghiên cứu khoa học.</p>
-              </div>
-            </div>
+            <Card className="p-6 space-y-4">
+              <h3 className="text-base font-bold text-ink flex items-center gap-2">
+                <Clock size={18} className="text-brand-600" />
+                Lịch Sử Hợp Đồng Lao Động ({contracts.length})
+              </h3>
 
-            <div className="relative">
-              <div className="absolute -left-6 top-1 h-3.5 w-3.5 rounded-full bg-slate-300" />
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-ink">Hợp đồng Thử việc & Tập sự</span>
-                  <Badge tone="success">Đã hoàn thành</Badge>
-                </div>
-                <p className="text-xs text-muted">Số: HĐTV-DAU/2020-019 · Thời hạn: 01/11/2020 → 31/10/2021</p>
-                <p className="text-xs text-slate-600">Bảo vệ kết quả tập sự đạt loại Giỏi trước Hội đồng đánh giá Khoa Kiến trúc.</p>
+              <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-line">
+                {contracts.map((c) => (
+                  <div key={c.id} className="relative">
+                    <div
+                      className={`absolute -left-6 top-1 h-3.5 w-3.5 rounded-full ${
+                        c.status === 'ACTIVE' ? 'bg-brand-600 ring-4 ring-brand-100' : 'bg-slate-300'
+                      }`}
+                    />
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-sm text-ink">
+                          {CONTRACT_TYPE_LABEL[c.contractType] || c.contractType}
+                        </span>
+                        <Badge tone={c.status === 'ACTIVE' ? 'success' : 'neutral'}>
+                          {CONTRACT_STATUS_LABEL[c.status] || c.status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted">
+                        Số: <span className="font-mono font-semibold">{c.contractNumber}</span> · Hiệu lực:{' '}
+                        {c.effectiveDate} → {c.expiryDate || 'Không thời hạn'} · Hệ số lương:{' '}
+                        <strong>{c.salaryCoefficient.toFixed(2)}</strong>
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          </div>
-        </Card>
+            </Card>
+          </>
+        )}
       </div>
     )
   }
 
-  // VIEW FOR DEAN, HR_SPECIALIST, RECTOR, SYSTEM_ADMIN
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       {/* Page Title & Actions */}
@@ -419,89 +570,35 @@ export function Contracts() {
         <div>
           <div className="flex items-center gap-2">
             <span className="rounded bg-brand-50 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-brand-700 border border-brand-200">
-              {role === 'DEAN' && 'Quản Lý Hợp Đồng Khoa'}
+              {role === 'DEAN' && 'Quản Lý Hợp Đồng Đơn Vị'}
               {role === 'HR_SPECIALIST' && 'Quản Trị HĐLĐ Toàn Trường'}
               {role === 'RECTOR' && 'Phê Duyệt HĐLĐ Ban Giám Hiệu'}
-              {role === 'SYSTEM_ADMIN' && 'Audit Trail Hợp Đồng'}
-            </span>
-            <span className="text-xs text-muted">
-              {role === 'DEAN' && 'Khoa Kiến trúc · PGS.TS. Trần Thị Bình (Trưởng khoa)'}
-              {role === 'HR_SPECIALIST' && 'Phòng TCHC · ThS. Lê Minh Cường · Luật Viên chức & NĐ 115/2020'}
-              {role === 'RECTOR' && 'Ban Giám hiệu · GS.TS. Hoàng Đức Dũng (Hiệu trưởng)'}
-              {role === 'SYSTEM_ADMIN' && 'Quản trị hệ thống · KS. Phạm Quản Trị'}
+              {role === 'SYSTEM_ADMIN' && 'Phân Quyền Hợp Đồng'}
             </span>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">
-            {role === 'DEAN' && 'Quản Lý Hợp Đồng Giảng Viên — Khoa Kiến Trúc'}
+            {role === 'DEAN' && 'Quản Lý Hợp Đồng Giảng Viên Đơn Vị'}
             {role === 'HR_SPECIALIST' && 'Quản Lý Hợp Đồng Lao Động & Viên Chức Toàn Trường'}
-            {role === 'RECTOR' && 'Phê Duyệt & Ký Hợp Đồng Lao Động — Ban Giám Hiệu'}
-            {role === 'SYSTEM_ADMIN' && 'Cơ Sở Dữ Liệu Hợp Đồng & Thang Bảng Lương'}
+            {role === 'RECTOR' && 'Theo Dõi & Tái Ký Hợp Đồng Lao Động — Ban Giám Hiệu'}
+            {role === 'SYSTEM_ADMIN' && 'Quản Lý Hợp Đồng Lao Động'}
           </h1>
           <p className="text-xs sm:text-sm text-muted">
-            {role === 'DEAN' && 'Giám sát 48 giảng viên thuộc Khoa Kiến trúc, theo dõi thời hạn đáo hạn và lập tờ trình đề xuất tái ký'}
-            {role === 'HR_SPECIALIST' && 'Vòng đời hợp đồng, quản trị ngạch bậc lương và hệ thống cảnh báo tái ký/gia hạn tập trung'}
-            {role === 'RECTOR' && 'Thẩm tra các tờ trình ký mới, tái ký không xác định thời hạn và phê duyệt quyết định tuyển dụng'}
-            {role === 'SYSTEM_ADMIN' && 'Lưu vết lịch sử hợp đồng và kiểm toán thay đổi ngạch bậc'}
+            Theo dõi hợp đồng lao động, cảnh báo đáo hạn 30 / 31–60 / 61–90 ngày và xử lý tái ký đồng bộ với CSDL.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Dean top actions */}
-          {role === 'DEAN' && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setToastMessage('Đã kết xuất danh sách hợp đồng Khoa Kiến trúc dạng Excel.')
-                  setTimeout(() => setToastMessage(null), 4000)
-                }}
-              >
-                <Download size={15} /> Xuất DS Khoa Kiến Trúc
-              </Button>
-              <Button
-                onClick={() => {
-                  setToastMessage('Đã lập Tờ trình tập thể đề xuất tái ký HĐLĐ cho 4 giảng viên sắp đáo hạn gửi Phòng TCHC.')
-                  setTimeout(() => setToastMessage(null), 5000)
-                }}
-              >
-                <FileSignature size={15} /> Đề Xuất Tái Ký Tập Thể Khoa
-              </Button>
-            </>
+          <Button variant="outline" onClick={fetchData} disabled={loading}>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Làm mới
+          </Button>
+          {filteredContracts.length > 0 && (
+            <Button variant="outline" onClick={handleExportCsv}>
+              <Download size={15} /> Xuất CSV ({filteredContracts.length})
+            </Button>
           )}
-
-          {/* HR Specialist top actions */}
-          {role === 'HR_SPECIALIST' && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setToastMessage('Đã kết xuất danh sách hợp đồng toàn trường dạng Excel.')
-                  setTimeout(() => setToastMessage(null), 4000)
-                }}
-              >
-                <Download size={15} /> Xuất Báo Cáo Excel
-              </Button>
-              <Button
-                onClick={() => {
-                  setToastMessage('Biểu mẫu lập phụ lục / ký mới HĐLĐ theo Nghị định 115/2020/NĐ-CP.')
-                  setTimeout(() => setToastMessage(null), 4000)
-                }}
-              >
-                <Plus size={15} /> Ký Mới HĐLĐ
-              </Button>
-            </>
-          )}
-
-          {/* Rector top actions */}
-          {role === 'RECTOR' && (
-            <Button
-              className="bg-brand-600 hover:bg-brand-700 text-white"
-              onClick={() => {
-                setToastMessage('Hiệu trưởng đã Ký số PKI phê duyệt 4 quyết định bổ nhiệm & tái ký HĐLĐ đợt tháng 10/2026.')
-                setTimeout(() => setToastMessage(null), 5000)
-              }}
-            >
-              <ShieldCheck size={15} /> Ký Số Quyết Định Tái Ký HĐLĐ
+          {canManageContracts && (
+            <Button onClick={openCreateModal}>
+              <Plus size={15} /> Ký Mới HĐLĐ
             </Button>
           )}
         </div>
@@ -519,32 +616,47 @@ export function Contracts() {
         </div>
       )}
 
+      {errorMsg && (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-800">
+          <AlertCircle size={17} className="shrink-0 text-rose-600" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* 4 Stat Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title={role === 'DEAN' ? 'Tổng HĐ Khoa Kiến Trúc' : 'Tổng HĐ Toàn Trường'}
-          value={stats.total}
+          title="HĐ Đang Hiệu Lực"
+          value={computedStats.total}
           icon={<FileCheck size={18} />}
-          subvalue={<span className="text-emerald-600 font-semibold">{role === 'DEAN' ? '48 CBGV cơ hữu' : '412 HĐ đang hoạt động'}</span>}
+          subvalue={
+            <span className="text-emerald-600 font-semibold">
+              Tổng số bản ghi: {pagination?.totalItems ?? contracts.length}
+            </span>
+          }
         />
         <StatCard
           title="Không Xác Định Thời Hạn"
-          value={stats.indefinite}
+          value={computedStats.indefinite}
           icon={<Building2 size={18} />}
-          subvalue={<span>{role === 'DEAN' ? '58.3% giảng viên cơ hữu' : '55.1% tổng biên chế viên chức'}</span>}
+          subvalue={<span>Hợp đồng dài hạn</span>}
         />
         <StatCard
-          title="Xác Định Thời Hạn 36T"
-          value={stats.term36}
+          title="Có Thời Hạn / Thử Việc"
+          value={computedStats.definite}
           icon={<Clock size={18} />}
-          subvalue={<span>{role === 'DEAN' ? '16 giảng viên' : '29.0% giảng viên cơ hữu'}</span>}
+          subvalue={<span>Cần theo dõi mốc gia hạn</span>}
         />
         <StatCard
-          title="Cảnh Báo Đáo Hạn (<90N)"
-          value={stats.expiring}
+          title="Cảnh Báo Đáo Hạn (≤90N)"
+          value={computedStats.expiringTotal}
           icon={<AlertTriangle size={18} className="text-amber-600" />}
-          trend={{ label: 'Cần tái ký', tone: 'warning' }}
-          subvalue={<span className="text-rose-600 font-semibold">{stats.expiring} HĐ cần thẩm định</span>}
+          trend={{ label: '30 / 60 / 90N', tone: computedStats.exp30 > 0 ? 'warning' : 'success' }}
+          subvalue={
+            <span className="font-semibold text-rose-700">
+              ≤30N: {computedStats.exp30} · 31–60N: {computedStats.exp60} · 61–90N: {computedStats.exp90}
+            </span>
+          }
         />
       </div>
 
@@ -553,11 +665,27 @@ export function Contracts() {
         activeTab={activeTab}
         onChange={setActiveTab}
         tabs={[
-          { id: 'all', label: role === 'DEAN' ? 'Tất cả HĐ Khoa' : 'Tất cả hợp đồng', count: filteredContracts.length },
-          { id: 'expiring', label: 'Sắp hết hạn (30–90 ngày)', count: filteredContracts.filter((c) => c.daysLeft !== null && c.daysLeft <= 90).length },
-          { id: 'indefinite', label: 'Không xác định thời hạn', count: filteredContracts.filter((c) => c.type === 'INDEFINITE').length },
-          { id: 'term36', label: 'Xác định thời hạn 36T', count: filteredContracts.filter((c) => c.type === 'DEFINITE_36M').length },
-          { id: 'probation', label: 'Thử việc & Tập sự', count: filteredContracts.filter((c) => c.type === 'PROBATION').length },
+          { id: 'all', label: 'Tất cả hợp đồng', count: contracts.length },
+          {
+            id: 'expiring',
+            label: 'Sắp hết hạn (≤90 ngày)',
+            count: contracts.filter((c) => c.daysRemaining != null && c.daysRemaining >= 0 && c.daysRemaining <= 90).length,
+          },
+          {
+            id: 'indefinite',
+            label: 'Không xác định thời hạn',
+            count: contracts.filter((c) => c.contractType === 'INDEFINITE_TERM').length,
+          },
+          {
+            id: 'term36',
+            label: 'Xác định thời hạn 36T',
+            count: contracts.filter((c) => c.contractType === 'DEFINITE_TERM_36M').length,
+          },
+          {
+            id: 'probation',
+            label: 'Thử việc & Tập sự',
+            count: contracts.filter((c) => c.contractType === 'PROBATION').length,
+          },
         ]}
       />
 
@@ -574,27 +702,37 @@ export function Contracts() {
             />
           </div>
 
-          {/* Unit filter only visible for HR & Rector; Dean is locked */}
-          {role !== 'DEAN' ? (
-            <div className="flex items-center gap-2">
-              <Filter size={15} className="text-slate-400 shrink-0 hidden sm:block" />
+          <div className="flex flex-wrap items-center gap-2">
+            {activeTab === 'expiring' && (
               <select
-                value={selectedUnit}
-                onChange={(e) => setSelectedUnit(e.target.value)}
-                className="rounded-lg border border-line bg-white px-3 py-2 text-xs sm:text-sm text-ink outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                value={expiringBucket}
+                onChange={(e) => setExpiringBucket(e.target.value as 'ALL' | '30' | '60' | '90')}
+                className="rounded-lg border border-line bg-white px-3 py-2 text-xs sm:text-sm text-ink outline-none focus:border-brand-500"
               >
-                {UNITS.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
+                <option value="ALL">Tất cả mốc ≤90 ngày</option>
+                <option value="30">Khẩn cấp (≤30 ngày): {computedStats.exp30}</option>
+                <option value="60">Cảnh báo (31–60 ngày): {computedStats.exp60}</option>
+                <option value="90">Theo dõi (61–90 ngày): {computedStats.exp90}</option>
               </select>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-50 border border-brand-200 text-xs font-semibold text-brand-800">
-              <Building2 size={14} /> Đơn vị: Khoa Kiến trúc (Cố định theo thẩm quyền)
-            </div>
-          )}
+            )}
+
+            {role !== 'DEAN' && unitOptions.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Filter size={15} className="text-slate-400 shrink-0 hidden sm:block" />
+                <select
+                  value={selectedUnit}
+                  onChange={(e) => setSelectedUnit(e.target.value)}
+                  className="rounded-lg border border-line bg-white px-3 py-2 text-xs sm:text-sm text-ink outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                >
+                  {unitOptions.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -616,78 +754,76 @@ export function Contracts() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {filteredContracts.map((c) => (
-                <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-3.5 font-mono font-semibold text-slate-700">{c.code}</td>
-                  <td className="p-3.5 font-bold text-ink">{c.name}</td>
-                  <td className="p-3.5 text-slate-600">
-                    <div>{c.unit}</div>
-                    <div className="text-[11px] text-muted">{c.position}</div>
-                  </td>
-                  <td className="p-3.5 font-mono text-slate-500 text-[11px]">{c.contractNo}</td>
-                  <td className="p-3.5 text-slate-700 font-medium">{c.typeLabel}</td>
-                  <td className="p-3.5 font-mono">
-                    <span className="font-bold text-ink">{c.salaryCoefficient.toFixed(2)}</span>
-                    <span className="ml-1 text-[10px] text-muted">({c.salaryRank})</span>
-                  </td>
-                  <td className="p-3.5 font-mono text-slate-600">
-                    {c.expiryDate ? c.expiryDate : <span className="text-slate-400">Vô thời hạn</span>}
-                  </td>
-                  <td className="p-3.5">
-                    {c.status === 'EXPIRING_CRITICAL' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
-                        <AlertTriangle size={11} /> Còn {c.daysLeft} ngày
-                      </span>
-                    ) : c.status === 'EXPIRING_WARNING' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
-                        <Clock size={11} /> Còn {c.daysLeft} ngày
-                      </span>
-                    ) : (
-                      <StatusPill status="active" />
-                    )}
-                  </td>
-                  <td className="p-3.5 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        onClick={() => setSelectedContract(c)}
-                        className="rounded px-2 py-1 text-[11px] font-semibold text-brand-600 hover:bg-brand-50 transition-colors"
-                      >
-                        Chi tiết
-                      </button>
-
-                      {/* Dean action: Lập tờ trình tái ký cho giảng viên khoa */}
-                      {role === 'DEAN' && c.daysLeft !== null && c.daysLeft <= 90 && (
-                        <button
-                          onClick={() => handleRenewProposal(c)}
-                          className="rounded bg-brand-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-brand-600 transition-colors shadow-2xs"
-                        >
-                          Đề xuất tái ký
-                        </button>
-                      )}
-
-                      {/* HR Specialist action */}
-                      {role === 'HR_SPECIALIST' && c.daysLeft !== null && c.daysLeft <= 90 && (
-                        <button
-                          onClick={() => handleRenewProposal(c)}
-                          className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 transition-colors shadow-2xs"
-                        >
-                          Gia hạn HĐ
-                        </button>
-                      )}
-
-                      {/* Rector action */}
-                      {role === 'RECTOR' && c.daysLeft !== null && c.daysLeft <= 90 && (
-                        <button
-                          onClick={() => handleRenewProposal(c)}
-                          className="rounded bg-brand-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-brand-700 transition-colors shadow-2xs"
-                        >
-                          Duyệt ký
-                        </button>
-                      )}
-                    </div>
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="p-8 text-center text-muted">
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={16} className="animate-spin text-brand-600" /> Đang tải dữ liệu hợp đồng...
+                    </span>
                   </td>
                 </tr>
-              ))}
+              ) : filteredContracts.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="p-8 text-center text-muted">
+                    Không có hợp đồng lao động nào phù hợp bộ lọc.
+                  </td>
+                </tr>
+              ) : (
+                filteredContracts.map((c) => (
+                  <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-3.5 font-mono font-semibold text-slate-700">{c.employeeCode}</td>
+                    <td className="p-3.5 font-bold text-ink">{c.employeeName}</td>
+                    <td className="p-3.5 text-slate-600">
+                      <div>{c.unitName || '—'}</div>
+                      <div className="text-[11px] text-muted">{c.positionName || '—'}</div>
+                    </td>
+                    <td className="p-3.5 font-mono text-slate-500 text-[11px]">{c.contractNumber}</td>
+                    <td className="p-3.5 text-slate-700 font-medium">
+                      {CONTRACT_TYPE_LABEL[c.contractType] || c.contractType}
+                    </td>
+                    <td className="p-3.5 font-mono">
+                      <span className="font-bold text-ink">{Number(c.salaryCoefficient).toFixed(2)}</span>
+                    </td>
+                    <td className="p-3.5 font-mono text-slate-600">
+                      {c.expiryDate ? c.expiryDate : <span className="text-slate-400">Vô thời hạn</span>}
+                    </td>
+                    <td className="p-3.5">
+                      {c.alertLevel === 'CRITICAL_30' || (c.daysRemaining != null && c.daysRemaining >= 0 && c.daysRemaining <= 30) ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
+                          <AlertTriangle size={11} /> Còn {c.daysRemaining} ngày
+                        </span>
+                      ) : c.alertLevel === 'WARNING_60' || c.alertLevel === 'WARNING_90' || (c.daysRemaining != null && c.daysRemaining <= 90 && c.daysRemaining > 30) ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
+                          <Clock size={11} /> Còn {c.daysRemaining} ngày
+                        </span>
+                      ) : c.status === 'ACTIVE' ? (
+                        <StatusPill status="active" />
+                      ) : (
+                        <Badge tone="neutral">{CONTRACT_STATUS_LABEL[c.status] || c.status}</Badge>
+                      )}
+                    </td>
+                    <td className="p-3.5 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => setSelectedContract(c)}
+                          className="rounded px-2 py-1 text-[11px] font-semibold text-brand-600 hover:bg-brand-50 transition-colors"
+                        >
+                          Chi tiết
+                        </button>
+
+                        {canManageContracts && c.status === 'ACTIVE' && c.contractType !== 'INDEFINITE_TERM' && (
+                          <button
+                            onClick={() => openRenewModal(c)}
+                            className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 transition-colors shadow-2xs"
+                          >
+                            Tái ký / Gia hạn
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -707,7 +843,7 @@ export function Contracts() {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-ink">Hồ Sơ Hợp Đồng Lao Động</h3>
-                  <p className="text-[11px] font-mono text-muted">{selectedContract.contractNo}</p>
+                  <p className="text-[11px] font-mono text-muted">{selectedContract.contractNumber}</p>
                 </div>
               </div>
               <button
@@ -722,32 +858,38 @@ export function Contracts() {
               <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 border border-line">
                 <div>
                   <span className="text-muted block">Họ và tên</span>
-                  <strong className="text-ink text-[13px]">{selectedContract.name}</strong>
+                  <strong className="text-ink text-[13px]">{selectedContract.employeeName}</strong>
                 </div>
                 <div>
                   <span className="text-muted block">Mã CBGV</span>
-                  <strong className="font-mono text-slate-700 text-[13px]">{selectedContract.code}</strong>
+                  <strong className="font-mono text-slate-700 text-[13px]">{selectedContract.employeeCode}</strong>
                 </div>
                 <div>
                   <span className="text-muted block">Đơn vị</span>
-                  <strong className="text-ink">{selectedContract.unit}</strong>
+                  <strong className="text-ink">{selectedContract.unitName || '—'}</strong>
                 </div>
                 <div>
                   <span className="text-muted block">Chức vụ</span>
-                  <strong className="text-ink">{selectedContract.position}</strong>
+                  <strong className="text-ink">{selectedContract.positionName || '—'}</strong>
                 </div>
               </div>
 
               <div className="space-y-2 border-t border-line pt-3">
                 <div className="flex justify-between py-1 border-b border-line">
                   <span className="text-muted">Hình thức hợp đồng</span>
-                  <span className="font-semibold text-ink">{selectedContract.typeLabel}</span>
+                  <span className="font-semibold text-ink">
+                    {CONTRACT_TYPE_LABEL[selectedContract.contractType] || selectedContract.contractType}
+                  </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-line">
                   <span className="text-muted">Hệ số lương hiện hưởng</span>
                   <span className="font-mono font-bold text-brand-700">
-                    {selectedContract.salaryCoefficient} ({selectedContract.salaryRank})
+                    {Number(selectedContract.salaryCoefficient).toFixed(2)}
                   </span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-line">
+                  <span className="text-muted">Ngày ký</span>
+                  <span className="font-mono text-ink">{selectedContract.signedDate}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-line">
                   <span className="text-muted">Ngày bắt đầu hiệu lực</span>
@@ -756,33 +898,257 @@ export function Contracts() {
                 <div className="flex justify-between py-1 border-b border-line">
                   <span className="text-muted">Ngày kết thúc thời hạn</span>
                   <span className="font-mono text-ink">
-                    {selectedContract.expiryDate || 'Vô thời hạn (Biên chế trường)'}
+                    {selectedContract.expiryDate || 'Vô thời hạn'}
                   </span>
                 </div>
-                {selectedContract.daysLeft !== null && (
+                {selectedContract.daysRemaining != null && (
                   <div className="flex justify-between py-1 border-b border-line">
                     <span className="text-muted">Thời gian còn lại</span>
                     <span className="font-bold text-rose-700 font-mono">
-                      {selectedContract.daysLeft} ngày (Cần tái ký)
+                      {selectedContract.daysRemaining} ngày
                     </span>
                   </div>
                 )}
-              </div>
-
-              <div className="rounded-lg bg-blue-50/60 p-3 border border-blue-200 text-blue-900 text-[11px] leading-relaxed">
-                <span className="font-bold">Quy định pháp lý:</span> Theo Điều 20 Bộ luật Lao động 2019 và Nghị định 115/2020/NĐ-CP,
-                hợp đồng xác định thời hạn khi hết hạn mà người lao động tiếp tục làm việc thì trong thời hạn 30 ngày phải tiến hành ký kết hợp đồng mới.
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-line">
                 <Button variant="outline" size="sm" onClick={() => setSelectedContract(null)}>
                   Đóng
                 </Button>
-                <Button size="sm" onClick={() => handleRenewProposal(selectedContract)}>
-                  <FileSignature size={14} /> Lập Tờ Trình Tái Ký
-                </Button>
+                {canManageContracts && selectedContract.status === 'ACTIVE' && selectedContract.contractType !== 'INDEFINITE_TERM' && (
+                  <Button size="sm" onClick={() => openRenewModal(selectedContract)}>
+                    <FileSignature size={14} /> Tái ký / Gia hạn HĐ
+                  </Button>
+                )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Renew Contract Modal (HR_SPECIALIST / RECTOR) */}
+      {renewTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={() => setRenewTarget(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div>
+                <h3 className="text-base font-bold text-ink">Tái Ký / Gia Hạn Hợp Đồng Lao Động</h3>
+                <p className="text-xs text-muted">
+                  {renewTarget.employeeName} ({renewTarget.employeeCode}) · HĐ cũ: {renewTarget.contractNumber}
+                </p>
+              </div>
+              <button onClick={() => setRenewTarget(null)} className="p-1 text-slate-400 hover:text-ink">
+                <X size={18} />
+              </button>
+            </div>
+
+            {modalError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                {modalError}
+              </div>
+            )}
+
+            <form onSubmit={handleRenewSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700">Số hợp đồng mới *</label>
+                <input
+                  required
+                  minLength={3}
+                  value={renewForm.contractNumber}
+                  onChange={(e) => setRenewForm({ ...renewForm, contractNumber: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700">Loại hợp đồng *</label>
+                  <select
+                    value={renewForm.contractType}
+                    onChange={(e) => setRenewForm({ ...renewForm, contractType: e.target.value as ContractType })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2 bg-white"
+                  >
+                    <option value="DEFINITE_TERM_12M">Xác định thời hạn 12 tháng</option>
+                    <option value="DEFINITE_TERM_36M">Xác định thời hạn 36 tháng</option>
+                    <option value="INDEFINITE_TERM">Không xác định thời hạn</option>
+                    <option value="VISITING_LECTURER">Giảng viên thỉnh giảng</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700">Hệ số lương mới *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.1"
+                    required
+                    value={renewForm.salaryCoefficient}
+                    onChange={(e) => setRenewForm({ ...renewForm, salaryCoefficient: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700">Ngày ký *</label>
+                  <input
+                    type="date"
+                    required
+                    value={renewForm.signedDate}
+                    onChange={(e) => setRenewForm({ ...renewForm, signedDate: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700">Ngày hiệu lực *</label>
+                  <input
+                    type="date"
+                    required
+                    value={renewForm.effectiveDate}
+                    onChange={(e) => setRenewForm({ ...renewForm, effectiveDate: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+                {renewForm.contractType !== 'INDEFINITE_TERM' && (
+                  <div>
+                    <label className="block font-semibold text-slate-700">Ngày hết hạn *</label>
+                    <input
+                      type="date"
+                      required
+                      value={renewForm.expiryDate}
+                      onChange={(e) => setRenewForm({ ...renewForm, expiryDate: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-line">
+                <Button type="button" variant="outline" size="sm" onClick={() => setRenewTarget(null)}>
+                  Hủy
+                </Button>
+                <Button type="submit" size="sm" disabled={submitting}>
+                  {submitting ? 'Đang xử lý...' : 'Xác nhận Tái ký'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Contract Modal (HR_SPECIALIST / RECTOR) */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={() => setShowCreateModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <h3 className="text-base font-bold text-ink">Ký Mới Hợp Đồng Lao Động</h3>
+              <button onClick={() => setShowCreateModal(false)} className="p-1 text-slate-400 hover:text-ink">
+                <X size={18} />
+              </button>
+            </div>
+
+            {modalError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                {modalError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700">Cán bộ giảng viên *</label>
+                <select
+                  required
+                  value={createForm.employeeId}
+                  onChange={(e) => setCreateForm({ ...createForm, employeeId: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-line px-3 py-2 bg-white"
+                >
+                  <option value="">-- Chọn nhân sự --</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.employeeCode} — {emp.fullName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700">Số hợp đồng *</label>
+                <input
+                  required
+                  minLength={3}
+                  placeholder="VD: HĐLĐ-DAU/2026-101"
+                  value={createForm.contractNumber}
+                  onChange={(e) => setCreateForm({ ...createForm, contractNumber: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700">Loại hợp đồng *</label>
+                  <select
+                    value={createForm.contractType}
+                    onChange={(e) => setCreateForm({ ...createForm, contractType: e.target.value as ContractType })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2 bg-white"
+                  >
+                    <option value="PROBATION">Thử việc</option>
+                    <option value="DEFINITE_TERM_12M">Xác định thời hạn 12 tháng</option>
+                    <option value="DEFINITE_TERM_36M">Xác định thời hạn 36 tháng</option>
+                    <option value="INDEFINITE_TERM">Không xác định thời hạn</option>
+                    <option value="VISITING_LECTURER">Giảng viên thỉnh giảng</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700">Hệ số lương *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.1"
+                    required
+                    value={createForm.salaryCoefficient}
+                    onChange={(e) => setCreateForm({ ...createForm, salaryCoefficient: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700">Ngày ký *</label>
+                  <input
+                    type="date"
+                    required
+                    value={createForm.signedDate}
+                    onChange={(e) => setCreateForm({ ...createForm, signedDate: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700">Ngày hiệu lực *</label>
+                  <input
+                    type="date"
+                    required
+                    value={createForm.effectiveDate}
+                    onChange={(e) => setCreateForm({ ...createForm, effectiveDate: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                  />
+                </div>
+                {createForm.contractType !== 'INDEFINITE_TERM' && (
+                  <div>
+                    <label className="block font-semibold text-slate-700">Ngày hết hạn *</label>
+                    <input
+                      type="date"
+                      required
+                      value={createForm.expiryDate}
+                      onChange={(e) => setCreateForm({ ...createForm, expiryDate: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-line">
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowCreateModal(false)}>
+                  Hủy
+                </Button>
+                <Button type="submit" size="sm" disabled={submitting}>
+                  {submitting ? 'Đang lưu...' : 'Tạo Hợp Đồng'}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

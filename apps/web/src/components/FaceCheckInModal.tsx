@@ -370,35 +370,68 @@ export function FaceCheckInModal({
         ? '/api/v1/attendance/face-checkin'
         : '/api/v1/attendance/face-checkout'
 
+    const now = new Date()
+    const nowTimeStr = new Intl.DateTimeFormat('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(now)
+    const vnHourStr = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      hour12: false,
+    }).format(now)
+    const vnHour = Number(vnHourStr) || 0
+
     try {
+      const token =
+        typeof window !== 'undefined' ? localStorage.getItem('bahau_session_id') : null
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({
-          snapshot: snapshotBase64 ? 'captured_face_data' : 'virtual_biometric_data',
-          timestamp: new Date().toISOString(),
-          employeeCode: user?.code || 'DAU260003',
-          employeeId: user?.id || 'DAU260003-ID',
+          snapshot: snapshotBase64 || 'virtual_biometric_data',
           deviceSource: stream ? 'WEBCAM_BIOMETRIC_TERMINAL' : 'AI_VIRTUAL_BIOMETRIC_TERMINAL',
         }),
       })
 
-      const nowTimeStr = new Date().toLocaleTimeString('vi-VN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
-      const nowHour = new Date().getHours()
+      const json = await res.json().catch(() => null)
 
-      if (res.ok) {
-        const json = await res.json()
+      if (res.ok && json?.success !== false) {
+        const serverTimeStr =
+          type === 'checkin' && json?.data?.checkInTime
+            ? new Intl.DateTimeFormat('vi-VN', {
+                timeZone: 'Asia/Ho_Chi_Minh',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+              }).format(new Date(json.data.checkInTime))
+            : type === 'checkout' && json?.data?.checkOutTime
+            ? new Intl.DateTimeFormat('vi-VN', {
+                timeZone: 'Asia/Ho_Chi_Minh',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+              }).format(new Date(json.data.checkOutTime))
+            : nowTimeStr
+
         const status =
-          json.data?.status ||
+          json?.data?.status ||
           (type === 'checkin'
-            ? nowHour >= 8
+            ? vnHour >= 8
               ? 'LATE'
               : 'PRESENT'
-            : nowHour < 17
+            : vnHour < 17
             ? 'EARLY_LEAVE'
             : 'PRESENT')
 
@@ -408,93 +441,49 @@ export function FaceCheckInModal({
             type === 'checkin'
               ? '✅ Điểm Danh Vào Ca (Check-in) Thành Công!'
               : '✅ Xác Nhận Hết Ca (Check-out) Thành Công!',
-          details: `Hệ thống Face ID đã tự động nhận diện chính xác Thầy/Cô ${
+          details: `Hệ thống Face ID đã ghi nhận dữ liệu công của ${
             user?.fullName || 'CBGV'
-          }. Dữ liệu công đã được ghi nhận vào kỳ công tháng.`,
-          timestamp: nowTimeStr,
+          } vào kỳ công tháng.`,
+          timestamp: serverTimeStr,
           statusBadge:
             status === 'LATE'
               ? 'ĐI MUỘN (Sau 08:00)'
               : status === 'EARLY_LEAVE'
               ? 'VỀ SỚM (Trước 17:00)'
               : 'ĐÚNG GIỜ (Hợp lệ)',
-          hours: json.data?.rawWorkingHours || (type === 'checkout' ? 8.0 : undefined),
+          hours: json?.data?.rawWorkingHours ?? undefined,
         })
 
-        if (onSuccess) {
+        if (onSuccess && json?.data) {
           onSuccess(json.data)
         }
       } else {
-        // Fallback simulation if offline API
-        const status =
-          type === 'checkin'
-            ? nowHour >= 8
-              ? 'LATE'
-              : 'PRESENT'
-            : nowHour < 17
-            ? 'EARLY_LEAVE'
-            : 'PRESENT'
+        const errCode = json?.error?.code || `HTTP_${res.status}`
+        const errMsg =
+          json?.error?.message ||
+          (res.status === 422 && errCode === 'NO_CHECKIN_RECORD'
+            ? 'Chưa có bản ghi Check-in trong ngày hôm nay để thực hiện Check-out.'
+            : `Không thể ghi nhận điểm danh (HTTP ${res.status}).`)
 
         setResultMessage({
-          type: 'success',
+          type: 'error',
           title:
             type === 'checkin'
-              ? '✅ Điểm Danh Vào Ca (Check-in) Thành Công!'
-              : '✅ Xác Nhận Hết Ca (Check-out) Thành Công!',
-          details: `Tự động nhận diện khuôn mặt chuẩn xác cho cán bộ ${
-            user?.fullName || 'ThS. Nguyễn Văn An'
-          }. Đã ghi nhận thời gian thực vào bảng công DAU.`,
+              ? 'Điểm Danh Vào Ca Thất Bại'
+              : 'Xác Nhận Hết Ca Thất Bại',
+          details: errMsg,
           timestamp: nowTimeStr,
-          statusBadge:
-            status === 'LATE'
-              ? 'ĐI MUỘN (Sau 08:00)'
-              : status === 'EARLY_LEAVE'
-              ? 'VỀ SỚM (Trước 17:00)'
-              : 'ĐÚNG GIỜ (Hợp lệ)',
-          hours: type === 'checkout' ? 8.0 : undefined,
+          statusBadge: errCode,
         })
-
-        if (onSuccess) {
-          onSuccess({
-            id: `face-att-${Date.now()}`,
-            workDate: new Date().toISOString().split('T')[0],
-            checkInTime: type === 'checkin' ? new Date().toISOString() : checkInTime || '2026-09-08T07:55:00Z',
-            checkOutTime: type === 'checkout' ? new Date().toISOString() : undefined,
-            rawWorkingHours: type === 'checkout' ? 8.0 : 0,
-            status,
-            deviceSource: 'BIOMETRIC_FACE_RECOGNITION',
-          })
-        }
       }
     } catch (err: any) {
-      // Resilience fallback
-      const nowTimeStr = new Date().toLocaleTimeString('vi-VN', {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
       setResultMessage({
-        type: 'success',
-        title:
-          type === 'checkin'
-            ? '✅ Điểm Danh Vào Ca (Check-in) Thành Công!'
-            : '✅ Xác Nhận Hết Ca (Check-out) Thành Công!',
-        details: `Tự động nhận diện sinh trắc học thành công cho ${user?.fullName || 'CBGV'}. Đã lưu dữ liệu ngoại tuyến.`,
+        type: 'error',
+        title: 'Không Thể Kết Nối Máy Chủ Điểm Danh',
+        details: err?.message || 'Vui lòng kiểm tra kết nối mạng và thử lại.',
         timestamp: nowTimeStr,
-        statusBadge: 'ĐÚNG GIỜ (Hợp lệ)',
-        hours: type === 'checkout' ? 8.0 : undefined,
+        statusBadge: 'NETWORK_ERROR',
       })
-
-      if (onSuccess) {
-        onSuccess({
-          id: `face-att-${Date.now()}`,
-          workDate: new Date().toISOString().split('T')[0],
-          checkInTime: type === 'checkin' ? new Date().toISOString() : checkInTime || '2026-09-08T07:55:00Z',
-          checkOutTime: type === 'checkout' ? new Date().toISOString() : undefined,
-          rawWorkingHours: type === 'checkout' ? 8.0 : 0,
-          status: 'PRESENT',
-          deviceSource: 'AI_VIRTUAL_BIOMETRIC_TERMINAL',
-        })
-      }
     } finally {
       setProcessingAction(null)
     }
@@ -638,7 +627,9 @@ export function FaceCheckInModal({
                 </span>
                 <span
                   className={`rounded-lg px-3 py-1.5 font-mono text-xs font-bold border ${
-                    resultMessage.statusBadge.includes('MUỘN')
+                    resultMessage.type === 'error'
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                      : resultMessage.statusBadge.includes('MUỘN') || resultMessage.statusBadge.includes('SỚM')
                       ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                   }`}
@@ -653,11 +644,19 @@ export function FaceCheckInModal({
               </div>
 
               <div className="mt-6 flex gap-3">
+                {resultMessage.type === 'error' && (
+                  <button
+                    onClick={() => setResultMessage(null)}
+                    className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 px-5 py-2.5 text-xs font-bold text-white transition cursor-pointer"
+                  >
+                    Thử lại
+                  </button>
+                )}
                 <button
                   onClick={onClose}
                   className="rounded-xl bg-brand-500 hover:bg-brand-600 px-6 py-2.5 text-xs font-bold text-white transition shadow-lg cursor-pointer"
                 >
-                  Hoàn tất & Đóng
+                  {resultMessage.type === 'error' ? 'Đóng' : 'Hoàn tất & Đóng'}
                 </button>
               </div>
             </div>

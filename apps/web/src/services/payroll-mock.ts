@@ -7,12 +7,16 @@ export interface MockFacultyRecord {
   departmentName: string
   academicTitle: string
   positionName: string
+  month: number
+  year: number
+  baseSalaryRate: number
   salaryCoefficient: number
   standardWorkDays: number
   actualWorkDays: number
   unpaidLeaveDays: number
   workDaysDeduction: number
   kpiRanking: 'A' | 'B' | 'C' | 'D'
+  kpiBonusCoefficient: number
   kpiExtraIncome: number
   overtimeTeachingHours: number
   overtimeTeachingPay: number
@@ -21,13 +25,19 @@ export interface MockFacultyRecord {
   leadershipAllowance: number
   seniorityAllowance: number
   pedagogicalAllowance: number
+  insurableBase: number
   socialInsurance: number
   healthInsurance: number
   unemploymentInsurance: number
   totalInsurance: number
+  personalDeduction: number
+  dependentCount: number
+  dependentDeduction: number
+  taxableIncome: number
   personalIncomeTax: number
   netSalary: number
-  status: 'PENDING' | 'APPROVED' | 'PAID'
+  status: 'DRAFT' | 'APPROVED' | 'PAID'
+  createdAt: string
 }
 
 const BASE_RATE = 2340000
@@ -186,6 +196,8 @@ export function computeMockMember(raw: (typeof RAW_FACULTY_LIST)[0], month: numb
   const actualWorkDays = raw.actualWorkDays || 22
   const workDaysDeduction = Math.round((baseSalary / standardWorkDays) * unpaidLeaveDays)
 
+  const kpiCoeffMap = { A: 1.5, B: 1.0, C: 0.5, D: 0 }
+  const kpiCoeff = kpiCoeffMap[raw.kpiRanking] ?? 0
   const kpiMap = { A: 4250000, B: 2800000, C: 1200000, D: 0 }
   const kpiExtraIncome = kpiMap[raw.kpiRanking] || 2500000
   const overtimeTeachingPay = Math.round(raw.overtimeHours * 250000)
@@ -227,12 +239,16 @@ export function computeMockMember(raw: (typeof RAW_FACULTY_LIST)[0], month: numb
     departmentName: raw.departmentName,
     academicTitle: raw.academicTitle,
     positionName: raw.positionName,
+    month,
+    year,
+    baseSalaryRate: BASE_RATE,
     salaryCoefficient: raw.salaryCoefficient,
     standardWorkDays,
     actualWorkDays,
     unpaidLeaveDays,
     workDaysDeduction,
     kpiRanking: raw.kpiRanking,
+    kpiBonusCoefficient: kpiCoeff,
     kpiExtraIncome,
     overtimeTeachingHours: raw.overtimeHours,
     overtimeTeachingPay,
@@ -241,13 +257,19 @@ export function computeMockMember(raw: (typeof RAW_FACULTY_LIST)[0], month: numb
     leadershipAllowance,
     seniorityAllowance,
     pedagogicalAllowance,
+    insurableBase,
     socialInsurance,
     healthInsurance,
     unemploymentInsurance,
     totalInsurance,
+    personalDeduction,
+    dependentCount: 0,
+    dependentDeduction: 0,
+    taxableIncome: taxable,
     personalIncomeTax,
     netSalary,
     status: 'APPROVED',
+    createdAt: new Date().toISOString(),
   }
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle2, RefreshCw, Lightbulb, Lock, XCircle, X, Camera, Scan, Clock, LogIn, LogOut, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, RefreshCw, Lightbulb, Lock, XCircle, X, Camera, Clock, LogIn } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { FaceCheckInModal } from "../../components/FaceCheckInModal";
 import { AuthGuard } from "../../components/AuthGuard";
@@ -54,218 +54,131 @@ interface AdjustmentRequest {
   createdAt: string;
 }
 
-const DEMO_PERIOD: PeriodInfo = {
-  id: "p-2026-09",
-  month: 9,
-  year: 2026,
-  startDate: "2026-09-01",
-  endDate: "2026-09-30",
-  standardWorkingDays: 22,
-  isLocked: false,
-  note: "Kỳ công tháng 9/2026 đang mở tiếp nhận quẹt thẻ và giải trình",
-};
+function getVnDateStr(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
 
-const DEMO_SUMMARY: MonthlySummary = {
-  id: "s-2026-09",
-  standardDays: 22,
-  actualWorkingDays: 19.5,
-  paidLeaveDays: 1.0,
-  unpaidLeaveDays: 0,
-  businessTripDays: 1.5,
-  lateCount: 1,
-  earlyLeaveCount: 0,
-  totalPayableDays: 22.0,
-  isFinalized: false,
-};
+function getVnMonthYear(): { month: number; year: number } {
+  const [y, m] = getVnDateStr().split("-").map(Number);
+  return { month: m, year: y };
+}
 
-const DEMO_RECORDS: AttendanceRecord[] = [
-  {
-    id: "r1",
-    workDate: "2026-09-01",
-    checkInTime: "2026-09-01T07:55:00Z",
-    checkOutTime: "2026-09-01T17:05:00Z",
-    rawWorkingHours: 8.0,
-    status: "PRESENT",
-    deviceSource: "BIOMETRIC_GATE_A",
-  },
-  {
-    id: "r2",
-    workDate: "2026-09-02",
-    checkInTime: null,
-    checkOutTime: null,
-    rawWorkingHours: 0,
-    status: "HOLIDAY",
-    deviceSource: "CALENDAR",
-  },
-  {
-    id: "r3",
-    workDate: "2026-09-03",
-    checkInTime: "2026-09-03T07:50:00Z",
-    checkOutTime: "2026-09-03T17:15:00Z",
-    rawWorkingHours: 8.0,
-    status: "PRESENT",
-    deviceSource: "BIOMETRIC_GATE_A",
-  },
-  {
-    id: "r4",
-    workDate: "2026-09-04",
-    checkInTime: "2026-09-04T08:25:00Z",
-    checkOutTime: "2026-09-04T17:00:00Z",
-    rawWorkingHours: 7.58,
-    status: "LATE",
-    deviceSource: "BIOMETRIC_GATE_B",
-    adjustmentRequestId: "adj-1",
-  },
-  {
-    id: "r5",
-    workDate: "2026-09-07",
-    checkInTime: null,
-    checkOutTime: null,
-    rawWorkingHours: 0,
-    status: "ON_LEAVE",
-    deviceSource: "WORKFLOW_LEAVE",
-  },
-  {
-    id: "r6",
-    workDate: "2026-09-08",
-    checkInTime: "2026-09-08T08:00:00Z",
-    checkOutTime: "2026-09-08T17:00:00Z",
-    rawWorkingHours: 8.0,
-    status: "PRESENT",
-    deviceSource: "BIOMETRIC_GATE_A",
-  },
-];
+function formatVnTime(iso?: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
-const DEMO_ADJUSTMENTS: AdjustmentRequest[] = [
-  {
-    id: "adj-1",
-    workDate: "2026-09-04",
-    originalCheckIn: "2026-09-04T08:25:00Z",
-    originalCheckOut: "2026-09-04T17:00:00Z",
-    adjustedCheckIn: "2026-09-04T07:55:00Z",
-    adjustedCheckOut: "2026-09-04T17:00:00Z",
-    reason: "Máy quét Cổng B gặp sự cố khởi động lại lúc 8h sáng, thực tế đã có mặt tại giảng đường lúc 7h55.",
-    status: "PENDING",
-    createdAt: "2026-09-04T09:00:00Z",
-  },
-];
+function getAuthHeaders(includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (includeJson) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("bahau_session_id");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 export default function AttendancePersonalPage() {
-  const [month, setMonth] = useState(9);
-  const [year, setYear] = useState(2026);
-  const [period, setPeriod] = useState<PeriodInfo>(DEMO_PERIOD);
-  const [summary, setSummary] = useState<MonthlySummary>(DEMO_SUMMARY);
-  const [records, setRecords] = useState<AttendanceRecord[]>(DEMO_RECORDS);
-  const [adjustments, setAdjustments] = useState<AdjustmentRequest[]>(DEMO_ADJUSTMENTS);
-  const [isLoading, setIsLoading] = useState(false);
+  const initialPeriod = getVnMonthYear();
+  const [month, setMonth] = useState(initialPeriod.month);
+  const [year, setYear] = useState(initialPeriod.year);
+  const [period, setPeriod] = useState<PeriodInfo>({
+    id: "",
+    month: initialPeriod.month,
+    year: initialPeriod.year,
+    startDate: "",
+    endDate: "",
+    standardWorkingDays: 22,
+    isLocked: false,
+  });
+  const [summary, setSummary] = useState<MonthlySummary>({
+    id: "",
+    standardDays: 22,
+    actualWorkingDays: 0,
+    paidLeaveDays: 0,
+    unpaidLeaveDays: 0,
+    businessTripDays: 0,
+    lateCount: 0,
+    earlyLeaveCount: 0,
+    totalPayableDays: 0,
+    isFinalized: false,
+  });
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [adjustments, setAdjustments] = useState<AdjustmentRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const { user } = useAuth();
   const [showFaceModal, setShowFaceModal] = useState(false);
-  const [todayFaceRecord, setTodayFaceRecord] = useState<AttendanceRecord | null>(null);
 
-  // Active shift identification
-  const todayDateStr = new Date().toISOString().split('T')[0];
-  const demoDateStr = `${year}-${String(month).padStart(2, '0')}-08`;
-  const todayRecord =
-    todayFaceRecord ||
-    records.find((r) => r.workDate === todayDateStr || r.workDate === demoDateStr);
+  // Active shift identification using Asia/Ho_Chi_Minh local date
+  const todayDateStr = getVnDateStr();
+  const todayRecord = records.find((r) => r.workDate === todayDateStr) || null;
 
   const hasCheckedIn = Boolean(todayRecord?.checkInTime);
   const hasCheckedOut = Boolean(todayRecord?.checkOutTime);
-  const activeMode: 'checkin' | 'checkout' = hasCheckedIn && !hasCheckedOut ? 'checkout' : 'checkin';
+  const activeMode: "checkin" | "checkout" = hasCheckedIn && !hasCheckedOut ? "checkout" : "checkin";
 
-  const handleResetShift = () => {
-    const demoDateStr = `${year}-${String(month).padStart(2, '0')}-08`;
-    const resetRec: AttendanceRecord = {
-      id: "r6",
-      workDate: demoDateStr,
-      checkInTime: null,
-      checkOutTime: null,
-      rawWorkingHours: 0,
-      status: "PRESENT",
-      deviceSource: "BIOMETRIC_GATE_A",
-    };
-    setTodayFaceRecord(resetRec);
-    setRecords((prev) => [resetRec, ...prev.filter((r) => r.workDate !== demoDateStr)]);
+  const fetchAttendance = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`/api/v1/attendance/me?month=${month}&year=${year}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false || !json?.data) {
+        setRecords([]);
+        setAdjustments([]);
+        setFetchError(json?.error?.message || `Không thể tải bảng chấm công (HTTP ${res.status}).`);
+        return;
+      }
+      if (json.data.period) setPeriod(json.data.period);
+      if (json.data.summary) setSummary(json.data.summary);
+      setRecords(Array.isArray(json.data.records) ? json.data.records : []);
+      setAdjustments(Array.isArray(json.data.adjustments) ? json.data.adjustments : []);
+    } catch (err) {
+      setRecords([]);
+      setAdjustments([]);
+      setFetchError(err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải bảng công.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [month, year]);
+
+  useEffect(() => {
+    fetchAttendance();
+  }, [fetchAttendance]);
+
+  const handleFaceSuccess = () => {
+    fetchAttendance();
   };
-
-  const handleFaceSuccess = (newRec: any) => {
-    if (!newRec) return;
-    const workDate = newRec.workDate || todayRecord?.workDate || new Date().toISOString().split('T')[0];
-    const isCheckOutAction = Boolean(newRec.checkOutTime) || activeMode === 'checkout';
-    
-    setRecords((prev) => {
-      const existing = prev.find((r) => r.workDate === workDate);
-      const merged: AttendanceRecord = {
-        id: newRec.id || existing?.id || `face-${Date.now()}`,
-        workDate,
-        // If checking out, keep existing check-in time; if checking in, set new check-in time
-        checkInTime: isCheckOutAction ? (existing?.checkInTime || todayRecord?.checkInTime || '2026-09-08T07:55:00Z') : (newRec.checkInTime || new Date().toISOString()),
-        // If checking in, clear checkout; if checking out, set checkout time
-        checkOutTime: isCheckOutAction ? (newRec.checkOutTime || new Date().toISOString()) : null,
-        rawWorkingHours: isCheckOutAction ? (newRec.rawWorkingHours || 8.0) : 0,
-        status: newRec.status || existing?.status || 'PRESENT',
-        deviceSource: newRec.deviceSource || 'BIOMETRIC_FACE_RECOGNITION',
-      };
-      setTodayFaceRecord(merged);
-      const filtered = prev.filter((r) => r.workDate !== workDate);
-      return [merged, ...filtered];
-    });
-
-    // Update summary counts
-    setSummary((prev) => {
-      const isNewDay = !hasCheckedIn && !isCheckOutAction;
-      const newActual = isNewDay ? Number(prev.actualWorkingDays) + 1 : Number(prev.actualWorkingDays);
-      const newLate = newRec.status === 'LATE' ? prev.lateCount + 1 : prev.lateCount;
-      const newEarly = newRec.status === 'EARLY_LEAVE' ? prev.earlyLeaveCount + 1 : prev.earlyLeaveCount;
-      return {
-        ...prev,
-        actualWorkingDays: newActual,
-        lateCount: newLate,
-        earlyLeaveCount: newEarly,
-        totalPayableDays: newActual + prev.paidLeaveDays + prev.businessTripDays,
-      };
-    });
-  };
-
 
   // Modal nộp đơn giải trình
   const [showModal, setShowModal] = useState(false);
-  const [formWorkDate, setFormWorkDate] = useState("2026-09-04");
+  const [formWorkDate, setFormWorkDate] = useState(() => getVnDateStr());
   const [formCheckIn, setFormCheckIn] = useState("07:55");
   const [formCheckOut, setFormCheckOut] = useState("17:00");
   const [formReason, setFormReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchAttendance() {
-      setIsLoading(true);
-      try {
-        const res = await fetch(`/api/v1/attendance/me?month=${month}&year=${year}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data) {
-            if (json.data.period) setPeriod(json.data.period);
-            if (json.data.summary) setSummary(json.data.summary);
-            if (json.data.records?.length > 0) setRecords(json.data.records);
-            if (json.data.adjustments) setAdjustments(json.data.adjustments);
-          }
-        }
-      } catch (e) {
-        console.warn("Using demo attendance data fallback");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchAttendance();
-  }, [month, year]);
+  const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
 
   const handleOpenAdjustment = (workDate?: string) => {
     if (period.isLocked) {
-      alert("Kỳ công tháng này đã bị khóa bởi Phòng TCHC, không thể tạo thêm đơn giải trình.");
+      setFetchError("Kỳ công tháng này đã bị khóa bởi Phòng TCHC, không thể tạo thêm đơn giải trình.");
       return;
     }
-    if (workDate) setFormWorkDate(workDate);
+    setFormWorkDate(workDate || getVnDateStr());
     setFormReason("");
     setFormError(null);
     setFormSuccess(null);
@@ -277,48 +190,39 @@ export default function AttendancePersonalPage() {
     setFormError(null);
     setFormSuccess(null);
 
-    if (!formReason || formReason.length < 5) {
+    if (!formReason || formReason.trim().length < 5) {
       setFormError("Vui lòng nhập lý do giải trình chi tiết (tối thiểu 5 ký tự)");
       return;
     }
 
+    setSubmittingAdjustment(true);
     try {
       const payload = {
         workDate: formWorkDate,
-        adjustedCheckIn: `${formWorkDate}T${formCheckIn}:00Z`,
-        adjustedCheckOut: `${formWorkDate}T${formCheckOut}:00Z`,
-        reason: formReason,
+        adjustedCheckIn: `${formWorkDate}T${formCheckIn}:00+07:00`,
+        adjustedCheckOut: `${formWorkDate}T${formCheckOut}:00+07:00`,
+        reason: formReason.trim(),
       };
 
       const res = await fetch("/api/v1/attendance/adjustments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: getAuthHeaders(true),
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success !== false && json?.data) {
         setFormSuccess("Đã gửi đơn giải trình thành công! Đang chuyển tiếp cho Trưởng đơn vị phê duyệt.");
-        setAdjustments([json.data, ...adjustments]);
-        setTimeout(() => setShowModal(false), 1500);
+        fetchAttendance();
+        setTimeout(() => setShowModal(false), 1200);
       } else {
-        const errJson = await res.json();
-        setFormError(errJson.error?.message || "Có lỗi xảy ra khi nộp đơn giải trình");
+        setFormError(json?.error?.message || `Có lỗi xảy ra khi nộp đơn giải trình (HTTP ${res.status})`);
       }
-    } catch (err: any) {
-      // Offline fallback simulation
-      const newAdj: AdjustmentRequest = {
-        id: `mock-adj-${Date.now()}`,
-        workDate: formWorkDate,
-        adjustedCheckIn: `${formWorkDate}T${formCheckIn}:00Z`,
-        adjustedCheckOut: `${formWorkDate}T${formCheckOut}:00Z`,
-        reason: formReason,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      };
-      setAdjustments([newAdj, ...adjustments]);
-      setFormSuccess("Đã gửi đơn giải trình thành công (Lưu trữ cục bộ).");
-      setTimeout(() => setShowModal(false), 1200);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Không thể kết nối máy chủ để gửi đơn giải trình.");
+    } finally {
+      setSubmittingAdjustment(false);
     }
   };
 
@@ -408,6 +312,13 @@ export default function AttendancePersonalPage() {
         </div>
       </div>
 
+      {fetchError && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-800 flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0 text-rose-600" />
+          <span>{fetchError}</span>
+        </div>
+      )}
+
       {/* Lock Status Alert */}
       {period.isLocked ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-rose-900 flex items-center justify-between">
@@ -476,7 +387,7 @@ export default function AttendancePersonalPage() {
                   {!hasCheckedIn
                     ? "CHỜ CHECK-IN"
                     : !hasCheckedOut
-                    ? `ĐÃ VÀO CA ${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'}`
+                    ? `ĐÃ VÀO CA ${formatVnTime(todayRecord?.checkInTime)}`
                     : "HOÀN TẤT CA"}
                 </span>
               </div>
@@ -484,8 +395,8 @@ export default function AttendancePersonalPage() {
                 {!hasCheckedIn
                   ? "Camera AI sẽ tự động nhận diện khuôn mặt và ghi nhận Check-in ngay khi bạn nhìn thẳng (Quy chuẩn vào trước 08:00)."
                   : !hasCheckedOut
-                  ? `Đã ghi nhận giờ vào ca (${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'}). Khi hết giờ làm việc, quét khuôn mặt để tự động ghi nhận Check-out (Quy chuẩn ra sau 17:00).`
-                  : `Ca làm việc hôm nay: Vào ca lúc ${todayRecord?.checkInTime ? new Date(todayRecord.checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '07:55'} · Hết ca lúc ${todayRecord?.checkOutTime ? new Date(todayRecord.checkOutTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '17:05'} (Tổng ${todayRecord?.rawWorkingHours || 8.0} giờ công).`}
+                  ? `Đã ghi nhận giờ vào ca (${formatVnTime(todayRecord?.checkInTime)}). Khi hết giờ làm việc, quét khuôn mặt để tự động ghi nhận Check-out (Quy chuẩn ra sau 17:00).`
+                  : `Ca làm việc hôm nay: Vào ca lúc ${formatVnTime(todayRecord?.checkInTime)} · Hết ca lúc ${formatVnTime(todayRecord?.checkOutTime)} (Tổng ${todayRecord?.rawWorkingHours ?? 0} giờ công).`}
               </p>
             </div>
           </div>
@@ -513,12 +424,13 @@ export default function AttendancePersonalPage() {
                   <span>Ca Hôm Nay Đã Hoàn Tất</span>
                 </span>
                 <button
-                  onClick={handleResetShift}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold px-3 py-2 text-xs shadow-xs transition cursor-pointer"
-                  title="Khởi tạo lại trạng thái ca hôm nay để thử nghiệm lại từ đầu"
+                  onClick={fetchAttendance}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold px-3 py-2 text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+                  title="Tải lại dữ liệu chấm công từ máy chủ"
                 >
-                  <RefreshCw size={13} className="text-blue-600" />
-                  <span>Làm mới ca thử nghiệm</span>
+                  <RefreshCw size={13} className={`text-blue-600 ${isLoading ? "animate-spin" : ""}`} />
+                  <span>Làm mới</span>
                 </button>
               </div>
             )}
@@ -627,7 +539,8 @@ export default function AttendancePersonalPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {records.map((r) => {
-                const dateObj = new Date(r.workDate);
+                const [wy, wm, wd] = r.workDate.split("-").map(Number);
+                const dateObj = new Date(Date.UTC(wy, wm - 1, wd));
                 const dayOfWeek = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][
                   dateObj.getUTCDay()
                 ];
@@ -640,10 +553,10 @@ export default function AttendancePersonalPage() {
                       <div className="text-[11px] text-slate-400">{dayOfWeek}</div>
                     </td>
                     <td className="px-6 py-3.5 font-mono text-slate-800">
-                      {r.checkInTime ? new Date(r.checkInTime).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(r.checkInTime)}
                     </td>
                     <td className="px-6 py-3.5 font-mono text-slate-800">
-                      {r.checkOutTime ? new Date(r.checkOutTime).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(r.checkOutTime)}
                     </td>
                     <td className="px-6 py-3.5 font-semibold text-slate-800">
                       {r.rawWorkingHours > 0 ? `${r.rawWorkingHours} giờ` : "—"}
@@ -715,14 +628,14 @@ export default function AttendancePersonalPage() {
                   <tr key={a.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-6 py-3.5 font-bold text-slate-900">{a.workDate}</td>
                     <td className="px-6 py-3.5 text-slate-500 font-mono">
-                      {a.originalCheckIn ? new Date(a.originalCheckIn).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(a.originalCheckIn)}
                       {" - "}
-                      {a.originalCheckOut ? new Date(a.originalCheckOut).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(a.originalCheckOut)}
                     </td>
                     <td className="px-6 py-3.5 font-semibold text-blue-900 font-mono">
-                      {a.adjustedCheckIn ? new Date(a.adjustedCheckIn).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(a.adjustedCheckIn)}
                       {" - "}
-                      {a.adjustedCheckOut ? new Date(a.adjustedCheckOut).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—"}
+                      {formatVnTime(a.adjustedCheckOut)}
                     </td>
                     <td className="px-6 py-3.5 text-slate-700 max-w-xs truncate" title={a.reason}>
                       {a.reason}
@@ -747,7 +660,7 @@ export default function AttendancePersonalPage() {
                       )}
                     </td>
                     <td className="px-6 py-3.5 text-slate-400 text-[11px]">
-                      {new Date(a.createdAt).toLocaleDateString("vi-VN")}
+                      {new Date(a.createdAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
                     </td>
                   </tr>
                 ))}
@@ -847,9 +760,10 @@ export default function AttendancePersonalPage() {
                 </button>
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-900 px-4 py-2 font-semibold text-white hover:bg-blue-800 transition"
+                  disabled={submittingAdjustment}
+                  className="rounded-lg bg-blue-900 px-4 py-2 font-semibold text-white hover:bg-blue-800 transition disabled:opacity-50"
                 >
-                  Gửi Phê Duyệt
+                  {submittingAdjustment ? "Đang gửi..." : "Gửi Phê Duyệt"}
                 </button>
               </div>
             </form>

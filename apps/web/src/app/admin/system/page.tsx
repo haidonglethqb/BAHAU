@@ -32,10 +32,44 @@ import {
   Zap,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
-import apiClient from "../../../services/api-client";
 import { Badge, Button, StatusPill, cx } from "../../../components/ui";
 
 type TabType = "probes" | "metrics" | "outbox" | "jobs";
+
+function getAuthHeaders(withJson = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (withJson) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function sysFetchJson(url: string, init: RequestInit = {}) {
+  const res = await fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: {
+      ...getAuthHeaders(Boolean(init.body)),
+      ...((init.headers as Record<string, string>) || {}),
+    },
+  });
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok && json?.success !== false, status: res.status, data: json?.data ?? json, error: json?.error?.message || (res.ok ? null : `HTTP ${res.status}`) };
+}
+
+async function sysFetchText(url: string) {
+  const res = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers: getAuthHeaders(false),
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.text();
+}
 
 export default function AdminSystemPage() {
   const [activeTab, setActiveTab] = useState<TabType>("probes");
@@ -76,6 +110,7 @@ export default function AdminSystemPage() {
   const [isPollingOutbox, setIsPollingOutbox] = useState(false);
   const [showEnqueueModal, setShowEnqueueModal] = useState(false);
   const [enqueueType, setEnqueueType] = useState<string>("PAYROLL_BATCH_CALC");
+  const [enqueuePriority, setEnqueuePriority] = useState<"HIGH" | "NORMAL" | "LOW">("NORMAL");
   const [enqueuePayload, setEnqueuePayload] = useState<string>(
     JSON.stringify({ month: 9, year: 2026, faculty: "Khoa Kiến trúc" }, null, 2)
   );
@@ -106,9 +141,9 @@ export default function AdminSystemPage() {
   const fetchProbes = useCallback(async () => {
     try {
       const [healthRes, liveRes, readyRes] = await Promise.allSettled([
-        apiClient.system.getHealth(),
-        apiClient.system.getLiveness(),
-        apiClient.system.getReadiness(),
+        sysFetchJson("/api/v1/health"),
+        sysFetchJson("/api/v1/health/live"),
+        sysFetchJson("/api/v1/health/ready"),
       ]);
 
       if (healthRes.status === "fulfilled" && healthRes.value.ok) {
@@ -127,12 +162,12 @@ export default function AdminSystemPage() {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const res = await apiClient.system.getMetricsJson();
+      const res = await sysFetchJson("/api/v1/metrics/json");
       if (res.ok && res.data) {
         setMetricsJson(res.data);
       }
       if (showRawMetrics) {
-        const text = await apiClient.system.getMetricsText();
+        const text = await sysFetchText("/api/v1/metrics");
         setRawMetrics(text);
       }
     } catch (e) {
@@ -142,13 +177,16 @@ export default function AdminSystemPage() {
 
   const fetchOutbox = useCallback(async () => {
     try {
-      const res = await apiClient.system.getOutboxEvents({
-        status: outboxStatus,
-        page: outboxPage,
-        limit: 15,
+      const params = new URLSearchParams({
+        page: String(outboxPage),
+        limit: "15",
       });
+      if (outboxStatus && outboxStatus !== "ALL") {
+        params.set("status", outboxStatus);
+      }
+      const res = await sysFetchJson(`/api/v1/outbox/events?${params.toString()}`);
       if (res.ok && res.data) {
-        setOutboxEvents(res.data.items || []);
+        setOutboxEvents(res.data.events || []);
         setOutboxTotal(res.data.total || 0);
       }
     } catch (e) {
@@ -158,13 +196,16 @@ export default function AdminSystemPage() {
 
   const fetchJobs = useCallback(async () => {
     try {
+      const params = new URLSearchParams({
+        page: String(jobPage),
+        limit: "15",
+      });
+      if (jobStatus && jobStatus !== "ALL") {
+        params.set("status", jobStatus);
+      }
       const [jobsRes, statsRes] = await Promise.allSettled([
-        apiClient.system.getJobs({
-          status: jobStatus,
-          page: jobPage,
-          limit: 15,
-        }),
-        apiClient.system.getJobSummary(),
+        sysFetchJson(`/api/v1/jobs?${params.toString()}`),
+        sysFetchJson("/api/v1/jobs/stats/summary"),
       ]);
 
       if (jobsRes.status === "fulfilled" && jobsRes.value.ok && jobsRes.value.data) {
@@ -212,7 +253,10 @@ export default function AdminSystemPage() {
   const handleRetryOutboxEvent = async (id: string) => {
     setActionInProgress(id);
     try {
-      const res = await apiClient.system.retryOutboxEvent(id);
+      const res = await sysFetchJson(`/api/v1/outbox/events/${id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
       if (res.ok) {
         showToast("success", `Đã đưa sự kiện ${id} vào hàng đợi thử lại thành công.`);
         fetchOutbox();
@@ -230,9 +274,17 @@ export default function AdminSystemPage() {
   const handleProcessOutboxBatch = async () => {
     setIsProcessingBatch(true);
     try {
-      const res = await apiClient.system.processOutboxBatch(15);
+      const res = await sysFetchJson("/api/v1/outbox/process-batch", {
+        method: "POST",
+        body: JSON.stringify({ limit: 15 }),
+      });
       if (res.ok) {
-        showToast("success", `Đã xử lý batch: ${res.data?.dispatchedCount || 0} sự kiện được dispatch.`);
+        const processed = res.data?.processedCount ?? 0;
+        const failed = res.data?.failedCount ?? 0;
+        showToast(
+          "success",
+          `Đã xử lý batch: ${processed} sự kiện thành công${failed > 0 ? `, ${failed} thất bại` : ""}.`
+        );
         fetchOutbox();
         fetchMetrics();
       } else {
@@ -248,12 +300,15 @@ export default function AdminSystemPage() {
   const handleTriggerOutboxPoll = async () => {
     setIsPollingOutbox(true);
     try {
-      const res = await apiClient.system.triggerOutboxPoll();
+      const res = await sysFetchJson("/api/v1/jobs/trigger-outbox-poll", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
       if (res.ok) {
         showToast("success", "Đã gửi tín hiệu kích hoạt Quét Outbox Nền (OUTBOX_POLL).");
         fetchJobs();
       } else {
-        showToast("error", `Lỗi kích hoạt quét: ${res.error || "Thất bại"}`);
+        showToast("error", `Lỗi kích hoạt quét: ${res.error || "Thao bại"}`);
       }
     } catch (e: any) {
       showToast("error", e.message || "Lỗi kích hoạt");
@@ -265,7 +320,10 @@ export default function AdminSystemPage() {
   const handleCancelJob = async (id: string) => {
     setActionInProgress(id);
     try {
-      const res = await apiClient.system.cancelJob(id, "Hủy bởi Quản trị viên");
+      const res = await sysFetchJson(`/api/v1/jobs/${id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Hủy bởi Quản trị viên" }),
+      });
       if (res.ok) {
         showToast("success", `Đã hủy Job ${id} thành công.`);
         fetchJobs();
@@ -282,7 +340,10 @@ export default function AdminSystemPage() {
   const handleRetryJob = async (id: string) => {
     setActionInProgress(id);
     try {
-      const res = await apiClient.system.retryJob(id);
+      const res = await sysFetchJson(`/api/v1/jobs/${id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
       if (res.ok) {
         showToast("success", `Đã đưa Job ${id} trở lại hàng đợi PENDING.`);
         fetchJobs();
@@ -306,7 +367,14 @@ export default function AdminSystemPage() {
         return;
       }
 
-      const res = await apiClient.system.enqueueJob(enqueueType, parsedPayload);
+      const res = await sysFetchJson("/api/v1/jobs/enqueue", {
+        method: "POST",
+        body: JSON.stringify({
+          type: enqueueType,
+          priority: enqueuePriority,
+          payload: parsedPayload,
+        }),
+      });
       if (res.ok) {
         showToast("success", `Đã đẩy Job ${enqueueType} (${res.data?.id}) vào hàng đợi!`);
         setShowEnqueueModal(false);
@@ -328,7 +396,7 @@ export default function AdminSystemPage() {
 
   return (
     <AuthGuard
-      allowedRoles={["SYSTEM_ADMIN", "RECTOR"]}
+      allowedRoles={["SYSTEM_ADMIN"]}
       moduleName="Trung Tâm Quản Trị & Giám Sát Kỹ Thuật Hệ Thống"
     >
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
@@ -802,10 +870,15 @@ export default function AdminSystemPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={async () => {
-                      setShowRawMetrics(!showRawMetrics);
-                      if (!showRawMetrics) {
-                        const txt = await apiClient.system.getMetricsText();
-                        setRawMetrics(txt);
+                      const nextShow = !showRawMetrics;
+                      setShowRawMetrics(nextShow);
+                      if (nextShow) {
+                        try {
+                          const txt = await sysFetchText("/api/v1/metrics");
+                          setRawMetrics(txt);
+                        } catch (e: any) {
+                          setRawMetrics(`# Error loading metrics: ${e?.message || "HTTP error"}`);
+                        }
                       }
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
@@ -814,7 +887,7 @@ export default function AdminSystemPage() {
                     <span>{showRawMetrics ? "Ẩn Raw Output" : "Xem Raw Metrics"}</span>
                   </button>
                   <a
-                    href="http://127.0.0.1:4000/api/v1/metrics"
+                    href="/api/v1/metrics"
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand-50 text-brand-700 border border-brand-200 px-3 py-1.5 text-xs font-semibold hover:bg-brand-100 transition"
@@ -854,7 +927,7 @@ export default function AdminSystemPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-line bg-surface p-4 shadow-2xs">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold text-slate-600">Trạng thái:</span>
-                {["ALL", "PENDING", "PROCESSED", "FAILED"].map((st) => (
+                {["ALL", "PENDING", "PROCESSING", "PROCESSED", "FAILED"].map((st) => (
                   <button
                     key={st}
                     onClick={() => {
@@ -872,6 +945,8 @@ export default function AdminSystemPage() {
                       ? "Tất cả"
                       : st === "PENDING"
                       ? "Chờ xử lý (PENDING)"
+                      : st === "PROCESSING"
+                      ? "Đang xử lý (PROCESSING)"
                       : st === "PROCESSED"
                       ? "Đã xử lý (PROCESSED)"
                       : "Thất bại / DLQ (FAILED)"}
@@ -1029,7 +1104,7 @@ export default function AdminSystemPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-line bg-surface p-4 shadow-2xs">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold text-slate-600">Lọc trạng thái:</span>
-                {["ALL", "ACTIVE", "PENDING", "COMPLETED", "FAILED"].map((st) => (
+                {["ALL", "PROCESSING", "PENDING", "COMPLETED", "FAILED", "CANCELLED"].map((st) => (
                   <button
                     key={st}
                     onClick={() => {
@@ -1045,12 +1120,14 @@ export default function AdminSystemPage() {
                   >
                     {st === "ALL"
                       ? "Tất cả"
-                      : st === "ACTIVE"
+                      : st === "PROCESSING"
                       ? "Đang chạy"
                       : st === "PENDING"
                       ? "Đang chờ"
                       : st === "COMPLETED"
                       ? "Thành công"
+                      : st === "CANCELLED"
+                      ? "Đã hủy"
                       : "Thất bại"}
                   </button>
                 ))}
@@ -1106,7 +1183,7 @@ export default function AdminSystemPage() {
                           </td>
                           <td className="py-3 px-4">
                             <span className="font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                              {job.jobType}
+                              {job.type}
                             </span>
                           </td>
                           <td className="py-3 px-4">
@@ -1115,10 +1192,12 @@ export default function AdminSystemPage() {
                                 "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold border",
                                 job.status === "COMPLETED"
                                   ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                  : job.status === "ACTIVE"
+                                  : job.status === "PROCESSING"
                                   ? "bg-blue-50 text-blue-800 border-blue-300 animate-pulse"
                                   : job.status === "FAILED"
                                   ? "bg-rose-50 text-rose-800 border-rose-300"
+                                  : job.status === "CANCELLED"
+                                  ? "bg-slate-100 text-slate-600 border-slate-300"
                                   : "bg-amber-50 text-amber-900 border-amber-300"
                               )}
                             >
@@ -1172,7 +1251,7 @@ export default function AdminSystemPage() {
                                 </button>
                               )}
 
-                              {job.status === "FAILED" && (
+                              {(job.status === "FAILED" || job.status === "CANCELLED") && (
                                 <button
                                   onClick={() => handleRetryJob(job.id)}
                                   disabled={actionInProgress === job.id}
@@ -1240,13 +1319,13 @@ export default function AdminSystemPage() {
                 </div>
               </div>
 
-              {selectedOutboxEvent.error && (
+              {selectedOutboxEvent.lastError && (
                 <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-3 text-xs text-rose-800">
                   <span className="font-bold flex items-center gap-1">
-                    <AlertTriangle size={14} /> Nhật ký lỗi (Error Message):
+                    <AlertTriangle size={14} /> Nhật ký lỗi (Last Error):
                   </span>
                   <pre className="mt-1 font-mono text-[11px] whitespace-pre-wrap">
-                    {selectedOutboxEvent.error}
+                    {selectedOutboxEvent.lastError}
                   </pre>
                 </div>
               )}
@@ -1292,7 +1371,7 @@ export default function AdminSystemPage() {
                 <div className="flex items-center gap-2">
                   <Clock className="text-purple-600" size={20} />
                   <h3 className="text-base font-extrabold text-ink">
-                    Chi Tiết Tác Vụ: {selectedJob.jobType}
+                    Chi Tiết Tác Vụ: {selectedJob.type}
                   </h3>
                 </div>
                 <button
@@ -1421,6 +1500,19 @@ export default function AdminSystemPage() {
                     <option value="OUTBOX_POLL">
                       OUTBOX_POLL — Quét và giải phóng Outbox định kỳ
                     </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Độ ưu tiên (Priority):</label>
+                  <select
+                    value={enqueuePriority}
+                    onChange={(e) => setEnqueuePriority(e.target.value as "HIGH" | "NORMAL" | "LOW")}
+                    className="w-full rounded-lg border border-line p-2 text-xs font-semibold text-slate-800 bg-white"
+                  >
+                    <option value="HIGH">HIGH — Ưu tiên cao</option>
+                    <option value="NORMAL">NORMAL — Bình thường</option>
+                    <option value="LOW">LOW — Thấp</option>
                   </select>
                 </div>
 

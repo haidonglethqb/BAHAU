@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Lock, Unlock, Upload, X, CheckCircle2, AlertTriangle } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
+import { useAuth } from "../../../context/AuthContext";
 
 interface MonthlySummaryItem {
   id: string;
@@ -32,91 +33,46 @@ interface PeriodInfo {
   note?: string | null;
 }
 
-const DEMO_SUMMARIES: MonthlySummaryItem[] = [
-  {
-    id: "s1",
-    employeeId: "e1",
-    employeeCode: "DAU180001",
-    fullName: "TS. Phạm Văn Dũng",
-    unitName: "Ban Giám hiệu",
-    periodId: "p1",
-    standardDays: 22,
-    actualWorkingDays: 22,
-    paidLeaveDays: 0,
-    unpaidLeaveDays: 0,
-    businessTripDays: 0,
-    lateCount: 0,
-    earlyLeaveCount: 0,
-    totalPayableDays: 22,
-    isFinalized: false,
-  },
-  {
-    id: "s2",
-    employeeId: "e2",
-    employeeCode: "DAU210001",
-    fullName: "ThS. Hoàng Thị Lan",
-    unitName: "Phòng Tổ chức - Hành chính",
-    periodId: "p1",
-    standardDays: 22,
-    actualWorkingDays: 21,
-    paidLeaveDays: 1,
-    unpaidLeaveDays: 0,
-    businessTripDays: 0,
-    lateCount: 0,
-    earlyLeaveCount: 0,
-    totalPayableDays: 22,
-    isFinalized: false,
-  },
-  {
-    id: "s3",
-    employeeId: "e3",
-    employeeCode: "DAU190002",
-    fullName: "PGS.TS. Trần Quốc Hùng",
-    unitName: "Khoa Kiến trúc",
-    periodId: "p1",
-    standardDays: 22,
-    actualWorkingDays: 20,
-    paidLeaveDays: 0,
-    unpaidLeaveDays: 0,
-    businessTripDays: 2,
-    lateCount: 0,
-    earlyLeaveCount: 0,
-    totalPayableDays: 22,
-    isFinalized: false,
-  },
-  {
-    id: "s4",
-    employeeId: "e4",
-    employeeCode: "DAU240001",
-    fullName: "ThS. Đỗ Tuấn Kiệt",
-    unitName: "Khoa Kiến trúc",
-    periodId: "p1",
-    standardDays: 22,
-    actualWorkingDays: 19.5,
-    paidLeaveDays: 1.5,
-    unpaidLeaveDays: 0,
-    businessTripDays: 0,
-    lateCount: 1,
-    earlyLeaveCount: 0,
-    totalPayableDays: 21.0,
-    isFinalized: false,
-  },
-];
+function getVnMonthYear(): { month: number; year: number } {
+  const vnStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+  }).format(new Date());
+  const [y, m] = vnStr.split("-").map(Number);
+  return { month: m, year: y };
+}
+
+function getAuthHeaders(includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (includeJson) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("bahau_session_id");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 export default function AttendanceManagePage() {
-  const [month, setMonth] = useState(9);
-  const [year, setYear] = useState(2026);
-  const [items, setItems] = useState<MonthlySummaryItem[]>(DEMO_SUMMARIES);
+  const { user } = useAuth();
+  const canImport = user?.role === "HR_SPECIALIST";
+  const canLock = user?.role === "HR_SPECIALIST" || user?.role === "RECTOR";
+
+  const initialPeriod = getVnMonthYear();
+  const [month, setMonth] = useState(initialPeriod.month);
+  const [year, setYear] = useState(initialPeriod.year);
+  const [items, setItems] = useState<MonthlySummaryItem[]>([]);
   const [period, setPeriod] = useState<PeriodInfo>({
-    id: "p-2026-09",
-    month: 9,
-    year: 2026,
+    id: "",
+    month: initialPeriod.month,
+    year: initialPeriod.year,
     standardWorkingDays: 22,
     isLocked: false,
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUnit, setSelectedUnit] = useState("ALL");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Modals
   const [showImportModal, setShowImportModal] = useState(false);
@@ -125,34 +81,46 @@ export default function AttendanceManagePage() {
 
   const [showLockModal, setShowLockModal] = useState(false);
   const [lockNote, setLockNote] = useState("Đã hoàn tất đối soát số liệu công tháng. Chuyển phòng Kế hoạch - Tài chính lập phiếu lương.");
+  const [lockError, setLockError] = useState<string | null>(null);
+  const [lockSubmitting, setLockSubmitting] = useState(false);
 
-  useEffect(() => {
-    async function fetchManageAttendance() {
-      setIsLoading(true);
-      try {
-        const res = await fetch(`/api/v1/attendance/unit?month=${month}&year=${year}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data) {
-            if (json.data.period) setPeriod(json.data.period);
-            if (json.data.items?.length > 0) setItems(json.data.items);
-          }
-        }
-      } catch (e) {
-        console.warn("Using demo manage data fallback");
-      } finally {
-        setIsLoading(false);
+  const fetchManageAttendance = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/v1/attendance/unit?month=${month}&year=${year}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false) {
+        setItems([]);
+        setErrorMsg(json?.error?.message || `Không thể tải bảng công đơn vị (HTTP ${res.status}).`);
+        return;
       }
+      if (json?.data?.period) setPeriod(json.data.period);
+      setItems(Array.isArray(json?.data?.items) ? json.data.items : []);
+    } catch (e) {
+      setItems([]);
+      setErrorMsg(e instanceof Error ? e.message : "Lỗi kết nối máy chủ khi tải bảng công.");
+    } finally {
+      setIsLoading(false);
     }
-    fetchManageAttendance();
   }, [month, year]);
 
+  useEffect(() => {
+    fetchManageAttendance();
+  }, [fetchManageAttendance]);
+
   const handleToggleLock = async () => {
+    setLockSubmitting(true);
+    setLockError(null);
     try {
       const nextLockedState = !period.isLocked;
       const res = await fetch("/api/v1/attendance/lock-period", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           month,
           year,
@@ -160,29 +128,27 @@ export default function AttendanceManagePage() {
           note: lockNote,
         }),
       });
-
-      if (res.ok) {
-        const json = await res.json();
-        setPeriod(json.data);
-        setItems(items.map((it) => ({ ...it, isFinalized: nextLockedState })));
-        setShowLockModal(false);
-      } else {
-        // Fallback simulation
-        setPeriod({ ...period, isLocked: nextLockedState, note: lockNote });
-        setItems(items.map((it) => ({ ...it, isFinalized: nextLockedState })));
-        setShowLockModal(false);
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false) {
+        setLockError(json?.error?.message || `Không thể cập nhật trạng thái khóa kỳ công (HTTP ${res.status}).`);
+        return;
       }
-    } catch (e) {
-      setPeriod({ ...period, isLocked: !period.isLocked, note: lockNote });
+      if (json?.data) setPeriod(json.data);
       setShowLockModal(false);
+      fetchManageAttendance();
+    } catch (e) {
+      setLockError(e instanceof Error ? e.message : "Lỗi kết nối máy chủ.");
+    } finally {
+      setLockSubmitting(false);
     }
   };
 
   const handleFillSampleImport = () => {
+    const mm = String(month).padStart(2, "0");
     const sample = [
-      { employeeCode: "DAU240001", workDate: `${year}-${String(month).padStart(2, "0")}-09`, checkInTime: `${year}-${String(month).padStart(2, "0")}-09T07:50:00Z`, checkOutTime: `${year}-${String(month).padStart(2, "0")}-09T17:10:00Z`, deviceSource: "GATE_A" },
-      { employeeCode: "DAU240001", workDate: `${year}-${String(month).padStart(2, "0")}-10`, checkInTime: `${year}-${String(month).padStart(2, "0")}-10T08:00:00Z`, checkOutTime: `${year}-${String(month).padStart(2, "0")}-10T17:05:00Z`, deviceSource: "GATE_A" },
-      { employeeCode: "DAU190002", workDate: `${year}-${String(month).padStart(2, "0")}-09`, checkInTime: `${year}-${String(month).padStart(2, "0")}-09T07:55:00Z`, checkOutTime: `${year}-${String(month).padStart(2, "0")}-09T17:00:00Z`, deviceSource: "GATE_B" },
+      { employeeCode: "DAU240001", workDate: `${year}-${mm}-09`, checkInTime: `${year}-${mm}-09T07:50:00+07:00`, checkOutTime: `${year}-${mm}-09T17:10:00+07:00`, deviceSource: "GATE_A" },
+      { employeeCode: "DAU240001", workDate: `${year}-${mm}-10`, checkInTime: `${year}-${mm}-10T08:00:00+07:00`, checkOutTime: `${year}-${mm}-10T17:05:00+07:00`, deviceSource: "GATE_A" },
+      { employeeCode: "DAU190002", workDate: `${year}-${mm}-09`, checkInTime: `${year}-${mm}-09T07:55:00+07:00`, checkOutTime: `${year}-${mm}-09T17:00:00+07:00`, deviceSource: "GATE_B" },
     ];
     setImportJson(JSON.stringify(sample, null, 2));
   };
@@ -193,26 +159,28 @@ export default function AttendanceManagePage() {
       const parsedRecords = JSON.parse(importJson);
       const res = await fetch("/api/v1/attendance/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           month,
           year,
           records: parsedRecords,
         }),
       });
-
-      if (res.ok) {
-        const json = await res.json();
-        setImportStatus(`SUCCESS: Import thành công ${json.data.importedCount} bản ghi quẹt thẻ!`);
-        setTimeout(() => setShowImportModal(false), 1500);
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success !== false) {
+        setImportStatus(`SUCCESS: Import thành công ${json?.data?.importedCount ?? 0} bản ghi quẹt thẻ!`);
+        fetchManageAttendance();
+        setTimeout(() => setShowImportModal(false), 1200);
       } else {
-        const errJson = await res.json();
-        setImportStatus(`ERROR: ${errJson.error?.message || "Không thể import dữ liệu"}`);
+        setImportStatus(`ERROR: ${json?.error?.message || `Không thể import dữ liệu (HTTP ${res.status})`}`);
       }
-    } catch (e: any) {
-      setImportStatus(`ERROR: Lỗi cú pháp JSON hoặc kết nối: ${e.message}`);
+    } catch (e: unknown) {
+      setImportStatus(`ERROR: Lỗi cú pháp JSON hoặc kết nối: ${e instanceof Error ? e.message : "Không xác định"}`);
     }
   };
+
+  const unitNames = Array.from(new Set(items.map((it) => it.unitName).filter(Boolean)));
 
   const filteredItems = items.filter((item) => {
     const matchSearch =
@@ -227,7 +195,7 @@ export default function AttendanceManagePage() {
   const totalLate = filteredItems.reduce((acc, it) => acc + it.lateCount, 0);
 
   return (
-    <AuthGuard moduleName="Quản lý & Khóa Kỳ Chấm Công">
+    <AuthGuard allowedRoles={["DEAN", "HR_SPECIALIST", "RECTOR"]} moduleName="Quản lý & Khóa Kỳ Chấm Công">
       <div className="space-y-8">
       {/* Navigation and Title */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-5">
@@ -271,44 +239,58 @@ export default function AttendanceManagePage() {
             </button>
           </div>
 
-          <button
-            onClick={() => {
-              setImportStatus(null);
-              setShowImportModal(true);
-            }}
-            disabled={period.isLocked}
-            className={`rounded-lg px-3.5 py-2 text-sm font-semibold shadow transition ${
-              period.isLocked
-                ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                : "bg-white border border-slate-300 text-slate-800 hover:bg-slate-50"
-            }`}
-          >
-            <Upload size={14} className="inline mr-1.5" />
-            <span>Import Quẹt Thẻ (Lớp 1)</span>
-          </button>
+          {canImport && (
+            <button
+              onClick={() => {
+                setImportStatus(null);
+                setShowImportModal(true);
+              }}
+              disabled={period.isLocked}
+              className={`rounded-lg px-3.5 py-2 text-sm font-semibold shadow transition ${
+                period.isLocked
+                  ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                  : "bg-white border border-slate-300 text-slate-800 hover:bg-slate-50"
+              }`}
+            >
+              <Upload size={14} className="inline mr-1.5" />
+              <span>Import Quẹt Thẻ (Lớp 1)</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setShowLockModal(true)}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow transition inline-flex items-center gap-1.5 ${
-              period.isLocked
-                ? "bg-amber-600 text-white hover:bg-amber-700"
-                : "bg-rose-700 text-white hover:bg-rose-800"
-            }`}
-          >
-            {period.isLocked ? (
-              <>
-                <Unlock size={15} />
-                <span>Mở Khóa Kỳ Công</span>
-              </>
-            ) : (
-              <>
-                <Lock size={15} />
-                <span>Chốt & Khóa Kỳ Công (Lớp 3)</span>
-              </>
-            )}
-          </button>
+          {canLock && (
+            <button
+              onClick={() => {
+                setLockError(null);
+                setShowLockModal(true);
+              }}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold shadow transition inline-flex items-center gap-1.5 ${
+                period.isLocked
+                  ? "bg-amber-600 text-white hover:bg-amber-700"
+                  : "bg-rose-700 text-white hover:bg-rose-800"
+              }`}
+            >
+              {period.isLocked ? (
+                <>
+                  <Unlock size={15} />
+                  <span>Mở Khóa Kỳ Công</span>
+                </>
+              ) : (
+                <>
+                  <Lock size={15} />
+                  <span>Chốt &amp; Khóa Kỳ Công (Lớp 3)</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-sm text-rose-800 flex items-center gap-2">
+          <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* Lock Notice */}
       {period.isLocked && (
@@ -371,10 +353,11 @@ export default function AttendanceManagePage() {
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-800 focus:border-blue-500 focus:outline-none"
           >
             <option value="ALL">-- Tất cả đơn vị --</option>
-            <option value="Ban Giám hiệu">Ban Giám hiệu</option>
-            <option value="Phòng Tổ chức - Hành chính">Phòng Tổ chức - Hành chính</option>
-            <option value="Khoa Kiến trúc">Khoa Kiến trúc</option>
-            <option value="Khoa Xây dựng">Khoa Xây dựng</option>
+            {unitNames.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -478,7 +461,7 @@ export default function AttendanceManagePage() {
               rows={8}
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
-              placeholder='[ { "employeeCode": "DAU240001", "workDate": "2026-09-09", "checkInTime": "2026-09-09T07:55:00Z", "checkOutTime": "2026-09-09T17:05:00Z" } ]'
+              placeholder='[ { "employeeCode": "DAU240001", "workDate": "2026-09-09", "checkInTime": "2026-09-09T07:55:00+07:00", "checkOutTime": "2026-09-09T17:05:00+07:00" } ]'
               className="w-full rounded-lg border border-slate-300 p-3 font-mono text-xs text-slate-800 focus:border-blue-500 focus:outline-none"
             />
 
@@ -516,6 +499,12 @@ export default function AttendanceManagePage() {
                 : "Khi kỳ công được KHÓA SỔ, toàn bộ dữ liệu bảng công Tháng " + month + "/" + year + " sẽ trở thành BẤT BIẾN (immutable). Mọi đơn giải trình và import dữ liệu mới trong kỳ này sẽ bị chặn hoàn toàn."}
             </p>
 
+            {lockError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                {lockError}
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Ghi chú khóa sổ / chốt công:</label>
               <textarea
@@ -536,12 +525,13 @@ export default function AttendanceManagePage() {
               </button>
               <button
                 type="button"
+                disabled={lockSubmitting}
                 onClick={handleToggleLock}
-                className={`rounded-lg px-4 py-2 font-semibold text-white transition ${
+                className={`rounded-lg px-4 py-2 font-semibold text-white transition disabled:opacity-50 ${
                   period.isLocked ? "bg-amber-600 hover:bg-amber-700" : "bg-rose-700 hover:bg-rose-800"
                 }`}
               >
-                {period.isLocked ? "Thực Hiện Mở Khóa" : "Xác Nhận Khóa Bất Biến"}
+                {lockSubmitting ? "Đang xử lý..." : period.isLocked ? "Thực Hiện Mở Khóa" : "Xác Nhận Khóa Bất Biến"}
               </button>
             </div>
           </div>

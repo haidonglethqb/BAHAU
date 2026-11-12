@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  Award,
+  AlertTriangle,
   CheckCircle2,
   Copy,
   Download,
@@ -13,49 +13,30 @@ import {
   QrCode,
   ScrollText,
   ShieldCheck,
-  Sparkles,
   Users,
   X,
 } from 'lucide-react'
-import { Badge, Button, Card } from './ui'
-import apiClient from '../services/api-client'
+import { Badge, Button } from './ui'
+import { useAuth } from '../context/AuthContext'
 
-interface ExecutiveResolutionsModalProps {
-  onClose: () => void
+function getAuthHeaders(withJson = true): HeadersInit {
+  const headers: Record<string, string> = {}
+  if (withJson) headers['Content-Type'] = 'application/json'
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('bahau_session_id')
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
+  return headers
 }
 
 export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) {
-  const [candidates, setCandidates] = useState<any[]>([
-    {
-      employeeName: 'ThS. Nguyễn Văn An',
-      employeeCode: 'DAU260003',
-      unitName: 'Khoa Kiến trúc',
-      currentRank: 5,
-      currentCoefficient: 4.98,
-      nextRank: 6,
-      nextCoefficient: 5.31,
-      monthsInCurrentRank: 36,
-      recommendationType: 'REGULAR',
-      recommendationReason: 'Đã đủ 36 tháng giữ bậc (yêu cầu ≥ 36 tháng) và hoàn thành tốt nhiệm vụ.',
-      isEligible: true,
-      recentKpiScores: [94.5, 92.0],
-    },
-    {
-      employeeName: 'PGS.TS. Trần Thị Bình',
-      employeeCode: 'DAU260001',
-      unitName: 'Khoa Kiến trúc',
-      currentRank: 6,
-      currentCoefficient: 6.78,
-      nextRank: 7,
-      nextCoefficient: 7.2,
-      monthsInCurrentRank: 24,
-      recommendationType: 'EARLY',
-      recommendationReason: 'Thành tích xuất sắc: 2 năm liên tục xếp loại KPI loại A, đề xuất nâng bậc trước thời hạn 12 tháng.',
-      isEligible: true,
-      recentKpiScores: [96.0, 95.5],
-    },
-  ])
+  const { user } = useAuth()
+  const role = user?.role || 'LECTURER'
+  const isRector = role === 'RECTOR'
 
+  const [candidates, setCandidates] = useState<any[]>([])
+  const [loadingCandidates, setLoadingCandidates] = useState(true)
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
   const [selectedCandidate, setSelectedCandidate] = useState<any>(null)
   const [resolution, setResolution] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -66,13 +47,27 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
 
   useEffect(() => {
     const fetchCandidates = async () => {
+      setLoadingCandidates(true)
+      setCandidatesError(null)
       try {
-        const res = await apiClient.executive.getSalaryIncrementCandidates()
-        if (res.ok && res.data && res.data.length > 0) {
-          setCandidates(res.data)
+        const res = await fetch('/api/v1/executive/salary-increments', {
+          method: 'GET',
+          credentials: 'include',
+          headers: getAuthHeaders(false),
+        })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || json?.success === false) {
+          throw new Error(
+            json?.error?.message ||
+              `Không thể tải danh sách xét nâng bậc lương (HTTP ${res.status}).`
+          )
         }
-      } catch (e) {
-        console.warn('[ExecutiveResolutions] Fallback to mock candidates', e)
+        setCandidates(Array.isArray(json?.data) ? json.data : [])
+      } catch (e: any) {
+        setCandidates([])
+        setCandidatesError(e?.message || 'Lỗi kết nối khi tải danh sách đề xuất.')
+      } finally {
+        setLoadingCandidates(false)
       }
     }
     fetchCandidates()
@@ -83,27 +78,28 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
     setLoading(true)
     setExportError(null)
     try {
-      const res = await apiClient.executive.generateResolution({
-        type: 'SALARY_PROMOTION',
-        recipientName: candidate.employeeName,
-        recipientCode: candidate.employeeCode,
-        unitName: candidate.unitName,
-        contentTitle: `Nâng bậc lương từ bậc ${candidate.currentRank} (hệ số ${candidate.currentCoefficient}) lên bậc ${candidate.nextRank} (hệ số ${candidate.nextCoefficient})`,
+      const res = await fetch('/api/v1/executive/generate-resolution', {
+        method: 'POST',
+        credentials: 'include',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify({
+          type: 'SALARY_PROMOTION',
+          recipientName: candidate.employeeName,
+          recipientCode: candidate.employeeCode,
+          unitName: candidate.unitName,
+          contentTitle: `Nâng bậc lương từ bậc ${candidate.currentRank} (hệ số ${candidate.currentCoefficient}) lên bậc ${candidate.nextRank} (hệ số ${candidate.nextCoefficient})`,
+        }),
       })
-      if (res.ok && res.data) {
-        setResolution(res.data)
-      } else {
-        // Fallback Decree 30 resolution
-        setResolution({
-          resolutionNumber: '312/QĐ-ĐHKTĐN',
-          signDate: `Đà Nẵng, ngày ${new Date().getDate()} tháng ${new Date().getMonth() + 1} năm ${new Date().getFullYear()}`,
-          signAuthority: 'HIỆU TRƯỞNG',
-          title: 'QUYẾT ĐỊNH\nVề việc nâng bậc lương đối với viên chức, người lao động',
-          fullFormattedDocument: `BỘ GIÁO DỤC VÀ ĐÀO TẠO                  CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\nTRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG              Độc lập - Tự do - Hạnh phúc\nSố: 312/QĐ-ĐHKTĐN                             Đà Nẵng, ngày 02 tháng 10 năm 2026\n\nQUYẾT ĐỊNH\nVề việc nâng bậc lương đối với viên chức, người lao động\n\nHIỆU TRƯỞNG TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG\n\nCăn cứ Luật Giáo dục đại học ngày 20 tháng 11 năm 2012 và Luật sửa đổi, bổ sung một số điều của Luật Giáo dục đại học ngày 19 tháng 11 năm 2018;\nCăn cứ Nghị định số 30/2020/NĐ-CP ngày 05 tháng 3 năm 2020 của Chính phủ về công tác văn thư;\nCăn cứ Quy chế Tổ chức và Hoạt động của Trường Đại học Kiến trúc Đà Nẵng;\nXét đề nghị của Trưởng phòng Tổ chức - Hành chính,\n\nQUYẾT ĐỊNH:\n\nĐiều 1. Nâng bậc lương đối với Ông/Bà ${candidate.employeeName} (Mã CBGV: ${candidate.employeeCode}), đơn vị ${candidate.unitName}: Từ bậc ${candidate.currentRank} (hệ số ${candidate.currentCoefficient}) lên bậc ${candidate.nextRank} (hệ số ${candidate.nextCoefficient}).\n\nĐiều 2. Thời gian được tính hưởng bậc lương mới kể từ ngày 01 tháng 09 năm 2026. Mốc thời gian tính nâng bậc lương lần sau được tính kể từ ngày hưởng bậc lương mới này.\n\nĐiều 3. Trưởng phòng Tổ chức - Hành chính, Trưởng phòng Kế hoạch - Tài chính và Ông/Bà ${candidate.employeeName} chịu trách nhiệm thi hành Quyết định này.\n\nNơi nhận:                                         HIỆU TRƯỞNG\n- Ban Giám hiệu (để báo cáo);\n- Phòng TCHC, Phòng KHTC;\n- ${candidate.unitName};\n- Đ/c ${candidate.employeeName};\n- Lưu: VT, TCHC.                                   GS.TS. Nguyễn Hiệu Trưởng`,
-        })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || json?.success === false || !json?.data) {
+        throw new Error(
+          json?.error?.message || `Không thể soạn thảo quyết định (HTTP ${res.status}).`
+        )
       }
-    } catch {
-      // Fallback
+      setResolution(json.data)
+    } catch (e: any) {
+      setResolution(null)
+      setExportError(e?.message || 'Có lỗi khi tạo dự thảo quyết định.')
     } finally {
       setLoading(false)
     }
@@ -111,15 +107,26 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
 
   const handleSignResolution = async () => {
     if (!resolution) return
+    if (!isRector) {
+      setExportError('Chỉ Hiệu trưởng mới có thẩm quyền ký số PKI ban hành Quyết định.')
+      return
+    }
     setIsSigning(true)
     setExportError(null)
     try {
-      const res = await apiClient.executive.signResolution(resolution)
-      if (res.ok && res.data) {
-        setResolution(res.data)
-      } else {
-        setExportError(res.error || 'Ký số thất bại. Vui lòng kiểm tra chứng thư số.')
+      const res = await fetch('/api/v1/executive/sign-resolution', {
+        method: 'POST',
+        credentials: 'include',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(resolution),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || json?.success === false || !json?.data) {
+        throw new Error(
+          json?.error?.message || `Ký số thất bại (HTTP ${res.status}).`
+        )
       }
+      setResolution(json.data)
     } catch (err: any) {
       setExportError(err?.message || 'Có lỗi xảy ra khi ký số PKI')
     } finally {
@@ -133,28 +140,45 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
     setExportError(null)
     try {
       let currentRes = resolution
-      if (!currentRes.signature) {
-        const signRes = await apiClient.executive.signResolution(currentRes)
-        if (signRes.ok && signRes.data) {
-          currentRes = signRes.data
-          setResolution(currentRes)
+      if (!currentRes.signature && isRector) {
+        const signRes = await fetch('/api/v1/executive/sign-resolution', {
+          method: 'POST',
+          credentials: 'include',
+          headers: getAuthHeaders(true),
+          body: JSON.stringify(currentRes),
+        })
+        const signJson = await signRes.json().catch(() => null)
+        if (!signRes.ok || signJson?.success === false || !signJson?.data) {
+          throw new Error(
+            signJson?.error?.message || `Không thể ký số trước khi xuất PDF (HTTP ${signRes.status}).`
+          )
         }
+        currentRes = signJson.data
+        setResolution(currentRes)
       }
 
-      const blob = await apiClient.executive.exportPdf(currentRes)
-      if (blob) {
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        const cleanNum = (currentRes.resolutionNumber || 'QD').replace(/[\/\\]/g, '-')
-        a.download = `Quyet-Dinh-${cleanNum}.pdf`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        window.URL.revokeObjectURL(url)
-      } else {
-        setExportError('Không thể tạo file PDF. Vui lòng thử lại.')
+      const res = await fetch('/api/v1/executive/export-pdf', {
+        method: 'POST',
+        credentials: 'include',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(currentRes),
+      })
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null)
+        throw new Error(
+          errJson?.error?.message || `Không thể tạo file PDF (HTTP ${res.status}).`
+        )
       }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const cleanNum = (currentRes.resolutionNumber || 'QD').replace(/[\/\\]/g, '-')
+      a.download = `Quyet-Dinh-${cleanNum}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
     } catch (err: any) {
       setExportError(err?.message || 'Lỗi khi kết xuất file PDF')
     } finally {
@@ -207,6 +231,21 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
               <Badge tone="info">{candidates.length} cán bộ đủ điều kiện</Badge>
             </div>
 
+            {candidatesError ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 flex items-center gap-2">
+                <AlertTriangle size={16} className="shrink-0" />
+                <span>{candidatesError}</span>
+              </div>
+            ) : loadingCandidates ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted">
+                <Loader2 size={16} className="animate-spin text-brand-600" />
+                Đang tải danh sách cán bộ đủ điều kiện...
+              </div>
+            ) : candidates.length === 0 ? (
+              <div className="rounded-xl border border-line bg-slate-50 p-6 text-center text-xs text-muted">
+                Chưa có cán bộ nào đến hạn hoặc đủ điều kiện xét nâng bậc lương trong kỳ này.
+              </div>
+            ) : (
             <div className="overflow-x-auto rounded-xl border border-line">
               <table className="w-full text-left text-[13px]">
                 <thead className="bg-slate-50 border-b border-line text-[11px] font-semibold uppercase text-slate-500">
@@ -256,6 +295,7 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           {/* Generated Resolution Preview */}
@@ -282,15 +322,21 @@ export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) 
                   </Button>
 
                   {!resolution.signature ? (
-                    <Button
-                      size="sm"
-                      className="bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-sm"
-                      onClick={handleSignResolution}
-                      disabled={isSigning}
-                    >
-                      {isSigning ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                      {isSigning ? 'Đang ký số...' : 'Ký số Hiệu trưởng'}
-                    </Button>
+                    isRector ? (
+                      <Button
+                        size="sm"
+                        className="bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-sm"
+                        onClick={handleSignResolution}
+                        disabled={isSigning}
+                      >
+                        {isSigning ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                        {isSigning ? 'Đang ký số...' : 'Ký số Hiệu trưởng'}
+                      </Button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                        Chờ Hiệu trưởng ký số PKI
+                      </span>
+                    )
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1">
                       <CheckCircle2 size={14} /> Chữ ký hợp lệ

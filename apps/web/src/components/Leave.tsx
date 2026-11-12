@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
@@ -26,9 +26,8 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { MY_REQUESTS, type LeaveRequest } from '../data'
+import { type LeaveRequest } from '../data'
 import { Badge, Button, Card, cx, Tabs } from './ui'
-import apiClient from '../services/api-client'
 import { useAuth } from '../context/AuthContext'
 
 const STEPS = ['Đã nộp đơn', 'Trưởng khoa duyệt', 'Phòng TCHC xác nhận', 'Hoàn thành']
@@ -40,8 +39,85 @@ const STEP_INDEX: Record<LeaveRequest['status'], number> = {
   rejected: 1,
 }
 
+const LEAVE_TYPE_LABELS: Record<string, string> = {
+  ANNUAL: 'Nghỉ phép năm',
+  SICK: 'Nghỉ ốm / điều trị',
+  MATERNITY: 'Nghỉ thai sản',
+  UNPAID: 'Nghỉ việc riêng không hưởng lương',
+  BEREAVEMENT: 'Nghỉ hiếu',
+  WEDDING: 'Nghỉ hỷ',
+  ACADEMIC: 'Đi công tác / Học thuật',
+}
+
+function getVnDateStr(offsetDays = 0): string {
+  const target = new Date(Date.now() + offsetDays * 86_400_000)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(target)
+}
+
+function formatVnDateTime(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d)
+}
+
+async function authFetchJson(url: string, init: RequestInit = {}) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((init.headers as Record<string, string>) || {}),
+  }
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('bahau_session_id')
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers,
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok || json?.success === false) {
+    const code = json?.error?.code ? `[${json.error.code}] ` : ''
+    const msg = json?.error?.message || `Yêu cầu thất bại (HTTP ${res.status})`
+    throw new Error(`${code}${msg}`)
+  }
+  return json
+}
+
+function mapBackendLeaveStatus(status: string): LeaveRequest['status'] {
+  switch (status) {
+    case 'APPROVED':
+      return 'done'
+    case 'REJECTED':
+    case 'RETURNED':
+    case 'CANCELLED':
+      return 'rejected'
+    case 'PENDING':
+    default:
+      return 'approving'
+  }
+}
+
+interface LeaveItem extends LeaveRequest {
+  rawStatus?: string
+}
+
 interface PendingApprovalItem {
   id: string
+  stepId: string
+  module: string
   requesterCode: string
   requesterName: string
   position: string
@@ -56,130 +132,16 @@ interface PendingApprovalItem {
   status: 'DEAN_PENDING' | 'HR_PENDING' | 'RECTOR_PENDING'
 }
 
-const DEAN_PENDING_SAMPLES: PendingApprovalItem[] = [
-  {
-    id: 'DON-KT-2026-081',
-    requesterCode: 'DAU260005',
-    requesterName: 'ThS. Võ Hoàng Long',
-    position: 'Giảng viên',
-    unit: 'Khoa Kiến trúc',
-    type: 'Nghỉ phép năm',
-    from: '2026-10-15',
-    to: '2026-10-16',
-    days: 2,
-    reason: 'Giải quyết việc gia đình cá nhân đã bố trí dạy thay',
-    substitute: 'ThS. Nguyễn Văn An (Dạy thay Studio C-101)',
-    submittedAt: '10:15 Hôm nay',
-    status: 'DEAN_PENDING',
-  },
-  {
-    id: 'DON-KT-2026-079',
-    requesterCode: 'DAU260012',
-    requesterName: 'TS. Nguyễn Hải',
-    position: 'Giảng viên chính',
-    unit: 'Khoa Kiến trúc',
-    type: 'Công tác hội thảo quốc tế',
-    from: '2026-10-22',
-    to: '2026-10-25',
-    days: 4,
-    reason: 'Tham dự và trình bày báo cáo tại Hội thảo Kiến trúc Xanh Châu Á (UIA Singapore)',
-    substitute: 'ThS. Trịnh Lan (Trực lab thay)',
-    submittedAt: 'Hôm qua 16:30',
-    status: 'DEAN_PENDING',
-  },
-  {
-    id: 'DON-KT-2026-074',
-    requesterCode: 'DAU260018',
-    requesterName: 'ThS. Trịnh Lan',
-    position: 'Giảng viên',
-    unit: 'Khoa Kiến trúc',
-    type: 'Nghỉ việc riêng hưởng nguyên lương',
-    from: '2026-10-18',
-    to: '2026-10-18',
-    days: 1,
-    reason: 'Đưa con khám sức khỏe định kỳ',
-    substitute: 'TS. Nguyễn Hải',
-    submittedAt: '2 ngày trước',
-    status: 'DEAN_PENDING',
-  },
-]
-
-const HR_PENDING_SAMPLES: PendingApprovalItem[] = [
-  {
-    id: 'DON-XD-2026-042',
-    requesterCode: 'DAU260022',
-    requesterName: 'KS. Đặng Thu Hương',
-    position: 'Trợ giảng',
-    unit: 'Khoa Xây dựng',
-    type: 'Nghỉ phép năm',
-    from: '2026-10-12',
-    to: '2026-10-13',
-    days: 2,
-    reason: 'Nghỉ giải quyết việc gia đình',
-    substitute: 'TS. Phạm Văn Dũng',
-    submittedAt: '14:20 Hôm qua',
-    status: 'HR_PENDING',
-  },
-  {
-    id: 'DON-CNTT-2026-033',
-    requesterCode: 'DAU260004',
-    requesterName: 'TS. Lê Thị Hà',
-    position: 'Phó Trưởng khoa',
-    unit: 'Khoa CNTT',
-    type: 'Nghỉ phép năm',
-    from: '2026-10-20',
-    to: '2026-10-21',
-    days: 2,
-    reason: 'Nghỉ phép thường niên',
-    substitute: 'TS. Hoàng Minh Trí',
-    submittedAt: 'Hôm nay 08:30',
-    status: 'HR_PENDING',
-  },
-  {
-    id: 'DON-KT-2026-068',
-    requesterCode: 'DAU260003',
-    requesterName: 'ThS. Nguyễn Văn An',
-    position: 'Giảng viên',
-    unit: 'Khoa Kiến trúc',
-    type: 'Đi công tác chuyên môn',
-    from: '2026-10-08',
-    to: '2026-10-09',
-    days: 2,
-    reason: 'Khảo sát thực địa đồ án quy hoạch Hội An',
-    substitute: 'ThS. Võ Hoàng Long',
-    submittedAt: '3 ngày trước',
-    status: 'HR_PENDING',
-  },
-]
-
-const RECTOR_PENDING_SAMPLES: PendingApprovalItem[] = [
-  {
-    id: 'DON-BGH-2026-009',
-    requesterCode: 'DAU260001',
-    requesterName: 'PGS.TS. Trần Thị Bình',
-    position: 'Trưởng khoa Kiến trúc',
-    unit: 'Khoa Kiến trúc',
-    type: 'Đoàn công tác nước ngoài',
-    from: '2026-11-05',
-    to: '2026-11-12',
-    days: 8,
-    reason: 'Tham dự Tuần lễ Đô thị Bền vững tại Đại học Quốc gia Seoul (Hàn Quốc) theo thư mời hợp tác',
-    substitute: 'TS. Nguyễn Hải (Phụ trách Khoa)',
-    submittedAt: 'Hôm qua 09:00',
-    status: 'RECTOR_PENDING',
-  },
-]
-
 export function Leave() {
   const { user } = useAuth()
   const role = user?.role || 'LECTURER'
 
   const [modal, setModal] = useState(false)
   const [modalType, setModalType] = useState<'leave' | 'trip'>('leave')
-  const [requests, setRequests] = useState<LeaveRequest[]>(MY_REQUESTS)
-  const [deanPending, setDeanPending] = useState<PendingApprovalItem[]>(DEAN_PENDING_SAMPLES)
-  const [hrPending, setHrPending] = useState<PendingApprovalItem[]>(HR_PENDING_SAMPLES)
-  const [rectorPending, setRectorPending] = useState<PendingApprovalItem[]>(RECTOR_PENDING_SAMPLES)
+  const [requests, setRequests] = useState<LeaveItem[]>([])
+  const [deanPending, setDeanPending] = useState<PendingApprovalItem[]>([])
+  const [hrPending, setHrPending] = useState<PendingApprovalItem[]>([])
+  const [rectorPending, setRectorPending] = useState<PendingApprovalItem[]>([])
 
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (role === 'DEAN') return 'dept_approvals'
@@ -189,13 +151,16 @@ export function Leave() {
   })
 
   const [balance, setBalance] = useState({
-    remaining: 10.5,
-    carriedForward: 2.0,
-    used: 1.5,
-    pendingHold: 1,
+    remaining: 0,
+    carriedForward: 0,
+    used: 0,
+    pendingHold: 0,
   })
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [actionStepId, setActionStepId] = useState<string | null>(null)
   const [successToast, setSuccessToast] = useState<string | null>(null)
+  const [errorToast, setErrorToast] = useState<string | null>(null)
 
   // Keep active tab in sync if user changes role via switcher
   useEffect(() => {
@@ -213,23 +178,82 @@ export function Leave() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [b, r] = await Promise.all([
-        apiClient.leave.getMyBalance(),
-        apiClient.leave.getMyRequests(),
+      setLoadError(null)
+      const [balRes, reqRes, pendingRes] = await Promise.allSettled([
+        authFetchJson('/api/v1/leave/balance/my'),
+        authFetchJson('/api/v1/leave/requests/my'),
+        role === 'DEAN' || role === 'HR_SPECIALIST' || role === 'RECTOR'
+          ? authFetchJson('/api/v1/workflow/pending')
+          : Promise.resolve({ data: [] }),
       ])
-      if (b) {
+
+      if (balRes.status === 'fulfilled' && balRes.value?.data) {
+        const b = balRes.value.data
         setBalance({
-          remaining: b.remaining ?? 10.5,
-          carriedForward: b.carriedForward ?? 2.0,
-          used: b.used ?? 1.5,
-          pendingHold: b.pendingHold ?? 1,
+          remaining: Number(b.remaining ?? 0),
+          carriedForward: Number(b.carriedForward ?? 0),
+          used: Number(b.used ?? 0),
+          pendingHold: Number(b.pendingHold ?? 0),
         })
+      } else {
+        setBalance({ remaining: 0, carriedForward: 0, used: 0, pendingHold: 0 })
       }
-      if (r && r.length > 0) {
-        setRequests(r)
+
+      if (reqRes.status === 'fulfilled' && Array.isArray(reqRes.value?.data)) {
+        const mapped: LeaveItem[] = reqRes.value.data.map((r: any) => ({
+          id: r.id,
+          requester: r.employeeName || user?.fullName || 'Cá nhân',
+          position: user?.title || 'CBGV',
+          unit: user?.unitName || 'Đơn vị',
+          type: LEAVE_TYPE_LABELS[r.leaveType] || r.leaveType || 'Nghỉ phép',
+          from: r.startDate,
+          to: r.endDate,
+          days: Number(r.totalDays ?? 0),
+          reason: r.reason || '',
+          substitute: r.substituteEmployeeName || '—',
+          substituteOk: true,
+          status: mapBackendLeaveStatus(r.status),
+          rawStatus: r.status,
+        }))
+        setRequests(mapped)
+      } else {
+        setRequests([])
+        if (reqRes.status === 'rejected') {
+          setLoadError(reqRes.reason?.message || 'Không thể tải danh sách đơn nghỉ phép.')
+        }
       }
-    } catch (e) {
-      console.warn('[Leave] Using mock data due to connection', e)
+
+      if (pendingRes.status === 'fulfilled' && Array.isArray(pendingRes.value?.data)) {
+        const mappedPending: PendingApprovalItem[] = pendingRes.value.data
+          .filter((t: any) => t.module === 'LEAVE' || t.module === 'BUSINESS_TRIP')
+          .map((t: any) => ({
+            id: String(t.recordId || t.stepId).slice(0, 8).toUpperCase(),
+            stepId: t.stepId,
+            module: t.module,
+            requesterCode: t.requesterCode || '—',
+            requesterName: t.requesterName || 'Cán bộ',
+            position: t.stepName || 'CBGV',
+            unit: t.module === 'BUSINESS_TRIP' ? 'Công tác' : 'Nghỉ phép',
+            type: t.module === 'BUSINESS_TRIP' ? 'Công tác' : 'Nghỉ phép',
+            from: '—',
+            to: '—',
+            days: 0,
+            reason: t.summary || 'Đề xuất phê duyệt',
+            substitute: 'Theo hồ sơ đơn',
+            submittedAt: formatVnDateTime(t.createdAt),
+            status:
+              role === 'HR_SPECIALIST'
+                ? 'HR_PENDING'
+                : role === 'RECTOR'
+                ? 'RECTOR_PENDING'
+                : 'DEAN_PENDING',
+          }))
+        if (role === 'DEAN') setDeanPending(mappedPending)
+        if (role === 'HR_SPECIALIST') setHrPending(mappedPending)
+        if (role === 'RECTOR') setRectorPending(mappedPending)
+      }
+    } catch (e: any) {
+      setLoadError(e?.message || 'Lỗi kết nối máy chủ.')
     } finally {
       setLoading(false)
     }
@@ -237,42 +261,93 @@ export function Leave() {
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [role])
 
-  const handleCreated = (newReq: LeaveRequest) => {
-    setRequests((prev) => [newReq, ...prev])
-    setBalance((prev) => ({
-      ...prev,
-      used: prev.used + newReq.days,
-      remaining: Math.max(0, prev.remaining - newReq.days),
-    }))
-    setSuccessToast(`Đơn ${newReq.id} đã được gửi thành công và đang chuyển Trưởng khoa phê duyệt.`)
+  const handleCreated = async (newReq: LeaveItem) => {
+    await loadData()
+    setSuccessToast(
+      `Đơn ${newReq.id.slice(0, 8).toUpperCase()} đã được gửi thành công và đang chuyển cấp phê duyệt.`
+    )
     setTimeout(() => setSuccessToast(null), 6000)
   }
 
-  const handleDeanApprove = (item: PendingApprovalItem) => {
-    setDeanPending((prev) => prev.filter((x) => x.id !== item.id))
-    setSuccessToast(`Đã phê duyệt đơn ${item.id} của ${item.requesterName}. Hồ sơ đã chuyển Phòng TCHC xác nhận.`)
-    setTimeout(() => setSuccessToast(null), 5000)
+  const handleCancelMyRequest = async (id: string) => {
+    try {
+      setErrorToast(null)
+      await authFetchJson(`/api/v1/leave/requests/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) })
+      await loadData()
+      setSuccessToast('Đã hủy đơn xin nghỉ phép và hoàn trả số ngày tạm giữ.')
+      setTimeout(() => setSuccessToast(null), 5000)
+    } catch (e: any) {
+      setErrorToast(e?.message || 'Không thể hủy đơn xin nghỉ phép.')
+    }
   }
 
-  const handleDeanReject = (item: PendingApprovalItem) => {
-    setDeanPending((prev) => prev.filter((x) => x.id !== item.id))
-    setSuccessToast(`Đã yêu cầu giảng viên ${item.requesterName} giải trình bổ sung cho đơn ${item.id}.`)
-    setTimeout(() => setSuccessToast(null), 5000)
+  const handleWorkflowStepAction = async (
+    item: PendingApprovalItem,
+    action: 'approve' | 'return',
+    successMessage: string
+  ) => {
+    try {
+      setActionStepId(item.stepId)
+      setErrorToast(null)
+      if (action === 'approve') {
+        await authFetchJson(`/api/v1/workflow/steps/${item.stepId}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ comment: 'Đồng ý phê duyệt' }),
+        })
+      } else {
+        const reason = window.prompt(`Nhập nội dung yêu cầu ${item.requesterName} bổ sung (tối thiểu 3 ký tự):`)
+        if (!reason || reason.trim().length < 3) {
+          if (reason !== null) {
+            setErrorToast('Vui lòng nhập nội dung yêu cầu bổ sung tối thiểu 3 ký tự.')
+          }
+          return
+        }
+        await authFetchJson(`/api/v1/workflow/steps/${item.stepId}/return`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: reason.trim() }),
+        })
+      }
+      setDeanPending((prev) => prev.filter((x) => x.stepId !== item.stepId))
+      setHrPending((prev) => prev.filter((x) => x.stepId !== item.stepId))
+      setRectorPending((prev) => prev.filter((x) => x.stepId !== item.stepId))
+      setSuccessToast(successMessage)
+      setTimeout(() => setSuccessToast(null), 5000)
+    } catch (e: any) {
+      setErrorToast(e?.message || 'Thao tác phê duyệt thất bại.')
+    } finally {
+      setActionStepId(null)
+    }
   }
 
-  const handleHrConfirm = (item: PendingApprovalItem) => {
-    setHrPending((prev) => prev.filter((x) => x.id !== item.id))
-    setSuccessToast(`Đã xác nhận & ghi nhận vào Sổ cái nghỉ phép cho ${item.requesterName} (${item.id}).`)
-    setTimeout(() => setSuccessToast(null), 5000)
-  }
+  const handleDeanApprove = (item: PendingApprovalItem) =>
+    handleWorkflowStepAction(
+      item,
+      'approve',
+      `Đã phê duyệt đơn ${item.id} của ${item.requesterName}. Hồ sơ đã chuyển cấp tiếp theo.`
+    )
 
-  const handleRectorApprove = (item: PendingApprovalItem) => {
-    setRectorPending((prev) => prev.filter((x) => x.id !== item.id))
-    setSuccessToast(`Hiệu trưởng đã Ký số Phê duyệt Quyết định cử đoàn công tác cho ${item.requesterName} (${item.id}).`)
-    setTimeout(() => setSuccessToast(null), 5000)
-  }
+  const handleDeanReject = (item: PendingApprovalItem) =>
+    handleWorkflowStepAction(
+      item,
+      'return',
+      `Đã gửi yêu cầu bổ sung thông tin tới ${item.requesterName} (${item.id}).`
+    )
+
+  const handleHrConfirm = (item: PendingApprovalItem) =>
+    handleWorkflowStepAction(
+      item,
+      'approve',
+      `Đã xác nhận & ghi nhận vào Sổ cái nghỉ phép cho ${item.requesterName} (${item.id}).`
+    )
+
+  const handleRectorApprove = (item: PendingApprovalItem) =>
+    handleWorkflowStepAction(
+      item,
+      'approve',
+      `Hiệu trưởng đã phê duyệt hồ sơ của ${item.requesterName} (${item.id}).`
+    )
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -356,6 +431,24 @@ export function Leave() {
             <span className="text-xs sm:text-sm font-medium">{successToast}</span>
           </div>
           <button onClick={() => setSuccessToast(null)} className="text-emerald-600 hover:text-emerald-900">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {(errorToast || loadError) && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-800 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle size={18} className="text-rose-600 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">{errorToast || loadError}</span>
+          </div>
+          <button
+            onClick={() => {
+              setErrorToast(null)
+              setLoadError(null)
+            }}
+            className="text-rose-600 hover:text-rose-900"
+          >
             <X size={16} />
           </button>
         </div>
@@ -783,10 +876,20 @@ export function Leave() {
                         {r.from} → {r.to} · {r.days} ngày
                       </span>
                     </div>
+                    {r.rawStatus === 'PENDING' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs text-rose-600 border-rose-200 hover:bg-rose-50"
+                        onClick={() => handleCancelMyRequest(r.id)}
+                      >
+                        Hủy đơn
+                      </Button>
+                    )}
                     {r.status === 'done' ? (
                       <Badge tone="success">Hoàn thành</Badge>
                     ) : r.status === 'rejected' ? (
-                      <Badge tone="danger">Đã từ chối</Badge>
+                      <Badge tone="danger">{r.rawStatus === 'RETURNED' ? 'Yêu cầu bổ sung' : r.rawStatus === 'CANCELLED' ? 'Đã hủy' : 'Đã từ chối'}</Badge>
                     ) : (
                       <Badge tone="warning">Đang xử lý</Badge>
                     )}
@@ -887,11 +990,11 @@ function LeaveModal({
 }: {
   initialType: 'leave' | 'trip'
   onClose: () => void
-  onSuccess: (req: LeaveRequest) => void
+  onSuccess: (req: LeaveItem) => void
 }) {
   const [leaveType, setLeaveType] = useState(initialType === 'trip' ? 'ACADEMIC' : 'ANNUAL')
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0])
-  const [endDate, setEndDate] = useState(new Date(Date.now() + 86400000).toISOString().split('T')[0])
+  const [startDate, setStartDate] = useState(() => getVnDateStr(0))
+  const [endDate, setEndDate] = useState(() => getVnDateStr(1))
   const [isHalfDay, setIsHalfDay] = useState(false)
   const [reason, setReason] = useState('')
   const [substitute, setSubstitute] = useState('ThS. Võ Hoàng Long — BM Kiến trúc công trình')
@@ -900,17 +1003,26 @@ function LeaveModal({
 
   const calcDays = () => {
     if (isHalfDay) return 0.5
-    const d1 = new Date(startDate).getTime()
-    const d2 = new Date(endDate).getTime()
-    if (isNaN(d1) || isNaN(d2) || d2 < d1) return 1
-    const diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1
+    const [sy, sm, sd] = startDate.split('-').map(Number)
+    const [ey, em, ed] = endDate.split('-').map(Number)
+    if (!sy || !sm || !sd || !ey || !em || !ed) return 1
+    const d1 = Date.UTC(sy, sm - 1, sd)
+    const d2 = Date.UTC(ey, em - 1, ed)
+    if (d2 < d1) return 1
+    const diff = Math.round((d2 - d1) / 86_400_000) + 1
     return diff > 0 ? diff : 1
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!reason.trim() || reason.length < 5) {
+    if (!reason.trim() || reason.trim().length < 5) {
       setError('Vui lòng nhập lý do nghỉ phép (tối thiểu 5 ký tự)')
+      return
+    }
+
+    const effectiveEndDate = isHalfDay ? startDate : endDate
+    if (effectiveEndDate < startDate) {
+      setError('Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.')
       return
     }
 
@@ -919,36 +1031,32 @@ function LeaveModal({
     setError(null)
 
     try {
-      const apiRes = await apiClient.leave.createRequest({
-        leaveType,
-        startDate,
-        endDate: isHalfDay ? startDate : endDate,
-        totalDays,
-        reason,
+      const json = await authFetchJson('/api/v1/leave/requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          leaveType,
+          startDate,
+          endDate: effectiveEndDate,
+          totalDays,
+          reason: reason.trim(),
+        }),
       })
 
-      const typeLabel =
-        leaveType === 'ANNUAL'
-          ? 'Nghỉ phép năm'
-          : leaveType === 'SICK'
-          ? 'Nghỉ ốm'
-          : leaveType === 'ACADEMIC'
-          ? 'Đi công tác'
-          : 'Nghỉ việc riêng'
-
-      const newRequest: LeaveRequest = {
-        id: apiRes.ok && apiRes.data?.id ? String(apiRes.data.id).substring(0, 12).toUpperCase() : `DON2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        requester: 'ThS. Nguyễn Văn An',
-        position: 'Giảng viên',
-        unit: 'Khoa Kiến trúc',
-        type: typeLabel,
-        from: startDate,
-        to: isHalfDay ? startDate : endDate,
-        days: totalDays,
-        reason,
+      const created = json?.data
+      const newRequest: LeaveItem = {
+        id: created?.id || '',
+        requester: created?.employeeName || 'Cá nhân',
+        position: 'CBGV',
+        unit: 'Đơn vị',
+        type: LEAVE_TYPE_LABELS[leaveType] || leaveType,
+        from: created?.startDate || startDate,
+        to: created?.endDate || effectiveEndDate,
+        days: Number(created?.totalDays ?? totalDays),
+        reason: created?.reason || reason.trim(),
         substitute,
         substituteOk: true,
-        status: 'approving',
+        status: mapBackendLeaveStatus(created?.status || 'PENDING'),
+        rawStatus: created?.status || 'PENDING',
       }
 
       onSuccess(newRequest)
