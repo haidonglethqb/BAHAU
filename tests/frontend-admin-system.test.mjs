@@ -110,9 +110,9 @@ async function runFrontendAdminSystemTests() {
     assert.ok(testJob.id, "Enqueued job must have valid ID");
     assert.strictEqual(testJob.type, "PAYROLL_BATCH_CALC");
 
-    // Wait briefly for job completion
+    // Wait briefly for job completion (DB-offline fallback probe takes ~2s)
     let attempts = 0;
-    while (attempts < 10 && queue.getJob(testJob.id)?.status !== "COMPLETED") {
+    while (attempts < 40 && queue.getJob(testJob.id)?.status !== "COMPLETED") {
       await new Promise((r) => setTimeout(r, 200));
       attempts++;
     }

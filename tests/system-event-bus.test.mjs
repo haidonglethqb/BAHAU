@@ -215,7 +215,7 @@ async function runSystemEventBusTests() {
     defenseLocation: "Hội trường A2 - DAU",
     councilMembers: [
       { employeeId: "DAU260001-ID", employeeCode: "DAU260001", fullName: "GS.TS. Nguyễn Hiệu Trưởng", role: "PRESIDENT" },
-      { employeeId: "DAU260002-ID", employeeCode: "DAU260002", fullName: "TS. Lê Hoàng Nam", role: "REVIEWER_1" },
+      { employeeId: "DAU260006-ID", employeeCode: "DAU260006", fullName: "TS. Trần Quốc Bảo", role: "REVIEWER_1" },
       { employeeId: "DAU260003-ID", employeeCode: "DAU260003", fullName: "PGS.TS. Trần Thị Bình", role: "REVIEWER_2" },
       { employeeId: "DAU260004-ID", employeeCode: "DAU260004", fullName: "TS. Phạm Văn D", role: "COMMISSIONER" },
       { employeeId: "DAU260005-ID", employeeCode: "DAU260005", fullName: "TS. Hoàng Văn E", role: "SECRETARY" },
@@ -225,7 +225,7 @@ async function runSystemEventBusTests() {
   PostgradService.scoreThesisDefense(postgradStudent.id, {
     memberScores: [
       { employeeId: "DAU260001-ID", score: 92, isApproved: true },
-      { employeeId: "DAU260002-ID", score: 90, isApproved: true },
+      { employeeId: "DAU260006-ID", score: 90, isApproved: true },
       { employeeId: "DAU260003-ID", score: 94, isApproved: true },
       { employeeId: "DAU260004-ID", score: 88, isApproved: true },
       { employeeId: "DAU260005-ID", score: 90, isApproved: true },
