@@ -35,6 +35,45 @@ import type {
   RdTeamMemberRole,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_PROJECTS: RdProjectDto[] = [
   {
     id: "rd-dau-001",
@@ -191,7 +230,9 @@ const INITIAL_PROJECTS: RdProjectDto[] = [
 
 export default function RdProjectsPage() {
   const { user } = useAuth();
-  const [projects, setProjects] = useState<RdProjectDto[]>(INITIAL_PROJECTS);
+  const [projects, setProjects] = useState<RdProjectDto[]>([]);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState<string>("ALL");
   const [selectedLevel, setSelectedLevel] = useState<string>("ALL");
@@ -222,22 +263,44 @@ export default function RdProjectsPage() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const token = localStorage.getItem("token") || "mock-token";
         const res = await fetch("/api/v1/rd/projects", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders(),
+          credentials: "include",
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-            setProjects(json.data);
-          }
+        if (!res.ok) {
+          setNotice({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách đề tài NCKH & dự án tư vấn"),
+          });
+          return;
         }
-      } catch {
-        // Fallback to initial seed
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          setProjects(json.data);
+        }
+      } catch (err) {
+        setNotice({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải danh sách dự án R&D.",
+        });
       }
     }
     fetchProjects();
   }, []);
+
+  const handleDownloadPdf = async (projectId: string, projectCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/rd/projects/${projectId}/resolution/pdf`,
+        `quyet-dinh-nghiem-thu-${projectCode || projectId}.pdf`
+      );
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Nghiệm thu PDF.",
+      });
+    }
+  };
 
   const formatVnd = (num: number) => {
     return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(num);
@@ -266,7 +329,7 @@ export default function RdProjectsPage() {
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem("token") || "mock-token";
+    if (isSubmitting) return;
 
     const members = [
       {
@@ -288,6 +351,16 @@ export default function RdProjectsPage() {
       });
     }
 
+    const totalPct = members.reduce((sum, m) => sum + Number(m.royaltyPercentage || 0), 0);
+    if (Math.abs(totalPct - 100) > 0.001) {
+      setNotice({
+        type: "error",
+        text: `Tổng tỷ lệ phân bổ nhuận bút (${totalPct}%) phải bằng đúng 100% cho toàn nhóm.`,
+      });
+      setIsCreateModalOpen(false);
+      return;
+    }
+
     const payload: CreateRdProjectInput = {
       title: formTitle,
       projectType: formType,
@@ -300,59 +373,45 @@ export default function RdProjectsPage() {
       members,
     };
 
+    setIsSubmitting(true);
     try {
       const res = await fetch("/api/v1/rd/projects", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        setProjects([json.data, ...projects]);
+      if (!res.ok) {
+        setNotice({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể đăng ký đề tài / hợp đồng tư vấn"),
+        });
         setIsCreateModalOpen(false);
-      } else {
-        // Fallback local append
-        const feeAmount = Math.round((payload.contractValue * payload.institutionalFeePercentage) / 100);
-        const royaltyAmount = payload.contractValue - feeAmount;
-        const newProj: RdProjectDto = {
-          id: `rd-dau-${Date.now().toString(36)}`,
-          projectCode: `TVTK-DAU-2026-${String(projects.length + 1).padStart(3, "0")}`,
-          title: payload.title,
-          projectType: payload.projectType,
-          level: payload.level,
-          contractValue: payload.contractValue,
-          institutionalFeePercentage: payload.institutionalFeePercentage,
-          institutionalFeeAmount: feeAmount,
-          royaltyFundAmount: royaltyAmount,
-          startDate: payload.startDate,
-          endDate: payload.endDate,
-          status: "PROPOSAL_SUBMITTED",
-          payoutStatus: "PENDING",
-          principalInvestigatorId: members[0].employeeId,
-          principalInvestigatorCode: members[0].employeeCode,
-          principalInvestigatorName: members[0].fullName,
-          departmentName: payload.departmentName,
-          members: members.map((m) => ({
-            ...m,
-            allocatedAmount: Math.round((royaltyAmount * m.royaltyPercentage) / 100),
-            convertedResearchHours: Math.round(m.royaltyPercentage * 2.5),
-          })),
-          councilReview: null,
-          resolutionNumber: null,
-          pkiSignature: null,
-          pkiSignedAt: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setProjects([newProj, ...projects]);
-        setIsCreateModalOpen(false);
+        return;
       }
-    } catch {
+
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setNotice({ type: "error", text: "Phản hồi đăng ký dự án không hợp lệ từ máy chủ." });
+        setIsCreateModalOpen(false);
+        return;
+      }
+
+      setProjects([json.data, ...projects]);
       setIsCreateModalOpen(false);
+      setNotice({
+        type: "success",
+        text: `Đã đăng ký thành công dự án ${json.data.projectCode}.`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi đăng ký dự án.",
+      });
+      setIsCreateModalOpen(false);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -467,6 +526,24 @@ export default function RdProjectsPage() {
             </div>
           </div>
         </div>
+
+        {notice && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              notice.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900 font-medium"
+                : "bg-rose-50 border-rose-200 text-rose-900 font-medium"
+            }`}
+          >
+            <span>{notice.text}</span>
+            <button
+              onClick={() => setNotice(null)}
+              className="text-xs font-bold underline ml-4 hover:opacity-80"
+            >
+              Đóng
+            </button>
+          </div>
+        )}
 
         {/* Filter Bar */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-4">
@@ -652,15 +729,14 @@ export default function RdProjectsPage() {
                       </Link>
 
                       {project.status === "COMPLETED" && (
-                        <a
-                          href={`/api/v1/rd/projects/${project.id}/resolution/pdf`}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPdf(project.id, project.projectCode)}
                           className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors"
                           title="Tải Quyết định Nghiệm thu PDF"
                         >
                           <Download size={15} />
-                        </a>
+                        </button>
                       )}
                     </div>
                   </div>

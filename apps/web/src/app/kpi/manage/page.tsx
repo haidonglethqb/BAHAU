@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   Award,
   Download,
   KeyRound,
@@ -17,6 +18,26 @@ import {
   X,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
+
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
 
 interface CouncilVoteRecord {
   votesYes: number;
@@ -254,34 +275,85 @@ export default function KpiManagementPage() {
   const [councilCommentInput, setCouncilCommentInput] = useState<string>("");
 
   const [isSigningPki, setIsSigningPki] = useState<boolean>(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
   const [showPkiSuccessModal, setShowPkiSuccessModal] = useState<boolean>(false);
   const [pkiSignatureData, setPkiSignatureData] = useState<{ signature: string; timestamp: string } | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
-    async function loadData() {
+    let active = true;
+    async function loadPeriods() {
       try {
-        const periodRes = await fetch("/api/v1/kpi/periods");
-        if (periodRes.ok) {
-          const pData = await periodRes.json();
-          if (pData.success && pData.data?.length > 0) {
-            setPeriods(pData.data);
-            setSelectedPeriodId(pData.data[0].id);
-          }
+        const periodRes = await fetch("/api/v1/kpi/periods", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!active) return;
+        if (!periodRes.ok) {
+          setActionMessage({
+            type: "error",
+            text: await parseErrorMessage(periodRes, "Không thể tải danh sách kỳ đánh giá KPI"),
+          });
+          return;
         }
-
-        const evalRes = await fetch("/api/v1/kpi/evaluations/unit");
-        if (evalRes.ok) {
-          const eData = await evalRes.json();
-          if (eData.success && eData.data?.length > 0) {
-            setEvaluations(eData.data);
-          }
+        const pData = await periodRes.json();
+        if (pData.success && Array.isArray(pData.data) && pData.data.length > 0) {
+          setPeriods(pData.data);
+          setSelectedPeriodId(pData.data[0].id);
         }
-      } catch {
-        // Retain fallback
+      } catch (err) {
+        if (active) {
+          setActionMessage({
+            type: "error",
+            text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải kỳ đánh giá KPI.",
+          });
+        }
       }
     }
-    loadData();
+    loadPeriods();
+    return () => {
+      active = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!selectedPeriodId) return;
+    let active = true;
+    async function loadEvaluations() {
+      try {
+        const evalRes = await fetch(
+          `/api/v1/kpi/evaluations/unit?periodId=${encodeURIComponent(selectedPeriodId)}`,
+          {
+            headers: getAuthHeaders(),
+            credentials: "include",
+          }
+        );
+        if (!active) return;
+        if (!evalRes.ok) {
+          setActionMessage({
+            type: "error",
+            text: await parseErrorMessage(evalRes, "Không thể tải danh sách đánh giá KPI đơn vị"),
+          });
+          return;
+        }
+        const eData = await evalRes.json();
+        if (eData.success && Array.isArray(eData.data)) {
+          setEvaluations(eData.data);
+        }
+      } catch (err) {
+        if (active) {
+          setActionMessage({
+            type: "error",
+            text: err instanceof Error ? err.message : "Lỗi kết nối khi tải danh sách KPI đơn vị.",
+          });
+        }
+      }
+    }
+    loadEvaluations();
+    return () => {
+      active = false;
+    };
+  }, [selectedPeriodId]);
 
   // Thống kê Chỉ tiêu Thi đua & Rào chắn Luật Thi đua, Khen thưởng 2022
   const totalEvaluated = evaluations.length;
@@ -315,6 +387,7 @@ export default function KpiManagementPage() {
   // Xử lý Ghi nhận Bỏ phiếu Hội đồng Khoa
   const handleSubmitCouncilVote = async () => {
     if (!selectedEvalForCouncilVote) return;
+    setActionMessage(null);
 
     try {
       const payload = {
@@ -326,41 +399,34 @@ export default function KpiManagementPage() {
 
       const res = await fetch(`/api/v1/kpi/evaluations/${selectedEvalForCouncilVote.id}/council-vote`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setEvaluations((prev) =>
-            prev.map((e) => (e.id === selectedEvalForCouncilVote.id ? json.data : e))
-          );
-        }
-      } else {
-        // Fallback update
-        const ratio = Math.round((councilVoteYes / councilVoteTotal) * 1000) / 10;
-        setEvaluations((prev) =>
-          prev.map((e) =>
-            e.id === selectedEvalForCouncilVote.id
-              ? {
-                  ...e,
-                  honorTitle: ratio >= 50 ? councilProposedHonor : e.honorTitle,
-                  councilVote: {
-                    votesYes: councilVoteYes,
-                    votesNo: councilVoteTotal - councilVoteYes,
-                    totalVoters: councilVoteTotal,
-                    approvalRatio: ratio,
-                    proposedHonorTitle: councilProposedHonor,
-                    initiativeSummary: councilInitiativeSummary,
-                  },
-                }
-              : e
-          )
-        );
+      if (!res.ok) {
+        setActionMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Ghi nhận biểu quyết Hội đồng thất bại"),
+        });
+        return;
       }
-    } catch {
-      // Fallback
+
+      const json = await res.json();
+      if (json.success && json.data) {
+        setEvaluations((prev) =>
+          prev.map((e) => (e.id === selectedEvalForCouncilVote.id ? json.data : e))
+        );
+        setActionMessage({
+          type: "success",
+          text: `Đã ghi nhận kết quả biểu quyết Hội đồng cho ${selectedEvalForCouncilVote.employeeName}.`,
+        });
+      }
+    } catch (err) {
+      setActionMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ghi nhận biểu quyết.",
+      });
     } finally {
       setSelectedEvalForCouncilVote(null);
     }
@@ -369,6 +435,7 @@ export default function KpiManagementPage() {
   // Xử lý Hội đồng chốt điểm và xếp loại cá nhân
   const handleSubmitFinalize = async () => {
     if (!selectedEvalForFinalize) return;
+    setActionMessage(null);
 
     try {
       const payload = {
@@ -379,34 +446,34 @@ export default function KpiManagementPage() {
 
       const res = await fetch(`/api/v1/kpi/evaluations/${selectedEvalForFinalize.id}/finalize`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setEvaluations((prev) =>
-            prev.map((e) => (e.id === selectedEvalForFinalize.id ? json.data : e))
-          );
-        }
-      } else {
-        setEvaluations((prev) =>
-          prev.map((e) =>
-            e.id === selectedEvalForFinalize.id
-              ? {
-                  ...e,
-                  totalFinalScore: finalScoreInput,
-                  ranking: finalRankingInput,
-                  councilComment: councilCommentInput,
-                  status: "FINALIZED",
-                }
-              : e
-          )
-        );
+      if (!res.ok) {
+        setActionMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Chốt điểm xếp loại thi đua thất bại"),
+        });
+        return;
       }
-    } catch {
-      // Fallback
+
+      const json = await res.json();
+      if (json.success && json.data) {
+        setEvaluations((prev) =>
+          prev.map((e) => (e.id === selectedEvalForFinalize.id ? json.data : e))
+        );
+        setActionMessage({
+          type: "success",
+          text: `Đã chốt kết quả KPI cho ${selectedEvalForFinalize.employeeName}.`,
+        });
+      }
+    } catch (err) {
+      setActionMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối khi chốt điểm xếp loại KPI.",
+      });
     } finally {
       setSelectedEvalForFinalize(null);
     }
@@ -415,57 +482,89 @@ export default function KpiManagementPage() {
   // Xử lý Phê duyệt Toàn thể Kỳ Thi đua & Ký số PKI Hiệu trưởng
   const handleFinalizeWithPki = async () => {
     setIsSigningPki(true);
+    setActionMessage(null);
     try {
       const res = await fetch(`/api/v1/kpi/periods/${selectedPeriodId}/finalize-with-pki`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify({ signerName: "GS.TS. Nguyễn Hiệu Trưởng" }),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setPkiSignatureData({
-            signature: json.data.pkiSignature || "RSA2048-VN-DAU-CA-8899A1-APPROVED",
-            timestamp: json.data.pkiSignedAt || new Date().toISOString(),
-          });
-          setShowPkiSuccessModal(true);
-          // Reload evaluations
-          if (json.data.evaluations) {
-            setEvaluations(json.data.evaluations);
-          }
-        }
-      } else {
+      if (!res.ok) {
+        setActionMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Ký số PKI quyết nghị thi đua thất bại"),
+        });
+        return;
+      }
+
+      const json = await res.json();
+      if (json.success && json.data) {
         setPkiSignatureData({
-          signature: "RSA2048-VN-DAU-CA-8899A1-APPROVED",
-          timestamp: new Date().toISOString(),
+          signature: json.data.pkiSignature || "",
+          timestamp: json.data.pkiSignedAt || new Date().toISOString(),
         });
         setShowPkiSuccessModal(true);
-        setEvaluations((prev) =>
-          prev.map((e) => ({
-            ...e,
-            status: "FINALIZED",
-            pkiSignature: "RSA2048-APPROVED",
-          }))
-        );
+        if (Array.isArray(json.data.evaluations)) {
+          setEvaluations(json.data.evaluations);
+        }
+        setActionMessage({
+          type: "success",
+          text: "Đã ký số PKI phê duyệt toàn bộ kết quả thi đua kỳ học.",
+        });
       }
-    } catch {
-      setPkiSignatureData({
-        signature: "RSA2048-VN-DAU-CA-8899A1-APPROVED",
-        timestamp: new Date().toISOString(),
+    } catch (err) {
+      setActionMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ký số PKI.",
       });
-      setShowPkiSuccessModal(true);
     } finally {
       setIsSigningPki(false);
     }
   };
 
-  const downloadReportPdf = () => {
-    window.open(`/api/v1/kpi/periods/${selectedPeriodId}/export-report-pdf`, "_blank");
+  const downloadReportPdf = async () => {
+    setIsDownloadingPdf(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/v1/kpi/periods/${selectedPeriodId}/export-report-pdf`, {
+        headers: getAuthHeaders(),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        setActionMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể xuất Biên bản Họp PDF"),
+        });
+        return;
+      }
+
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = `Bien-Ban-Thi-Dua-KPI-${selectedPeriodId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      setActionMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi khi tải xuống Biên bản Họp PDF.",
+      });
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   return (
-    <AuthGuard>
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Quản Trị Đánh Giá KPI & Hội Đồng Bình Bầu Thi Đua"
+    >
       <div className="space-y-6 max-w-7xl mx-auto pb-16 font-sans">
         {/* Header & Controls */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-gray-200 pb-5">
@@ -488,23 +587,46 @@ export default function KpiManagementPage() {
             {/* Tải Biên bản PDF NĐ 30 */}
             <button
               onClick={downloadReportPdf}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg border border-gray-300 bg-white text-gray-800 hover:bg-gray-50 shadow-sm transition"
+              disabled={isDownloadingPdf}
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg border border-gray-300 bg-white text-gray-800 hover:bg-gray-50 shadow-sm transition disabled:opacity-50"
             >
               <Download className="w-4 h-4 text-gray-600" />
-              Xuất Biên Bản Họp (NĐ 30 PDF)
+              {isDownloadingPdf ? "Đang tải PDF..." : "Xuất Biên Bản Họp (NĐ 30 PDF)"}
             </button>
 
             {/* Ký số PKI Toàn thể Kỳ thi đua */}
             <button
               onClick={handleFinalizeWithPki}
               disabled={isSigningPki}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg bg-blue-700 hover:bg-blue-800 text-white shadow-md transition"
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg bg-blue-700 hover:bg-blue-800 text-white shadow-md transition disabled:opacity-50"
             >
               <KeyRound className="w-4 h-4 text-blue-200" />
               {isSigningPki ? "Đang ký số..." : "Ký Số PKI Quyết Nghị Thi Đua"}
             </button>
           </div>
         </div>
+
+        {actionMessage && (
+          <div
+            className={`p-4 rounded-xl flex items-center justify-between text-xs font-medium ${
+              actionMessage.type === "success"
+                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                : "bg-rose-50 text-rose-800 border border-rose-200"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {actionMessage.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              )}
+              <span>{actionMessage.text}</span>
+            </div>
+            <button onClick={() => setActionMessage(null)} className="underline font-bold">
+              Đóng
+            </button>
+          </div>
+        )}
 
         {/* Khung Chỉ Tiêu & Rào Chắn Pháp Lý (Luật Thi đua, Khen thưởng 2022) */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

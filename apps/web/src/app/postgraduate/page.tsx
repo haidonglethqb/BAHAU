@@ -33,6 +33,45 @@ import type {
   SupervisionRole,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_STUDENTS: PostgradStudentDto[] = [
   {
     id: "pg-dau-001",
@@ -180,7 +219,9 @@ const INITIAL_STUDENTS: PostgradStudentDto[] = [
 
 export default function PostgraduatePage() {
   const { user } = useAuth();
-  const [students, setStudents] = useState<PostgradStudentDto[]>(INITIAL_STUDENTS);
+  const [students, setStudents] = useState<PostgradStudentDto[]>([]);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDegree, setSelectedDegree] = useState<string>("ALL");
   const [selectedSpec, setSelectedSpec] = useState<string>("ALL");
@@ -210,22 +251,44 @@ export default function PostgraduatePage() {
   useEffect(() => {
     async function fetchStudents() {
       try {
-        const token = localStorage.getItem("token") || "mock-token";
         const res = await fetch("/api/v1/postgrad/students", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders(),
+          credentials: "include",
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-            setStudents(json.data);
-          }
+        if (!res.ok) {
+          setNotice({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách học viên cao học & nghiên cứu sinh"),
+          });
+          return;
         }
-      } catch {
-        // Fallback to initial seed
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          setStudents(json.data);
+        }
+      } catch (err) {
+        setNotice({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải dữ liệu Sau đại học.",
+        });
       }
     }
     fetchStudents();
   }, []);
+
+  const handleDownloadPdf = async (studentId: string, studentCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/postgrad/students/${studentId}/resolution/pdf`,
+        `quyet-dinh-cap-bang-${studentCode || studentId}.pdf`
+      );
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Cấp bằng PDF.",
+      });
+    }
+  };
 
   // Metrics
   const totalStudents = students.length;
@@ -252,7 +315,7 @@ export default function PostgraduatePage() {
 
   const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem("token") || "mock-token";
+    if (isSubmitting) return;
 
     const supervisors = [
       {
@@ -285,51 +348,45 @@ export default function PostgraduatePage() {
       supervisors,
     };
 
+    setIsSubmitting(true);
     try {
       const res = await fetch("/api/v1/postgrad/students", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        setStudents([json.data, ...students]);
+      if (!res.ok) {
+        setNotice({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể đăng ký đề tài & phân công cán bộ hướng dẫn"),
+        });
         setIsCreateModalOpen(false);
-      } else {
-        // Fallback local append
-        const isDoc = payload.degreeLevel === "DOCTORAL";
-        const newStu: PostgradStudentDto = {
-          id: `pg-dau-${Date.now().toString(36)}`,
-          studentCode: payload.studentCode,
-          fullName: payload.fullName,
-          degreeLevel: payload.degreeLevel,
-          specialization: payload.specialization,
-          thesisTitle: payload.thesisTitle,
-          cohortYear: payload.cohortYear,
-          departmentName: payload.departmentName,
-          status: "ASSIGNED",
-          supervisors: supervisors.map((s) => ({
-            ...s,
-            convertedHours: isDoc ? (s.role === "PRIMARY_SUPERVISOR" ? 50 : 25) : 30,
-            kpiPoints: isDoc ? (s.role === "PRIMARY_SUPERVISOR" ? 20 : 10) : 15,
-          })),
-          defenseMembers: [],
-          defenseResult: null,
-          degreeResolutionNumber: null,
-          pkiSignature: null,
-          pkiSignedAt: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setStudents([newStu, ...students]);
-        setIsCreateModalOpen(false);
+        return;
       }
-    } catch {
+
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setNotice({ type: "error", text: "Phản hồi đăng ký học viên không hợp lệ từ máy chủ." });
+        setIsCreateModalOpen(false);
+        return;
+      }
+
+      setStudents([json.data, ...students]);
       setIsCreateModalOpen(false);
+      setNotice({
+        type: "success",
+        text: `Đã đăng ký đề tài và phân công CBHD cho ${json.data.fullName} (${json.data.studentCode}).`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi đăng ký học viên.",
+      });
+      setIsCreateModalOpen(false);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -420,6 +477,24 @@ export default function PostgraduatePage() {
             </div>
           </div>
         </div>
+
+        {notice && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              notice.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900 font-medium"
+                : "bg-rose-50 border-rose-200 text-rose-900 font-medium"
+            }`}
+          >
+            <span>{notice.text}</span>
+            <button
+              onClick={() => setNotice(null)}
+              className="text-xs font-bold underline ml-4 hover:opacity-80"
+            >
+              Đóng
+            </button>
+          </div>
+        )}
 
         {/* Filter Bar */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-4">
@@ -587,15 +662,14 @@ export default function PostgraduatePage() {
                       </Link>
 
                       {student.status === "DEGREE_AWARDED" && (
-                        <a
-                          href={`/api/v1/postgrad/students/${student.id}/resolution/pdf`}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPdf(student.id, student.studentCode)}
                           className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors"
                           title="Tải Quyết định Cấp bằng PDF"
                         >
                           <Download size={15} />
-                        </a>
+                        </button>
                       )}
                     </div>
                   </div>

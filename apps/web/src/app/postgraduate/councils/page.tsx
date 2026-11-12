@@ -38,6 +38,45 @@ import type {
   DefenseCouncilRole,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_STUDENTS: PostgradStudentDto[] = [
   {
     id: "pg-dau-001",
@@ -188,10 +227,12 @@ function PostgradCouncilsContent() {
   const searchParams = useSearchParams();
   const initialId = searchParams.get("id");
 
-  const [students, setStudents] = useState<PostgradStudentDto[]>(INITIAL_STUDENTS);
+  const [students, setStudents] = useState<PostgradStudentDto[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    initialId || "pg-dau-001"
+    initialId || ""
   );
+  const [alertMsg, setAlertMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Modals
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -231,21 +272,29 @@ function PostgradCouncilsContent() {
   useEffect(() => {
     async function fetchStudents() {
       try {
-        const token = localStorage.getItem("token") || "mock-token";
         const res = await fetch("/api/v1/postgrad/students", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders(),
+          credentials: "include",
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-            setStudents(json.data);
-            if (!initialId) {
-              setSelectedStudentId(json.data[0].id);
-            }
+        if (!res.ok) {
+          setAlertMsg({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách hồ sơ Sau đại học"),
+          });
+          return;
+        }
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          setStudents(json.data);
+          if (json.data.length > 0 && !initialId) {
+            setSelectedStudentId(json.data[0].id);
           }
         }
-      } catch {
-        // Fallback
+      } catch (err) {
+        setAlertMsg({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải hồ sơ Sau đại học.",
+        });
       }
     }
     fetchStudents();
@@ -254,6 +303,20 @@ function PostgradCouncilsContent() {
   const activeStudent =
     students.find((s) => s.id === selectedStudentId) || students[0];
 
+  const handleDownloadPdf = async (studentId: string, studentCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/postgrad/students/${studentId}/resolution/pdf`,
+        `quyet-dinh-cap-bang-${studentCode || studentId}.pdf`
+      );
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Cấp bằng PDF.",
+      });
+    }
+  };
+
   const formatVnd = (num: number) => {
     return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(num);
   };
@@ -261,9 +324,8 @@ function PostgradCouncilsContent() {
   // Handle Schedule Council
   const handleScheduleCouncil = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeStudent) return;
+    if (!activeStudent || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const councilMembers = [
       { employeeId: `${c1Code}-ID`, employeeCode: c1Code, fullName: c1Name, role: "PRESIDENT" as DefenseCouncilRole },
       { employeeId: `${c2Code}-ID`, employeeCode: c2Code, fullName: c2Name, role: "REVIEWER_1" as DefenseCouncilRole },
@@ -274,55 +336,56 @@ function PostgradCouncilsContent() {
 
     const payload: ScheduleDefenseCouncilInput = { defenseDate, councilMembers };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/postgrad/students/${activeStudent.id}/schedule-council`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
-      } else {
-        // Local fallback
-        const updated: PostgradStudentDto = {
-          ...activeStudent,
-          status: "DEFENSE_SCHEDULED",
-          defenseMembers: councilMembers.map((m) => {
-            let honorarium = 1000000;
-            if (m.role === "PRESIDENT") honorarium = 2000000;
-            else if (m.role === "REVIEWER_1" || m.role === "REVIEWER_2") honorarium = 1500000;
-            return {
-              employeeId: m.employeeId,
-              employeeCode: m.employeeCode,
-              fullName: m.fullName,
-              role: m.role,
-              score: 0,
-              isApproved: false,
-              honorariumAmount: honorarium,
-            };
-          }),
-          updatedAt: new Date().toISOString(),
-        };
-        setStudents(students.map((s) => (s.id === activeStudent.id ? updated : s)));
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể thành lập Hội đồng chấm bảo vệ luận văn/luận án"),
+        });
+        setIsScheduleModalOpen(false);
+        return;
       }
-    } catch {
-      // Fallback
-    }
 
-    setIsScheduleModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi thành lập Hội đồng không hợp lệ từ máy chủ." });
+        setIsScheduleModalOpen(false);
+        return;
+      }
+
+      setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
+      setIsScheduleModalOpen(false);
+      setAlertMsg({
+        type: "success",
+        text: `Đã thành lập Hội đồng 5 thành viên (không trùng CBHD) cho ${json.data.fullName}.`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi thành lập Hội đồng.",
+      });
+      setIsScheduleModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Handle Score Defense
   const handleScoreDefense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeStudent || !activeStudent.defenseMembers) return;
+    if (!activeStudent || !activeStudent.defenseMembers || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const memberScores = activeStudent.defenseMembers.map((m) => {
       const entry = scores[m.employeeId] || { score: 85, isApproved: true };
       return {
@@ -334,92 +397,111 @@ function PostgradCouncilsContent() {
 
     const payload: ScoreThesisDefenseInput = { memberScores, councilNotes };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/postgrad/students/${activeStudent.id}/score-defense`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
-      } else {
-        // Local fallback
-        const total = memberScores.reduce((s, m) => s + m.score, 0);
-        const avg = Math.round((total / 5) * 10) / 10;
-        const approved = memberScores.filter((m) => m.isApproved).length;
-        const passed = avg >= 70 && approved >= 4;
-
-        const updated: PostgradStudentDto = {
-          ...activeStudent,
-          status: passed ? "PASSED" : "REJECTED",
-          defenseResult: {
-            defenseDate: new Date().toISOString(),
-            averageScore: avg,
-            approvedVotes: approved,
-            totalMembers: 5,
-            isPassed: passed,
-            ranking: avg >= 90 ? "EXCELLENT" : avg >= 80 ? "GOOD" : "SATISFACTORY",
-            councilNotes,
-            councilResolutionNumber: `HĐ-SĐH-2026-${activeStudent.studentCode}`,
-          },
-          updatedAt: new Date().toISOString(),
-        };
-        setStudents(students.map((s) => (s.id === activeStudent.id ? updated : s)));
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ghi nhận kết quả chấm điểm bảo vệ"),
+        });
+        setIsScoreModalOpen(false);
+        return;
       }
-    } catch {
-      // Fallback
-    }
 
-    setIsScoreModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi chấm điểm bảo vệ không hợp lệ từ máy chủ." });
+        setIsScoreModalOpen(false);
+        return;
+      }
+
+      setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
+      setIsScoreModalOpen(false);
+      const passed = json.data.defenseResult?.isPassed;
+      setAlertMsg({
+        type: passed ? "success" : "error",
+        text: passed
+          ? `Bảo vệ ĐẠT: Điểm TB ${json.data.defenseResult?.averageScore} (${json.data.defenseResult?.approvedVotes}/5 phiếu tán thành).`
+          : `Bảo vệ KHÔNG ĐẠT: Điểm TB ${json.data.defenseResult?.averageScore ?? "N/A"}.`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi chấm điểm bảo vệ.",
+      });
+      setIsScoreModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Handle PKI Award Degree
   const handleAwardDegree = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeStudent) return;
+    if (!activeStudent || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const payload: AwardPostgradDegreeWithPkiInput = { signerName, resolutionNumber };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/postgrad/students/${activeStudent.id}/award-degree`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
-      } else {
-        // Local fallback
-        const updated: PostgradStudentDto = {
-          ...activeStudent,
-          status: "DEGREE_AWARDED",
-          degreeResolutionNumber: payload.resolutionNumber || "220/QĐ-ĐHKTĐN",
-          pkiSignature: "MIIEPQIBAzCCBM8GCSqGSIb3DQEHAaCCBMIExgSDAU...",
-          pkiSignedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setStudents(students.map((s) => (s.id === activeStudent.id ? updated : s)));
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ký số PKI ban hành Quyết định Cấp bằng"),
+        });
+        setIsPkiModalOpen(false);
+        return;
       }
-    } catch {
-      // Fallback
-    }
 
-    setIsPkiModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi ký số PKI không hợp lệ từ máy chủ." });
+        setIsPkiModalOpen(false);
+        return;
+      }
+
+      setStudents(students.map((s) => (s.id === activeStudent.id ? json.data : s)));
+      setIsPkiModalOpen(false);
+      setAlertMsg({
+        type: "success",
+        text: `Hiệu trưởng đã ký số PKI QĐ ${json.data.degreeResolutionNumber}. Đã đồng bộ thù lao Hội đồng sang Payroll và giờ chuẩn CBHD sang Workload!`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ký số PKI cấp bằng.",
+      });
+      setIsPkiModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
-    <AuthGuard>
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "COUNCIL_MEMBER", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Hội đồng Đánh giá Luận văn & Cấp bằng"
+    >
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
         {/* Navigation Breadcrumb */}
         <div className="flex items-center gap-3">
@@ -435,6 +517,24 @@ function PostgradCouncilsContent() {
         </div>
 
         {/* Top Control Bar */}
+        {alertMsg && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              alertMsg.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900 font-medium"
+                : "bg-rose-50 border-rose-200 text-rose-900 font-medium"
+            }`}
+          >
+            <span>{alertMsg.text}</span>
+            <button
+              onClick={() => setAlertMsg(null)}
+              className="text-xs font-bold underline ml-4 hover:opacity-80"
+            >
+              Đóng
+            </button>
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
@@ -727,15 +827,14 @@ function PostgradCouncilsContent() {
                       </p>
                     </div>
 
-                    <a
-                      href={`/api/v1/postgrad/students/${activeStudent.id}/resolution/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadPdf(activeStudent.id, activeStudent.studentCode)}
                       className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-sm transition-all"
                     >
                       <Download size={14} />
                       <span>Tải Quyết Định Cấp Bằng PDF</span>
-                    </a>
+                    </button>
                   </div>
 
                   {/* Triple Coupling Badges */}

@@ -1,9 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Award, FileText, GraduationCap, CheckCircle2, XCircle, Clock, AlertTriangle, ArrowRight, X } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
+
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
 
 interface CertificateItem {
   id: string;
@@ -16,6 +36,7 @@ interface CertificateItem {
   score?: string | null;
   fileUrl?: string | null;
   status: "PENDING" | "VERIFIED" | "REJECTED" | "EXPIRED";
+  verifierName?: string | null;
   verifiedByName?: string | null;
   verifiedAt?: string | null;
   rejectionReason?: string | null;
@@ -160,11 +181,67 @@ const DEMO_COURSES: TrainingCourseItem[] = [
 
 export default function TrainingPersonalPage() {
   const [activeTab, setActiveTab] = useState<"CERTIFICATES" | "COURSES">("CERTIFICATES");
-  const [certificates, setCertificates] = useState<CertificateItem[]>(DEMO_CERTIFICATES);
-  const [courses, setCourses] = useState<TrainingCourseItem[]>(DEMO_COURSES);
+  const [certificates, setCertificates] = useState<CertificateItem[]>([]);
+  const [courses, setCourses] = useState<TrainingCourseItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [filterType, setFilterType] = useState<string>("ALL");
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function loadTrainingData() {
+      setIsLoading(true);
+      try {
+        const headers = getAuthHeaders();
+        const [certRes, courseRes] = await Promise.all([
+          fetch("/api/v1/training/certificates/my", { headers, credentials: "include" }),
+          fetch("/api/v1/training/courses", { headers, credentials: "include" }),
+        ]);
+        if (!active) return;
+
+        if (!certRes.ok) {
+          setMessage({
+            type: "error",
+            text: await parseErrorMessage(certRes, "Không thể tải danh sách chứng chỉ cá nhân"),
+          });
+        } else {
+          const certJson = await certRes.json();
+          if (Array.isArray(certJson?.data)) {
+            setCertificates(certJson.data);
+          }
+        }
+
+        if (!courseRes.ok) {
+          setMessage((prev) =>
+            prev || {
+              type: "error",
+              text: "Không thể tải danh sách khóa đào tạo bồi dưỡng.",
+            }
+          );
+        } else {
+          const courseJson = await courseRes.json();
+          if (Array.isArray(courseJson?.data)) {
+            setCourses(courseJson.data);
+          }
+        }
+      } catch (err) {
+        if (active) {
+          setMessage({
+            type: "error",
+            text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ đào tạo.",
+          });
+        }
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    }
+    loadTrainingData();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Form state cho nộp chứng chỉ mới
   const [formType, setFormType] = useState<string>("PROFESSIONAL_PRACTICE");
@@ -190,62 +267,111 @@ export default function TrainingPersonalPage() {
     return true;
   });
 
-  const handleRegisterCourse = (courseId: string) => {
-    setCourses((prev) =>
-      prev.map((course) => {
-        if (course.id === courseId) {
-          return {
-            ...course,
-            isRegisteredByMe: true,
-            participantCount: course.participantCount + 1,
-            myParticipantStatus: "REGISTERED",
-          };
-        }
-        return course;
-      })
-    );
-    setMessage({ type: "success", text: "Đăng ký tham gia khóa đào tạo thành công! Phòng TCHC sẽ thẩm duyệt danh sách." });
+  const handleRegisterCourse = async (courseId: string) => {
+    setMessage(null);
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/v1/training/courses/${courseId}/register`, {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Đăng ký tham gia khóa đào tạo thất bại"),
+        });
+        return;
+      }
+      setCourses((prev) =>
+        prev.map((course) => {
+          if (course.id === courseId) {
+            return {
+              ...course,
+              isRegisteredByMe: true,
+              participantCount: course.participantCount + 1,
+              myParticipantStatus: "REGISTERED",
+            };
+          }
+          return course;
+        })
+      );
+      setMessage({
+        type: "success",
+        text: "Đăng ký tham gia khóa đào tạo thành công! Phòng TCHC sẽ thẩm duyệt danh sách.",
+      });
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối khi đăng ký khóa đào tạo.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleCreateCertificate = (e: React.FormEvent) => {
+  const handleCreateCertificate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMessage(null);
     if (!formName.trim() || !formNumber.trim() || !formIssuer.trim() || !formIssuedDate) {
       setMessage({ type: "error", text: "Vui lòng nhập đầy đủ các trường bắt buộc (*)" });
       return;
     }
 
-    const newCert: CertificateItem = {
-      id: `cert-${Date.now()}`,
-      certificateType: formType as any,
-      name: formName.trim(),
-      certificateNumber: formNumber.trim(),
-      issuedBy: formIssuer.trim(),
-      issuedDate: formIssuedDate,
-      expiryDate: formExpiryDate || null,
-      score: formScore.trim() || null,
-      fileUrl: formFileUrl.trim() || null,
-      status: "PENDING",
-      verifiedByName: null,
-      verifiedAt: null,
-      daysUntilExpiry: formExpiryDate ? 365 : null,
-      expiryAlertStatus: "VALID",
-    };
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        certificateType: formType,
+        name: formName.trim(),
+        certificateNumber: formNumber.trim(),
+        issuedBy: formIssuer.trim(),
+        issuedDate: formIssuedDate,
+        expiryDate: formExpiryDate || null,
+        score: formScore.trim() || null,
+        fileUrl: formFileUrl.trim() || null,
+      };
 
-    setCertificates([newCert, ...certificates]);
-    setMessage({
-      type: "success",
-      text: `Đã khai báo chứng chỉ [${newCert.name}] thành công! Hồ sơ đang ở trạng thái Chờ thẩm định (PENDING).`,
-    });
-    setIsModalOpen(false);
+      const res = await fetch("/api/v1/training/certificates", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
 
-    // Reset form
-    setFormName("");
-    setFormNumber("");
-    setFormIssuer("");
-    setFormIssuedDate("");
-    setFormExpiryDate("");
-    setFormScore("");
-    setFormFileUrl("");
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Khai báo chứng chỉ mới thất bại"),
+        });
+        return;
+      }
+
+      const json = await res.json();
+      const createdCert: CertificateItem = json?.data;
+      if (createdCert) {
+        setCertificates((prev) => [createdCert, ...prev]);
+        setMessage({
+          type: "success",
+          text: `Đã khai báo chứng chỉ [${createdCert.name}] thành công! Hồ sơ đang ở trạng thái Chờ thẩm định (PENDING).`,
+        });
+      }
+      setIsModalOpen(false);
+      setFormName("");
+      setFormNumber("");
+      setFormIssuer("");
+      setFormIssuedDate("");
+      setFormExpiryDate("");
+      setFormScore("");
+      setFormFileUrl("");
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi khai báo chứng chỉ.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -501,8 +627,8 @@ export default function TrainingPersonalPage() {
                       <span className="text-gray-400 italic">Chưa đính kèm file</span>
                     )}
 
-                    {cert.status === "VERIFIED" && cert.verifiedByName && (
-                      <span className="text-gray-500">Thẩm định bởi: {cert.verifiedByName}</span>
+                    {cert.status === "VERIFIED" && (cert.verifierName || cert.verifiedByName) && (
+                      <span className="text-gray-500">Thẩm định bởi: {cert.verifierName || cert.verifiedByName}</span>
                     )}
                     {cert.status === "REJECTED" && cert.rejectionReason && (
                       <span className="text-red-600 font-medium">Lý do từ chối: {cert.rejectionReason}</span>

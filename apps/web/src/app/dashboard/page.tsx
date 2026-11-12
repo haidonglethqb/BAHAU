@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -18,12 +18,14 @@ import {
   Clock,
   Compass,
   Cpu,
+  Download,
   FileCheck,
   FileSpreadsheet,
   FileText,
   GraduationCap,
   HardDrive,
   Inbox,
+  Key,
   Layers,
   Lightbulb,
   Plane,
@@ -43,6 +45,89 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { AuthGuard } from "../../components/AuthGuard";
 import { Button, Card, StatCard, Badge, cx } from "../../components/ui";
+import type {
+  DashboardOverviewDto,
+  ExecutiveAlertsDto,
+  ResolutionType,
+  SignedResolutionResponse,
+  WorkforceStatsDto,
+} from "@bahau/contracts";
+
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+function useDashboardSummary(enabled: boolean) {
+  const [overview, setOverview] = useState<DashboardOverviewDto | null>(null);
+  const [workforceStats, setWorkforceStats] = useState<WorkforceStatsDto | null>(null);
+  const [alerts, setAlerts] = useState<ExecutiveAlertsDto | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const headers = getAuthHeaders();
+        const [ovRes, wfRes, alRes] = await Promise.all([
+          fetch("/api/v1/dashboard/overview", { headers, credentials: "include" }),
+          fetch("/api/v1/dashboard/workforce-stats", { headers, credentials: "include" }),
+          fetch("/api/v1/dashboard/alerts", { headers, credentials: "include" }),
+        ]);
+
+        if (!active) return;
+
+        if (!ovRes.ok) {
+          setError(await parseErrorMessage(ovRes, "Không thể tải dữ liệu tổng quan Dashboard"));
+        } else {
+          const ovJson = await ovRes.json();
+          if (ovJson?.data) setOverview(ovJson.data);
+        }
+
+        if (wfRes.ok) {
+          const wfJson = await wfRes.json();
+          if (wfJson?.data) setWorkforceStats(wfJson.data);
+        }
+
+        if (alRes.ok) {
+          const alJson = await alRes.json();
+          if (alJson?.data) setAlerts(alJson.data);
+        }
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Lỗi kết nối máy chủ Dashboard");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, [enabled]);
+
+  return { overview, workforceStats, alerts, loading, error };
+}
 
 export default function AdaptiveDashboardPage() {
   const { user } = useAuth();
@@ -94,6 +179,40 @@ export default function AdaptiveDashboardPage() {
 // 1. VAI TRÒ 1: GIẢNG VIÊN / CBGV THƯỜNG (ThS. Nguyễn Văn An)
 // ============================================================================
 function LecturerDashboardView({ user }: { user: any }) {
+  const [leaveBalance, setLeaveBalance] = useState<{ remainingDays?: number; totalDays?: number; usedDays?: number } | null>(null);
+  const [latestKpi, setLatestKpi] = useState<{ totalFinalScore?: number | null; totalSelfScore?: number | null; ranking?: string | null; status?: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function loadPersonal() {
+      const headers = getAuthHeaders();
+      try {
+        const [lbRes, kpiRes] = await Promise.all([
+          fetch("/api/v1/leave/balance/my", { headers, credentials: "include" }),
+          fetch("/api/v1/kpi/evaluations/my", { headers, credentials: "include" }),
+        ]);
+        if (!active) return;
+        if (lbRes.ok) {
+          const lbJson = await lbRes.json();
+          if (lbJson?.data) setLeaveBalance(lbJson.data);
+        }
+        if (kpiRes.ok) {
+          const kpiJson = await kpiRes.json();
+          const evalItem = kpiJson?.data?.evaluation || (Array.isArray(kpiJson?.data) ? kpiJson.data[0] : null);
+          if (evalItem) setLatestKpi(evalItem);
+        }
+      } catch {
+        // Keep baseline stats if personal endpoints are unavailable
+      }
+    }
+    loadPersonal();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const kpiScoreValue = latestKpi?.totalFinalScore ?? latestKpi?.totalSelfScore;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -103,7 +222,7 @@ function LecturerDashboardView({ user }: { user: any }) {
             <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-800 border border-emerald-200">
               Góc Cá Nhân CBGV
             </span>
-            <span className="text-xs text-muted">• Khoa Kiến trúc · Bộ môn Kiến trúc Công trình</span>
+            <span className="text-xs text-muted">• {user?.unitName || "Khoa Kiến trúc"} · Bộ môn Kiến trúc Công trình</span>
           </div>
           <h2 className="mt-1 text-2xl font-bold tracking-tight text-ink">
             Bàn Làm Việc Giảng Viên — {user?.fullName || "ThS. Nguyễn Văn An"}
@@ -150,13 +269,19 @@ function LecturerDashboardView({ user }: { user: any }) {
 
         <StatCard
           title="Số Ngày Phép Năm 2026"
-          value="10.5 / 12 Ngày"
+          value={
+            leaveBalance?.remainingDays != null && leaveBalance?.totalDays != null
+              ? `${leaveBalance.remainingDays} / ${leaveBalance.totalDays} Ngày`
+              : "10.5 / 12 Ngày"
+          }
           icon={<Wallet size={18} className="text-emerald-600" />}
           subvalue={
             <div className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="text-emerald-700 font-semibold">10.5 ngày khả dụng</span>
+              <span className="text-emerald-700 font-semibold">
+                {leaveBalance?.remainingDays ?? 10.5} ngày khả dụng
+              </span>
               <span>•</span>
-              <span>1.5 ngày đã nghỉ</span>
+              <span>{leaveBalance?.usedDays ?? 1.5} ngày đã nghỉ</span>
             </div>
           }
         />
@@ -176,13 +301,13 @@ function LecturerDashboardView({ user }: { user: any }) {
 
         <StatCard
           title="Đánh Giá KPI Giảng Viên (HK1)"
-          value="92.5 / 100đ"
+          value={kpiScoreValue != null ? `${kpiScoreValue} / 100đ` : "92.5 / 100đ"}
           icon={<Award size={18} className="text-amber-600" />}
           subvalue={
             <div className="flex items-center gap-1 text-xs text-brand-700 font-semibold">
-              <span>Xếp loại: Xuất sắc</span>
+              <span>Xếp loại: {latestKpi?.ranking || "Xuất sắc"}</span>
               <span>•</span>
-              <span className="text-muted font-normal">Hội đồng Khoa đã duyệt</span>
+              <span className="text-muted font-normal">{latestKpi?.status || "Hội đồng Khoa đã duyệt"}</span>
             </div>
           }
         />
@@ -345,8 +470,16 @@ function LecturerDashboardView({ user }: { user: any }) {
 // 2. VAI TRÒ 2: TRƯỞNG KHOA (PGS.TS. Trần Thị Bình - Khoa Kiến trúc)
 // ============================================================================
 function DeanDashboardView({ user }: { user: any }) {
+  const { overview, error: dashboardError } = useDashboardSummary(true);
+
   return (
     <div className="space-y-6">
+      {dashboardError && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+          <AlertCircle size={15} className="shrink-0" />
+          <span>{dashboardError}</span>
+        </div>
+      )}
       {/* Header Điều hành Khoa */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
@@ -354,13 +487,13 @@ function DeanDashboardView({ user }: { user: any }) {
             <span className="rounded bg-brand-50 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-brand-700 border border-brand-200">
               Điều Hành Cấp Khoa
             </span>
-            <span className="text-xs text-muted">• Khoa Kiến trúc DAU</span>
+            <span className="text-xs text-muted">• {user?.unitName || "Khoa Kiến trúc DAU"}</span>
           </div>
           <h2 className="mt-1 text-2xl font-bold tracking-tight text-ink">
             Trung Tâm Điều Hành Khoa Kiến Trúc — {user?.fullName || "PGS.TS. Trần Thị Bình"}
           </h2>
           <p className="text-xs sm:text-sm text-muted">
-            Quản trị 48 CBGV, 12 Bộ môn/Xưởng đồ án, thẩm định giờ chuẩn và phê duyệt công tác cấp Khoa
+            Quản trị {overview ? overview.totalEmployees : 48} CBGV, 12 Bộ môn/Xưởng đồ án, thẩm định giờ chuẩn và phê duyệt công tác cấp Khoa
           </p>
         </div>
 
@@ -370,7 +503,7 @@ function DeanDashboardView({ user }: { user: any }) {
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-2xs transition-colors"
           >
             <Inbox size={14} />
-            <span>Duyệt Đơn Khoa (3 Chờ)</span>
+            <span>Duyệt Đơn Khoa ({overview ? overview.pendingRequestsCount : 3} Chờ)</span>
           </Link>
           <Link
             href="/employees"
@@ -386,27 +519,29 @@ function DeanDashboardView({ user }: { user: any }) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Đơn Chờ Trưởng Khoa Duyệt"
-          value="3 Đơn"
+          value={`${overview ? overview.pendingRequestsCount : 3} Đơn`}
           icon={<Inbox size={18} className="text-amber-600" />}
           trend={{ label: "Cần xử lý", tone: "warning" }}
           subvalue={
             <div className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="text-amber-800 font-semibold">2 đơn nghỉ phép</span>
+              <span className="text-amber-800 font-semibold">Đơn nghỉ phép & công tác</span>
               <span>•</span>
-              <span>1 lệnh công tác</span>
+              <span>{overview ? `${overview.expiringContractsCount} HĐ sắp hết hạn` : "1 lệnh công tác"}</span>
             </div>
           }
         />
 
         <StatCard
-          title="CBGV Thuộc Khoa Kiến Trúc"
-          value="48 Cán bộ"
+          title="CBGV Thuộc Đơn Vị"
+          value={`${overview ? overview.totalEmployees : 48} Cán bộ`}
           icon={<Users size={18} className="text-brand-600" />}
           subvalue={
             <div className="flex items-center gap-1.5 text-xs text-muted">
-              <span>42 Cơ hữu</span>
+              <span>{overview ? `${overview.activeEmployees} Đang công tác` : "42 Cơ hữu"}</span>
               <span>•</span>
-              <span className="text-emerald-700 font-semibold">6 Thỉnh giảng KTS</span>
+              <span className="text-emerald-700 font-semibold">
+                {overview ? `${overview.doctorCount} Tiến sĩ` : "6 Thỉnh giảng KTS"}
+              </span>
             </div>
           }
         />
@@ -567,8 +702,16 @@ function DeanDashboardView({ user }: { user: any }) {
 // 3. VAI TRÒ 3: PHÒNG TỔ CHỨC - HÀNH CHÍNH (ThS. Lê Minh Cường)
 // ============================================================================
 function HrDashboardView({ user }: { user: any }) {
+  const { overview, error: dashboardError } = useDashboardSummary(true);
+
   return (
     <div className="space-y-6">
+      {dashboardError && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+          <AlertCircle size={15} className="shrink-0" />
+          <span>{dashboardError}</span>
+        </div>
+      )}
       {/* Header Điều hành TCHC */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
@@ -582,7 +725,7 @@ function HrDashboardView({ user }: { user: any }) {
             Trung Tâm Nghiệp Vụ Nhân Sự — {user?.fullName || "ThS. Lê Minh Cường"}
           </h2>
           <p className="text-xs sm:text-sm text-muted">
-            Quản trị 428 hồ sơ CBGV, quản lý hợp đồng lao động, chốt công và lập bảng lương Nghị định 85
+            Quản trị {overview ? overview.totalEmployees : 428} hồ sơ CBGV, quản lý hợp đồng lao động, chốt công và lập bảng lương Nghị định 85
           </p>
         </div>
 
@@ -608,26 +751,26 @@ function HrDashboardView({ user }: { user: any }) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Hợp Đồng Sắp Hết Hạn (30-60 ngày)"
-          value="8 Hợp đồng"
+          value={`${overview ? overview.expiringContractsCount : 8} Hợp đồng`}
           icon={<FileText size={18} className="text-rose-600" />}
           trend={{ label: "Cần tái ký", tone: "danger" }}
           subvalue={
             <div className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="text-rose-700 font-semibold">2 HĐ còn dưới 30 ngày</span>
+              <span className="text-rose-700 font-semibold">Theo dõi tái ký hợp đồng</span>
               <span>•</span>
-              <span>6 HĐ còn 60 ngày</span>
+              <span>{overview ? `${overview.probationEmployees} tập sự` : "6 HĐ còn 60 ngày"}</span>
             </div>
           }
         />
 
         <StatCard
           title="Chứng Chỉ KTS Cần Gia Hạn"
-          value="14 Chứng chỉ"
+          value={`${overview ? overview.expiringCertificatesCount : 14} Chứng chỉ`}
           icon={<Compass size={18} className="text-amber-600" />}
           subvalue={
             <div className="flex items-center gap-1 text-xs text-amber-800">
               <AlertTriangle size={12} className="shrink-0" />
-              <span>Phục vụ kiểm định chuẩn quốc gia</span>
+              <span>{overview ? `${overview.verifiedCertificatesCount} chứng chỉ đã xác thực` : "Phục vụ kiểm định chuẩn quốc gia"}</span>
             </div>
           }
         />
@@ -739,9 +882,197 @@ function HrDashboardView({ user }: { user: any }) {
 // ============================================================================
 // 4. VAI TRÒ 4: HIỆU TRƯỞNG / BAN GIÁM HIỆU (GS.TS. Hoàng Đức Dũng)
 // ============================================================================
+interface PendingExecutiveResolutionItem {
+  no: string;
+  type: ResolutionType;
+  typeLabel: string;
+  title: string;
+  recipient: string;
+  recipientCode: string;
+  unitName: string;
+  date: string;
+}
+
+const PENDING_EXECUTIVE_RESOLUTIONS: PendingExecutiveResolutionItem[] = [
+  {
+    no: "QĐ-BGH/2026-118",
+    type: "APPOINTMENT",
+    typeLabel: "Bổ nhiệm cán bộ",
+    title: "Quyết định tái bổ nhiệm Trưởng Khoa Kiến trúc nhiệm kỳ 2026-2031",
+    recipient: "PGS.TS. Trần Thị Bình",
+    recipientCode: "DAU260002",
+    unitName: "Khoa Kiến trúc",
+    date: "28/10/2026",
+  },
+  {
+    no: "QĐ-BGH/2026-119",
+    type: "AWARD",
+    typeLabel: "Khen thưởng NCKH",
+    title: "Quyết định khen thưởng giảng viên có bài báo Quốc tế Q1 xuất sắc",
+    recipient: "TS. KTS. Nguyễn Văn Hùng",
+    recipientCode: "DAU260003",
+    unitName: "Khoa Kiến trúc",
+    date: "29/10/2026",
+  },
+];
+
 function RectorDashboardView({ user }: { user: any }) {
+  const { overview, error: dashboardError } = useDashboardSummary(true);
+  const [generatedResolutions, setGeneratedResolutions] = useState<Record<string, SignedResolutionResponse>>({});
+  const [signedResolutions, setSignedResolutions] = useState<Record<string, SignedResolutionResponse>>({});
+  const [signingDocNo, setSigningDocNo] = useState<string | null>(null);
+  const [exportingDocNo, setExportingDocNo] = useState<string | null>(null);
+  const [execError, setExecError] = useState<string | null>(null);
+  const [execSuccess, setExecSuccess] = useState<string | null>(null);
+
+  const buildDraftPayload = (doc: PendingExecutiveResolutionItem): SignedResolutionResponse => ({
+    id: doc.no,
+    resolutionNumber: doc.no,
+    organizationName: "TRƯỜNG ĐẠI HỌC KIẾN TRÚC ĐÀ NẴNG",
+    signDate: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date()),
+    signAuthority: "HIỆU TRƯỞNG",
+    signerName: user?.fullName || "GS.TS. Nguyễn Hiệu Trưởng",
+    title: doc.title,
+    legalGrounds: ["Căn cứ Quy chế Tổ chức và Hoạt động Trường Đại học Kiến trúc Đà Nẵng;"],
+    articles: [
+      {
+        articleNumber: 1,
+        title: doc.typeLabel,
+        content: `${doc.title} đối với ${doc.recipient} (${doc.unitName}).`,
+      },
+    ],
+    recipients: [doc.recipient, "Phòng Tổ chức - Hành chính"],
+    fullFormattedDocument: `${doc.no}\n${doc.title}\nNgười thụ hưởng: ${doc.recipient}`,
+  });
+
+  const handleSignExecutiveResolution = async (doc: PendingExecutiveResolutionItem) => {
+    setSigningDocNo(doc.no);
+    setExecError(null);
+    setExecSuccess(null);
+
+    try {
+      const headers = getAuthHeaders({ "Content-Type": "application/json" });
+      let draft = generatedResolutions[doc.no];
+
+      if (!draft) {
+        const genRes = await fetch("/api/v1/executive/generate-resolution", {
+          method: "POST",
+          headers,
+          credentials: "include",
+          body: JSON.stringify({
+            type: doc.type,
+            recipientName: doc.recipient,
+            recipientCode: doc.recipientCode,
+            unitName: doc.unitName,
+            contentTitle: doc.title,
+          }),
+        });
+        if (!genRes.ok) {
+          throw new Error(await parseErrorMessage(genRes, `Không thể khởi tạo văn bản ${doc.no}`));
+        }
+        const genJson = await genRes.json();
+        draft = genJson?.data;
+        if (!draft) {
+          throw new Error("Máy chủ không trả về dữ liệu quyết định hợp lệ.");
+        }
+        setGeneratedResolutions((prev) => ({ ...prev, [doc.no]: draft }));
+      }
+
+      const signRes = await fetch("/api/v1/executive/sign-resolution", {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify(draft),
+      });
+      if (!signRes.ok) {
+        throw new Error(await parseErrorMessage(signRes, `Ký số PKI cho ${doc.no} thất bại`));
+      }
+      const signJson = await signRes.json();
+      const signed: SignedResolutionResponse = signJson?.data;
+      if (!signed?.signature) {
+        throw new Error("Phản hồi ký số thiếu thông tin chữ ký PKI.");
+      }
+
+      setSignedResolutions((prev) => ({ ...prev, [doc.no]: signed }));
+      setExecSuccess(
+        `Đã ký số điện tử RSA-SHA256 thành công cho ${signed.resolutionNumber} (Serial: ${signed.signature.certificateSerial}).`
+      );
+    } catch (err) {
+      setExecError(err instanceof Error ? err.message : "Không thể thực hiện ký số PKI.");
+    } finally {
+      setSigningDocNo(null);
+    }
+  };
+
+  const handleExportExecutivePdf = async (doc: PendingExecutiveResolutionItem) => {
+    setExportingDocNo(doc.no);
+    setExecError(null);
+    setExecSuccess(null);
+
+    try {
+      const payload = signedResolutions[doc.no] || generatedResolutions[doc.no] || buildDraftPayload(doc);
+      const res = await fetch("/api/v1/executive/export-pdf", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error(await parseErrorMessage(res, `Không thể xuất PDF cho ${doc.no}`));
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Quyet-Dinh-${(payload.resolutionNumber || doc.no).replace(/[\\/]/g, "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setExecSuccess(`Đã tải xuống PDF chuẩn NĐ 30/2020/NĐ-CP cho ${payload.resolutionNumber || doc.no}.`);
+    } catch (err) {
+      setExecError(err instanceof Error ? err.message : "Lỗi khi xuất PDF quyết định.");
+    } finally {
+      setExportingDocNo(null);
+    }
+  };
+
+  const totalOverviewEmployees = overview?.totalEmployees ?? 428;
+  const totalDoctors = overview?.doctorCount ?? 86;
+  const totalMasters = overview?.masterCount ?? 268;
+  const highDegreeCount = totalDoctors + totalMasters;
+  const highDegreePct =
+    totalOverviewEmployees > 0
+      ? ((highDegreeCount / totalOverviewEmployees) * 100).toFixed(1)
+      : "82.7";
+  const unsignedCount = PENDING_EXECUTIVE_RESOLUTIONS.filter((d) => !signedResolutions[d.no]).length;
+
   return (
     <div className="space-y-6">
+      {(dashboardError || execError || execSuccess) && (
+        <div className="space-y-2">
+          {dashboardError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+              <AlertCircle size={15} className="shrink-0" />
+              <span>{dashboardError}</span>
+            </div>
+          )}
+          {execError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+              <ShieldAlert size={15} className="shrink-0" />
+              <span>{execError}</span>
+            </div>
+          )}
+          {execSuccess && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800 flex items-center gap-2">
+              <CheckCircle2 size={15} className="shrink-0" />
+              <span>{execSuccess}</span>
+            </div>
+          )}
+        </div>
+      )}
       {/* Header Điều Hành Ban Giám Hiệu */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
@@ -788,14 +1119,14 @@ function RectorDashboardView({ user }: { user: any }) {
             <div className="flex items-center gap-1 text-xs text-muted">
               <span>Đã kiểm toán NĐ 85</span>
               <span>•</span>
-              <span className="text-emerald-700 font-semibold">428 CBGV</span>
+              <span className="text-emerald-700 font-semibold">{totalOverviewEmployees} CBGV</span>
             </div>
           }
         />
 
         <StatCard
           title="Quyết Định Chờ Ký Số PKI"
-          value="2 Quyết định"
+          value={`${unsignedCount} Quyết định`}
           icon={<ScrollText size={18} className="text-amber-600" />}
           subvalue={
             <div className="flex items-center gap-1 text-xs text-amber-800 font-medium">
@@ -807,12 +1138,12 @@ function RectorDashboardView({ user }: { user: any }) {
 
         <StatCard
           title="Tỷ Lệ Giảng Viên Có Học Vị Cao"
-          value="82.7%"
+          value={`${highDegreePct}%`}
           icon={<GraduationCap size={18} className="text-brand-600" />}
           trend={{ label: "Đạt chuẩn KĐCL", tone: "success" }}
           subvalue={
             <div className="text-xs text-muted">
-              86 Tiến sĩ · 268 Thạc sĩ · 4 GS · 22 PGS
+              {totalDoctors} Tiến sĩ · {totalMasters} Thạc sĩ · {overview?.professorCount ?? 4} GS · {overview?.associateProfessorCount ?? 22} PGS
             </div>
           }
         />
@@ -838,45 +1169,69 @@ function RectorDashboardView({ user }: { user: any }) {
                 <ScrollText size={16} className="text-amber-600" />
                 <span>Quyết Định Hành Chính Đang Trình Hiệu Trưởng Ký Số Điện Tử (RSA-SHA256)</span>
               </h3>
-              <Badge tone="warning">2 Hồ sơ chờ</Badge>
+              <Badge tone={unsignedCount === 0 ? "success" : "warning"}>
+                {unsignedCount === 0 ? "Đã ký số toàn bộ" : `${unsignedCount} Hồ sơ chờ`}
+              </Badge>
             </div>
             <div className="space-y-3">
-              {[
-                {
-                  no: "QĐ-BGH/2026-118",
-                  title: "Quyết định tái bổ nhiệm Trưởng Khoa Kiến trúc nhiệm kỳ 2026-2031",
-                  recipient: "PGS.TS. Trần Thị Bình",
-                  type: "Bổ nhiệm cán bộ",
-                  date: "28/10/2026",
-                },
-                {
-                  no: "QĐ-BGH/2026-119",
-                  title: "Quyết định khen thưởng giảng viên có bài báo Quốc tế Q1 xuất sắc",
-                  recipient: "TS. KTS. Nguyễn Văn Hùng & Nhóm Nghiên cứu",
-                  type: "Khen thưởng NCKH",
-                  date: "29/10/2026",
-                },
-              ].map((doc, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 rounded-xl border border-line bg-white hover:border-amber-400 transition space-y-2 shadow-2xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-brand-700">{doc.no}</span>
-                    <Badge tone="info">{doc.type}</Badge>
+              {PENDING_EXECUTIVE_RESOLUTIONS.map((doc) => {
+                const signed = signedResolutions[doc.no];
+                const isSigning = signingDocNo === doc.no;
+                const isExporting = exportingDocNo === doc.no;
+                return (
+                  <div
+                    key={doc.no}
+                    className="p-4 rounded-xl border border-line bg-white hover:border-amber-400 transition space-y-2 shadow-2xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold text-brand-700">
+                        {signed?.resolutionNumber || doc.no}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {signed && <Badge tone="success">Đã ký PKI</Badge>}
+                        <Badge tone="info">{doc.typeLabel}</Badge>
+                      </div>
+                    </div>
+                    <p className="text-xs font-bold text-ink">{doc.title}</p>
+                    <p className="text-[11px] text-muted">
+                      Người thụ hưởng: <strong>{doc.recipient}</strong> · Đơn vị: {doc.unitName} · Ngày trình: {doc.date}
+                    </p>
+                    {signed?.signature && (
+                      <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[11px] text-emerald-900">
+                        <div className="font-semibold flex items-center gap-1">
+                          <ShieldCheck size={13} />
+                          <span>Chứng thư số: {signed.signature.certificateSerial} · {signed.signature.signatureAlgorithm}</span>
+                        </div>
+                        <p className="font-mono text-[10px] truncate mt-0.5">
+                          Chữ ký: {signed.signature.signatureValue}
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-line">
+                      <button
+                        type="button"
+                        onClick={() => handleExportExecutivePdf(doc)}
+                        disabled={isExporting}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition disabled:opacity-50"
+                      >
+                        <Download size={13} />
+                        <span>{isExporting ? "Đang xuất PDF..." : "Tải PDF (NĐ 30)"}</span>
+                      </button>
+                      {!signed && (
+                        <button
+                          type="button"
+                          onClick={() => handleSignExecutiveResolution(doc)}
+                          disabled={isSigning}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs transition disabled:opacity-50"
+                        >
+                          <Key size={13} />
+                          <span>{isSigning ? "Đang ký số RSA..." : "Ký Số Điện Tử Ngay"}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs font-bold text-ink">{doc.title}</p>
-                  <p className="text-[11px] text-muted">Người thụ hưởng: <strong>{doc.recipient}</strong> · Ngày trình: {doc.date}</p>
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-line">
-                    <button
-                      onClick={() => alert(`Đã kích hoạt chữ ký số điện tử RSA-SHA256 cho ${doc.no} thành công!`)}
-                      className="rounded-lg bg-brand-500 hover:bg-brand-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs transition"
-                    >
-                      Ký Số Điện Tử Ngay
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         </div>
@@ -889,11 +1244,30 @@ function RectorDashboardView({ user }: { user: any }) {
               <span>Cơ Cấu Trình Độ Giảng Viên DAU</span>
             </h3>
             <div className="space-y-3">
-              {[
-                { label: "Tiến sĩ (Doctor)", count: 86, percent: 20.1, color: "bg-brand-500" },
-                { label: "Thạc sĩ (Master)", count: 268, percent: 62.6, color: "bg-blue-400" },
-                { label: "KTS / Kỹ sư / Cử nhân", count: 74, percent: 17.3, color: "bg-slate-300" },
-              ].map((item, i) => (
+              {(() => {
+                const bachelorOther = Math.max(0, totalOverviewEmployees - totalDoctors - totalMasters);
+                const denom = totalOverviewEmployees > 0 ? totalOverviewEmployees : 1;
+                return [
+                  {
+                    label: "Tiến sĩ (Doctor)",
+                    count: totalDoctors,
+                    percent: Number(((totalDoctors / denom) * 100).toFixed(1)),
+                    color: "bg-brand-500",
+                  },
+                  {
+                    label: "Thạc sĩ (Master)",
+                    count: totalMasters,
+                    percent: Number(((totalMasters / denom) * 100).toFixed(1)),
+                    color: "bg-blue-400",
+                  },
+                  {
+                    label: "KTS / Kỹ sư / Cử nhân",
+                    count: bachelorOther,
+                    percent: Number(((bachelorOther / denom) * 100).toFixed(1)),
+                    color: "bg-slate-300",
+                  },
+                ];
+              })().map((item, i) => (
                 <div key={i} className="space-y-1 text-xs">
                   <div className="flex justify-between">
                     <span className="font-medium text-slate-700">{item.label}</span>
@@ -920,8 +1294,16 @@ function RectorDashboardView({ user }: { user: any }) {
 // 5. VAI TRÒ 5: QUẢN TRỊ HỆ THỐNG (KS. Phạm Quản Trị)
 // ============================================================================
 function SystemAdminDashboardView({ user }: { user: any }) {
+  const { overview, error: dashboardError } = useDashboardSummary(true);
+
   return (
     <div className="space-y-6">
+      {dashboardError && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800 flex items-center gap-2">
+          <AlertCircle size={15} className="shrink-0" />
+          <span>{dashboardError}</span>
+        </div>
+      )}
       {/* Header Admin */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
@@ -929,7 +1311,9 @@ function SystemAdminDashboardView({ user }: { user: any }) {
             <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-emerald-400 border border-slate-700">
               DevOps & Infrastructure Center
             </span>
-            <span className="text-xs text-muted">• Hạ tầng kỹ thuật hệ thống DAU</span>
+            <span className="text-xs text-muted">
+              • Hạ tầng kỹ thuật hệ thống DAU ({overview ? `${overview.totalEmployees} hồ sơ CBGV` : "428 hồ sơ"})
+            </span>
           </div>
           <h2 className="mt-1 text-2xl font-bold tracking-tight text-ink">
             Trung Tâm Vận Hành Kỹ Thuật Hệ Thống — {user?.fullName || "KS. Phạm Quản Trị"}

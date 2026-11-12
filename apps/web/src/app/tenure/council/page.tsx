@@ -30,6 +30,45 @@ import type {
   AppointTenureWithPkiInput,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_COUNCIL_APPLICATIONS: TenureApplicationDto[] = [
   {
     id: "tenure-dau-001",
@@ -170,7 +209,7 @@ const INITIAL_COUNCIL_APPLICATIONS: TenureApplicationDto[] = [
 
 export default function TenureCouncilPage() {
   const { user } = useAuth();
-  const [applications, setApplications] = useState<TenureApplicationDto[]>(INITIAL_COUNCIL_APPLICATIONS);
+  const [applications, setApplications] = useState<TenureApplicationDto[]>([]);
   const [selectedApp, setSelectedApp] = useState<TenureApplicationDto | null>(null);
 
   // Voting Modal State
@@ -192,22 +231,48 @@ export default function TenureCouncilPage() {
   useEffect(() => {
     async function fetchApplications() {
       try {
-        const res = await fetch("/api/v1/tenure/applications");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data?.length > 0) {
-            setApplications(json.data);
-          }
+        const res = await fetch("/api/v1/tenure/applications", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!res.ok) {
+          setAlertMsg({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách hồ sơ Hội đồng xét chức danh"),
+          });
+          return;
+        }
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setApplications(json.data);
         }
       } catch (err) {
-        console.warn("Using offline council applications", err);
+        setAlertMsg({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải hồ sơ Hội đồng.",
+        });
       }
     }
     fetchApplications();
   }, []);
 
+  const handleDownloadPdf = async (appId: string, employeeCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/tenure/applications/${appId}/resolution/pdf`,
+        `quyet-dinh-bo-nhiem-${employeeCode || appId}.pdf`
+      );
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Bổ nhiệm PDF.",
+      });
+    }
+  };
+
   const openVoteModal = (app: TenureApplicationDto) => {
     setSelectedApp(app);
+    setAlertMsg(null);
     setTotalVoters(15);
     setVotesYes(14);
     setForeignLangPass(true);
@@ -217,6 +282,23 @@ export default function TenureCouncilPage() {
 
   const handleExecuteVote = async () => {
     if (!selectedApp) return;
+    if (totalVoters < 5) {
+      setAlertMsg({
+        type: "error",
+        text: "Tổng số thành viên hội đồng tham gia biểu quyết tối thiểu là 5 người.",
+      });
+      setShowVoteModal(false);
+      return;
+    }
+    if (votesYes < 0 || votesYes > totalVoters) {
+      setAlertMsg({
+        type: "error",
+        text: "Số phiếu tán thành không hợp lệ (phải từ 0 đến tổng số thành viên biểu quyết).",
+      });
+      setShowVoteModal(false);
+      return;
+    }
+
     setIsProcessing(true);
 
     const votePayload: TenureCouncilVoteInput = {
@@ -229,63 +311,54 @@ export default function TenureCouncilPage() {
     try {
       const res = await fetch(`/api/v1/tenure/applications/${selectedApp.id}/vote`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(votePayload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? json.data : a)));
-          setShowVoteModal(false);
-          const ratio = json.data.councilVote?.approvalRatio;
-          const passed = json.data.councilVote?.isPassed;
-          setAlertMsg({
-            type: passed ? "success" : "error",
-            text: passed
-              ? `Biểu quyết thành công: Tán thành ${ratio}% (>= 66.7%). Đủ điều kiện đề nghị Hiệu trưởng ban hành quyết định!`
-              : `Kết quả: Tán thành ${ratio}% (< 66.7%). Không đạt ngưỡng quy định theo Điều 16 QĐ 37/2018/QĐ-TTg.`,
-          });
-          return;
-        }
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ghi nhận kết quả biểu quyết Hội đồng"),
+        });
+        setShowVoteModal(false);
+        return;
       }
-    } catch {
-      // Fallback in-memory
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setAlertMsg({
+          type: "error",
+          text: "Phản hồi biểu quyết không hợp lệ từ máy chủ.",
+        });
+        setShowVoteModal(false);
+        return;
+      }
+
+      setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? json.data : a)));
+      setShowVoteModal(false);
+      const ratio = json.data.councilVote?.approvalRatio;
+      const passed = json.data.councilVote?.isPassed;
+      setAlertMsg({
+        type: passed ? "success" : "error",
+        text: passed
+          ? `Biểu quyết thành công: Tán thành ${ratio}% (>= 66.7%). Đủ điều kiện đề nghị Hiệu trưởng ban hành quyết định!`
+          : `Kết quả: Tán thành ${ratio}% (< 66.7%). Không đạt ngưỡng quy định theo Điều 16 QĐ 37/2018/QĐ-TTg.`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ghi nhận biểu quyết Hội đồng.",
+      });
+      setShowVoteModal(false);
+    } finally {
+      setIsProcessing(false);
     }
-
-    // In-memory update if offline
-    const approvalRatio = Math.round((votesYes / totalVoters) * 1000) / 10;
-    const isPassed = approvalRatio >= 66.67 && foreignLangPass;
-
-    const updatedApp: TenureApplicationDto = {
-      ...selectedApp,
-      status: isPassed ? "VOTED" : "REJECTED",
-      councilVote: {
-        votesYes,
-        votesNo: totalVoters - votesYes,
-        totalVoters,
-        approvalRatio,
-        isPassed,
-        votedDate: new Date().toISOString(),
-        councilNotes,
-        foreignLanguagePass: foreignLangPass,
-      },
-      updatedAt: new Date().toISOString(),
-    };
-
-    setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? updatedApp : a)));
-    setShowVoteModal(false);
-    setIsProcessing(false);
-    setAlertMsg({
-      type: isPassed ? "success" : "error",
-      text: isPassed
-        ? `Biểu quyết hoàn tất: Đạt ${approvalRatio}% (${votesYes}/${totalVoters} phiếu tán thành). Rào chắn >= 2/3 ĐẠT!`
-        : `Biểu quyết hoàn tất: Tỷ lệ ${approvalRatio}% chưa đạt yêu cầu >= 2/3 (66.7%).`,
-    });
   };
 
   const openPkiSignModal = (app: TenureApplicationDto) => {
     setSelectedApp(app);
+    setAlertMsg(null);
     setResolutionNum(`${Math.floor(100 + Math.random() * 900)}/QĐ-ĐHKTĐN`);
     const coeff =
       app.targetCareerClass === "SENIOR_LECTURER"
@@ -309,51 +382,55 @@ export default function TenureCouncilPage() {
     try {
       const res = await fetch(`/api/v1/tenure/applications/${selectedApp.id}/appoint`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(signPayload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? json.data : a)));
-          setShowPkiModal(false);
-          setIsProcessing(false);
-          setAlertMsg({
-            type: "success",
-            text: `Hiệu trưởng đã ký số RSA-2048 ban hành QĐ số ${json.data.appointmentResolutionNumber}. Ngạch bậc đã đồng bộ sang Bảng lương và Giờ chuẩn!`,
-          });
-          return;
-        }
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ký số PKI ban hành Quyết định Bổ nhiệm"),
+        });
+        setShowPkiModal(false);
+        return;
       }
-    } catch {
-      // Fallback in-memory
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setAlertMsg({
+          type: "error",
+          text: "Phản hồi ký số PKI không hợp lệ từ máy chủ.",
+        });
+        setShowPkiModal(false);
+        return;
+      }
+
+      setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? json.data : a)));
+      setShowPkiModal(false);
+      setAlertMsg({
+        type: "success",
+        text: `Hiệu trưởng đã ký số RSA-2048 ban hành QĐ số ${json.data.appointmentResolutionNumber}. Ngạch bậc đã đồng bộ sang Bảng lương và Giờ chuẩn!`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ký số PKI.",
+      });
+      setShowPkiModal(false);
+    } finally {
+      setIsProcessing(false);
     }
-
-    const updatedApp: TenureApplicationDto = {
-      ...selectedApp,
-      status: "APPOINTED",
-      appointmentResolutionNumber: resolutionNum,
-      appointedSalaryCoeff: newSalaryCoeff,
-      pkiSignature: "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...DAU_PKI_SIGNED",
-      pkiSignedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setApplications((prev) => prev.map((a) => (a.id === selectedApp.id ? updatedApp : a)));
-    setShowPkiModal(false);
-    setIsProcessing(false);
-    setAlertMsg({
-      type: "success",
-      text: `Hiệu trưởng đã ký số PKI RSA-2048 thành công. Tự động đồng bộ hệ số ${newSalaryCoeff} sang PayrollService và áp dụng định mức 216h sang WorkloadService!`,
-    });
   };
 
   const calculatedRatio = Math.round((votesYes / (totalVoters || 1)) * 1000) / 10;
   const isThresholdMet = calculatedRatio >= 66.67;
 
   return (
-    <AuthGuard>
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "COUNCIL_MEMBER", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Hội đồng Xét Chức danh & Thăng hạng"
+    >
       <div className="space-y-6">
         {/* Navigation & Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-stone-200 pb-5">
@@ -561,15 +638,14 @@ export default function TenureCouncilPage() {
                     )}
 
                     {isAppointed && (
-                      <a
-                        href={`/api/v1/tenure/applications/${app.id}/resolution/pdf`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadPdf(app.id, app.employeeCode)}
                         className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition"
                       >
                         <Download size={14} />
                         Tải Quyết định Bổ nhiệm (PDF)
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>

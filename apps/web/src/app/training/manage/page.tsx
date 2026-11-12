@@ -1,9 +1,48 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FileText, CheckCircle2, XCircle, Clock, AlertTriangle, X } from "lucide-react";
+import { FileText, CheckCircle2, XCircle, Clock, AlertTriangle, X, GraduationCap, Plus } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
+
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+function getVnTodayDate(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+}
+
+interface TrainingCourseAdminItem {
+  id: string;
+  code: string;
+  name: string;
+  category: "PEDAGOGY" | "PROFESSIONAL" | "POLITICAL" | "LANGUAGE_IT" | "OVERSEAS_POSTGRAD";
+  provider: string;
+  startDate: string;
+  endDate: string;
+  location?: string | null;
+  budget?: number | null;
+  status: "PLANNING" | "ONGOING" | "COMPLETED" | "CANCELLED";
+  description?: string | null;
+  participantCount: number;
+}
 
 interface CertificateAdminItem {
   id: string;
@@ -119,10 +158,72 @@ export default function TrainingManagePage() {
   const [searchTerm, setSearchTerm] = useState<string>("");
 
   // Modal Thẩm định
+  const [activeManageTab, setActiveManageTab] = useState<"CERTIFICATES" | "COURSES">("CERTIFICATES");
+  const [courses, setCourses] = useState<TrainingCourseAdminItem[]>([]);
   const [selectedCert, setSelectedCert] = useState<CertificateAdminItem | null>(null);
   const [verifyDecision, setVerifyDecision] = useState<"VERIFIED" | "REJECTED">("VERIFIED");
   const [rejectionReason, setRejectionReason] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Course creation & participant update state
+  const [courseCode, setCourseCode] = useState("");
+  const [courseName, setCourseName] = useState("");
+  const [courseCategory, setCourseCategory] = useState<TrainingCourseAdminItem["category"]>("PROFESSIONAL");
+  const [courseProvider, setCourseProvider] = useState("Trường Đại học Kiến trúc Đà Nẵng");
+  const [courseStartDate, setCourseStartDate] = useState(() => getVnTodayDate());
+  const [courseEndDate, setCourseEndDate] = useState(() => getVnTodayDate());
+  const [participantCourseId, setParticipantCourseId] = useState("");
+  const [participantEmployeeId, setParticipantEmployeeId] = useState("");
+  const [participantStatus, setParticipantStatus] = useState<"REGISTERED" | "APPROVED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "DROPPED">("COMPLETED");
+  const [participantGrade, setParticipantGrade] = useState("Xuất sắc");
+
+  useEffect(() => {
+    let active = true;
+    async function loadData() {
+      try {
+        const headers = getAuthHeaders();
+        const [certRes, courseRes] = await Promise.all([
+          fetch("/api/v1/training/certificates", { headers, credentials: "include" }),
+          fetch("/api/v1/training/courses", { headers, credentials: "include" }),
+        ]);
+        if (!active) return;
+
+        if (!certRes.ok) {
+          setMessage({
+            type: "error",
+            text: await parseErrorMessage(certRes, "Không thể tải danh sách chứng chỉ cần thẩm định"),
+          });
+        } else {
+          const certJson = await certRes.json();
+          if (Array.isArray(certJson?.data)) {
+            setCertificates(certJson.data);
+          }
+        }
+
+        if (courseRes.ok) {
+          const courseJson = await courseRes.json();
+          if (Array.isArray(courseJson?.data)) {
+            setCourses(courseJson.data);
+            if (courseJson.data.length > 0) {
+              setParticipantCourseId(courseJson.data[0].id);
+            }
+          }
+        }
+      } catch (err) {
+        if (active) {
+          setMessage({
+            type: "error",
+            text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ đào tạo.",
+          });
+        }
+      }
+    }
+    loadData();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Statistics
   const totalCount = certificates.length;
@@ -152,7 +253,7 @@ export default function TrainingManagePage() {
     return true;
   });
 
-  const handleVerifySubmit = () => {
+  const handleVerifySubmit = async () => {
     if (!selectedCert) return;
 
     if (verifyDecision === "REJECTED" && !rejectionReason.trim()) {
@@ -160,27 +261,165 @@ export default function TrainingManagePage() {
       return;
     }
 
-    setCertificates((prev) =>
-      prev.map((c) => {
-        if (c.id === selectedCert.id) {
-          return {
-            ...c,
-            status: verifyDecision,
-            verifiedByName: "Chuyên viên Phòng TCHC",
-            verifiedAt: new Date().toISOString().split("T")[0],
-            rejectionReason: verifyDecision === "REJECTED" ? rejectionReason : null,
-          };
-        }
-        return c;
-      })
-    );
+    setIsSubmitting(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/v1/training/certificates/${selectedCert.id}/verify`, {
+        method: "PUT",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify({
+          status: verifyDecision,
+          rejectionReason: verifyDecision === "REJECTED" ? rejectionReason.trim() : undefined,
+        }),
+      });
 
-    setMessage({
-      type: "success",
-      text: `Đã hoàn tất thẩm định [${verifyDecision === "VERIFIED" ? "XÁC NHẬN HỢP LỆ" : "TỪ CHỐI"}] chứng chỉ cho ${selectedCert.employeeName}!`,
-    });
-    setSelectedCert(null);
-    setRejectionReason("");
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Thẩm định chứng chỉ thất bại"),
+        });
+        return;
+      }
+
+      const json = await res.json();
+      const updatedCert: CertificateAdminItem = json?.data;
+      setCertificates((prev) =>
+        prev.map((c) => (c.id === selectedCert.id ? updatedCert || { ...c, status: verifyDecision } : c))
+      );
+
+      setMessage({
+        type: "success",
+        text: `Đã hoàn tất thẩm định [${verifyDecision === "VERIFIED" ? "XÁC NHẬN HỢP LỆ" : "TỪ CHỐI"}] chứng chỉ cho ${selectedCert.employeeName}!`,
+      });
+      setSelectedCert(null);
+      setRejectionReason("");
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi thẩm định chứng chỉ.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMessage(null);
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/v1/training/courses", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify({
+          code: courseCode.trim(),
+          name: courseName.trim(),
+          category: courseCategory,
+          provider: courseProvider.trim(),
+          startDate: courseStartDate,
+          endDate: courseEndDate,
+        }),
+      });
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Mở khóa đào tạo mới thất bại"),
+        });
+        return;
+      }
+      const json = await res.json();
+      if (json?.data) {
+        setCourses((prev) => [json.data, ...prev]);
+        setParticipantCourseId((prev) => prev || json.data.id);
+      }
+      setCourseCode("");
+      setCourseName("");
+      setMessage({ type: "success", text: "Đã mở khóa đào tạo bồi dưỡng mới thành công!" });
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối khi tạo khóa đào tạo.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateCourseStatus = async (
+    courseId: string,
+    status: TrainingCourseAdminItem["status"]
+  ) => {
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/v1/training/courses/${courseId}/status`, {
+        method: "PATCH",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Cập nhật trạng thái khóa học thất bại"),
+        });
+        return;
+      }
+      const json = await res.json();
+      setCourses((prev) =>
+        prev.map((c) => (c.id === courseId ? json?.data || { ...c, status } : c))
+      );
+      setMessage({ type: "success", text: `Đã chuyển trạng thái khóa học sang ${status}.` });
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối khi cập nhật trạng thái khóa học.",
+      });
+    }
+  };
+
+  const handleUpdateParticipant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!participantCourseId || !participantEmployeeId.trim()) {
+      setMessage({ type: "error", text: "Vui lòng chọn khóa học và nhập Employee ID học viên." });
+      return;
+    }
+    setMessage(null);
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/v1/training/courses/${participantCourseId}/participants/${encodeURIComponent(participantEmployeeId.trim())}`,
+        {
+          method: "PUT",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
+          body: JSON.stringify({
+            status: participantStatus,
+            grade: participantGrade.trim() || undefined,
+            certificateIssued: participantStatus === "COMPLETED",
+          }),
+        }
+      );
+      if (!res.ok) {
+        setMessage({
+          type: "error",
+          text: await parseErrorMessage(res, "Cập nhật kết quả học viên thất bại"),
+        });
+        return;
+      }
+      setMessage({
+        type: "success",
+        text: `Đã cập nhật trạng thái học viên [${participantEmployeeId.trim()}] thành ${participantStatus}.`,
+      });
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối khi cập nhật học viên.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -215,7 +454,10 @@ export default function TrainingManagePage() {
   };
 
   return (
-    <AuthGuard moduleName="Quản trị Đào tạo & Thẩm định Chứng chỉ">
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Quản trị Đào tạo & Thẩm định Chứng chỉ"
+    >
       <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between pb-5 border-b border-gray-200 gap-4">
@@ -355,6 +597,196 @@ export default function TrainingManagePage() {
       </div>
 
       {/* Main Table */}
+      <div className="flex items-center gap-3 border-b border-gray-200 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveManageTab("CERTIFICATES")}
+          className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition ${
+            activeManageTab === "CERTIFICATES"
+              ? "bg-indigo-700 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+          }`}
+        >
+          Thẩm định Chứng chỉ ({filteredCerts.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveManageTab("COURSES")}
+          className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition flex items-center gap-1.5 ${
+            activeManageTab === "COURSES"
+              ? "bg-indigo-700 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+          }`}
+        >
+          <GraduationCap size={15} />
+          <span>Quản lý Khóa Bồi dưỡng & Học viên ({courses.length})</span>
+        </button>
+      </div>
+
+      {activeManageTab === "COURSES" && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <form onSubmit={handleCreateCourse} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-3">
+              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                <Plus size={16} className="text-indigo-700" />
+                <span>Mở Khóa Đào tạo / Bồi dưỡng Mới</span>
+              </h3>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <input
+                  type="text"
+                  required
+                  placeholder="Mã khóa (VD: BD-BIM-2026)"
+                  value={courseCode}
+                  onChange={(e) => setCourseCode(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 font-mono"
+                />
+                <select
+                  value={courseCategory}
+                  onChange={(e) => setCourseCategory(e.target.value as TrainingCourseAdminItem["category"])}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="PROFESSIONAL">Chuyên môn / Kiến trúc</option>
+                  <option value="PEDAGOGY">Nghiệp vụ sư phạm</option>
+                  <option value="LANGUAGE_IT">Ngoại ngữ & Tin học</option>
+                  <option value="POLITICAL">Lý luận chính trị</option>
+                  <option value="OVERSEAS_POSTGRAD">Bồi dưỡng nước ngoài</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                required
+                placeholder="Tên khóa đào tạo / bồi dưỡng"
+                value={courseName}
+                onChange={(e) => setCourseName(e.target.value)}
+                className="w-full text-xs border border-gray-300 rounded-lg px-3 py-2"
+              />
+              <input
+                type="text"
+                required
+                placeholder="Đơn vị tổ chức"
+                value={courseProvider}
+                onChange={(e) => setCourseProvider(e.target.value)}
+                className="w-full text-xs border border-gray-300 rounded-lg px-3 py-2"
+              />
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <input
+                  type="date"
+                  value={courseStartDate}
+                  onChange={(e) => setCourseStartDate(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                />
+                <input
+                  type="date"
+                  value={courseEndDate}
+                  onChange={(e) => setCourseEndDate(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-700 hover:bg-indigo-800 text-white disabled:opacity-50"
+              >
+                {isSubmitting ? "Đang tạo..." : "Mở Khóa Bồi dưỡng"}
+              </button>
+            </form>
+
+            <form onSubmit={handleUpdateParticipant} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-3">
+              <h3 className="text-sm font-bold text-gray-900">Cập nhật Kết quả / Trạng thái Học viên</h3>
+              <select
+                value={participantCourseId}
+                onChange={(e) => setParticipantCourseId(e.target.value)}
+                className="w-full text-xs border border-gray-300 rounded-lg px-3 py-2"
+              >
+                {courses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    [{c.code}] {c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                placeholder="Employee ID (UUID)"
+                value={participantEmployeeId}
+                onChange={(e) => setParticipantEmployeeId(e.target.value)}
+                className="w-full text-xs border border-gray-300 rounded-lg px-3 py-2 font-mono"
+              />
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <select
+                  value={participantStatus}
+                  onChange={(e) => setParticipantStatus(e.target.value as any)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="APPROVED">Đã duyệt tham gia (APPROVED)</option>
+                  <option value="IN_PROGRESS">Đang học (IN_PROGRESS)</option>
+                  <option value="COMPLETED">Hoàn thành & Cấp GCN (COMPLETED)</option>
+                  <option value="FAILED">Không đạt (FAILED)</option>
+                  <option value="DROPPED">Rút đăng ký (DROPPED)</option>
+                </select>
+                <input
+                  type="text"
+                  placeholder="Xếp loại / Điểm (VD: Xuất sắc)"
+                  value={participantGrade}
+                  onChange={(e) => setParticipantGrade(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white disabled:opacity-50"
+              >
+                Cập nhật Kết quả Học viên
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-left text-xs">
+                <thead className="bg-gray-50 text-gray-600 font-semibold">
+                  <tr>
+                    <th className="px-4 py-3">Mã & Tên khóa</th>
+                    <th className="px-4 py-3">Đơn vị tổ chức</th>
+                    <th className="px-4 py-3">Thời gian</th>
+                    <th className="px-4 py-3">Sĩ số</th>
+                    <th className="px-4 py-3">Trạng thái</th>
+                    <th className="px-4 py-3 text-right">Chuyển trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {courses.map((course) => (
+                    <tr key={course.id}>
+                      <td className="px-4 py-3">
+                        <div className="font-mono font-bold text-indigo-700">{course.code}</div>
+                        <div className="font-medium text-gray-900">{course.name}</div>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{course.provider}</td>
+                      <td className="px-4 py-3 text-gray-600">{course.startDate} → {course.endDate}</td>
+                      <td className="px-4 py-3 font-semibold">{course.participantCount}</td>
+                      <td className="px-4 py-3 font-bold">{course.status}</td>
+                      <td className="px-4 py-3 text-right">
+                        <select
+                          value={course.status}
+                          onChange={(e) => handleUpdateCourseStatus(course.id, e.target.value as TrainingCourseAdminItem["status"])}
+                          className="border border-gray-300 rounded px-2 py-1 text-xs"
+                        >
+                          <option value="PLANNING">PLANNING</option>
+                          <option value="ONGOING">ONGOING</option>
+                          <option value="COMPLETED">COMPLETED</option>
+                          <option value="CANCELLED">CANCELLED</option>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeManageTab === "CERTIFICATES" && (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-800">
@@ -437,6 +869,7 @@ export default function TrainingManagePage() {
           </table>
         </div>
       </div>
+      )}
 
       {/* MODAL: Thẩm định Chứng chỉ */}
       {selectedCert && (

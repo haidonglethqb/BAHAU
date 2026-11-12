@@ -31,6 +31,45 @@ import type {
   ScientificWorkType,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const SAMPLE_APPLICATIONS: TenureApplicationDto[] = [
   {
     id: "tenure-dau-001",
@@ -249,8 +288,9 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 export default function TenurePage() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"portfolio" | "all">("portfolio");
-  const [applications, setApplications] = useState<TenureApplicationDto[]>(SAMPLE_APPLICATIONS);
-  const [currentApp, setCurrentApp] = useState<TenureApplicationDto>(SAMPLE_APPLICATIONS[0]);
+  const [applications, setApplications] = useState<TenureApplicationDto[]>([]);
+  const [currentApp, setCurrentApp] = useState<TenureApplicationDto | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRank, setFilterRank] = useState<string>("ALL");
   const [showAddWorkModal, setShowAddWorkModal] = useState(false);
@@ -266,76 +306,125 @@ export default function TenurePage() {
 
   useEffect(() => {
     async function loadApplications() {
+      setIsLoading(true);
       try {
-        const res = await fetch("/api/v1/tenure/applications");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data?.length > 0) {
-            setApplications(json.data);
-            // Match current user application if available
-            const myApp = json.data.find(
-              (a: TenureApplicationDto) =>
-                a.employeeCode === user?.code || a.employeeName === user?.fullName || a.employeeId === user?.id
-            );
-            if (myApp) {
-              setCurrentApp(myApp);
-            } else {
-              setCurrentApp(json.data[0]);
-            }
-          }
+        const res = await fetch("/api/v1/tenure/applications", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!res.ok) {
+          setNotice({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách hồ sơ xét chức danh"),
+          });
+          return;
+        }
+        const json = await res.json();
+        const list: TenureApplicationDto[] = Array.isArray(json?.data) ? json.data : [];
+        setApplications(list);
+        if (list.length > 0) {
+          const myApp = list.find(
+            (a: TenureApplicationDto) =>
+              a.employeeCode === user?.code || a.employeeName === user?.fullName || a.employeeId === user?.id
+          );
+          setCurrentApp(myApp || list[0]);
+        } else {
+          setCurrentApp(null);
         }
       } catch (err) {
-        console.warn("Using offline sample tenure data", err);
+        setNotice({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải hồ sơ xét chức danh.",
+        });
+      } finally {
+        setIsLoading(false);
       }
     }
     loadApplications();
   }, [user]);
 
-  const handleAddWork = () => {
+  const handleDownloadPdf = async (appId: string, employeeCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/tenure/applications/${appId}/resolution/pdf`,
+        `quyet-dinh-bo-nhiem-${employeeCode || appId}.pdf`
+      );
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Bổ nhiệm PDF.",
+      });
+    }
+  };
+
+  const handleAddWork = async () => {
     if (!workTitle.trim()) {
       setNotice({ type: "error", text: "Vui lòng nhập tên công trình / tác phẩm kiến trúc." });
       return;
     }
 
-    const isLead = workRole === "MAIN_AUTHOR" || workRole === "PRINCIPAL_DESIGNER";
-    let score = 2.0;
-    if (workType === "SCOPUS_WOS_PAPER" || workType === "ARCHITECTURAL_AWARD") {
-      score = isLead ? 3.0 : 2.0;
-    } else if (workType === "BUILT_PROJECT" || workType === "BOOK_ISBN") {
-      score = isLead ? 2.0 : 1.0;
-    } else if (workType === "RESEARCH_PROJECT") {
-      score = isLead ? 2.0 : 1.0;
-    } else {
-      score = isLead ? 1.0 : 0.75;
-    }
-
     const newWork: ScientificWorkItem = {
       id: `w-${Date.now()}`,
       workType,
-      title: workTitle,
+      title: workTitle.trim(),
       publishedYear: workYear,
       role: workRole,
-      convertedScore: score,
-      evidenceUrl: workEvidence || null,
+      convertedScore: 0,
+      evidenceUrl: workEvidence.trim() || null,
       notes: "Kê khai bổ sung e-Portfolio",
     };
 
-    const updatedWorks = [newWork, ...currentApp.works];
-    const newTotal = Math.round(updatedWorks.reduce((s, w) => s + w.convertedScore, 0) * 10) / 10;
+    const worksToSubmit = currentApp ? [newWork, ...currentApp.works] : [newWork];
+    const targetCareerClass = currentApp?.targetCareerClass || "PRINCIPAL_LECTURER";
+    const targetAcademicRank = currentApp?.targetAcademicRank || "NONE";
+    const teachingYears = currentApp?.teachingYears ?? 5;
 
-    const updatedApp = {
-      ...currentApp,
-      works: updatedWorks,
-      totalScientificScore: newTotal,
-      updatedAt: new Date().toISOString(),
-    };
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/v1/tenure/applications", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify({
+          targetCareerClass,
+          targetAcademicRank,
+          teachingYears,
+          works: worksToSubmit,
+        }),
+      });
 
-    setCurrentApp(updatedApp);
-    setApplications((prev) => prev.map((a) => (a.id === updatedApp.id ? updatedApp : a)));
-    setShowAddWorkModal(false);
-    setWorkTitle("");
-    setWorkEvidence("");
-    setNotice({ type: "success", text: `Đã thêm công trình "${workTitle}" (+${score} điểm).` });
+      if (!res.ok) {
+        setNotice({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể lưu công trình vào hồ sơ xét chức danh"),
+        });
+        return;
+      }
+
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setNotice({ type: "error", text: "Phản hồi lưu hồ sơ không hợp lệ từ máy chủ." });
+        return;
+      }
+
+      const savedApp: TenureApplicationDto = json.data;
+      setCurrentApp(savedApp);
+      setApplications((prev) => [savedApp, ...prev.filter((a) => a.id !== savedApp.id)]);
+      setShowAddWorkModal(false);
+      setWorkTitle("");
+      setWorkEvidence("");
+      setNotice({
+        type: "success",
+        text: `Đã lưu công trình "${workTitle.trim()}" vào hồ sơ e-Portfolio (${savedApp.totalScientificScore.toFixed(1)} điểm quy đổi).`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi lưu công trình e-Portfolio.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const filteredApplications = applications.filter((app) => {
@@ -354,10 +443,12 @@ export default function TenurePage() {
     return matchesSearch && matchesRank;
   });
 
-  const progressPercentage = Math.min(
-    100,
-    Math.round((currentApp.totalScientificScore / currentApp.requiredScientificScore) * 100)
-  );
+  const progressPercentage = currentApp && currentApp.requiredScientificScore > 0
+    ? Math.min(
+        100,
+        Math.round((currentApp.totalScientificScore / currentApp.requiredScientificScore) * 100)
+      )
+    : 0;
 
   return (
     <AuthGuard>
@@ -439,7 +530,26 @@ export default function TenurePage() {
         </div>
 
         {/* TAB 1: e-PORTFOLIO */}
-        {activeTab === "portfolio" && (
+        {activeTab === "portfolio" && !currentApp && (
+          <div className="bg-white rounded-xl border border-stone-200 p-8 text-center space-y-3 shadow-xs">
+            <p className="text-sm text-stone-600">
+              {isLoading
+                ? "Đang tải hồ sơ xét chức danh từ hệ thống..."
+                : "Chưa có hồ sơ e-Portfolio xét chức danh / thăng hạng giảng viên nào."}
+            </p>
+            {!isLoading && (
+              <button
+                onClick={() => setShowAddWorkModal(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition"
+              >
+                <Plus size={14} />
+                Kê khai công trình đầu tiên
+              </button>
+            )}
+          </div>
+        )}
+
+        {activeTab === "portfolio" && currentApp && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Cột trái: Thông tin ứng viên & Thước đo điểm chuẩn */}
             <div className="lg:col-span-1 space-y-6">
@@ -554,15 +664,14 @@ export default function TenurePage() {
                 {/* Resolution Download if Appointed */}
                 {currentApp.status === "APPOINTED" && (
                   <div className="mt-4 pt-3 border-t border-stone-100">
-                    <a
-                      href={`/api/v1/tenure/applications/${currentApp.id}/resolution/pdf`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadPdf(currentApp.id, currentApp.employeeCode)}
                       className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition"
                     >
                       <FileText size={14} />
                       Tải Quyết định Bổ nhiệm (PDF Nghị định 30)
-                    </a>
+                    </button>
                   </div>
                 )}
               </div>
@@ -795,14 +904,13 @@ export default function TenurePage() {
                               Xem e-Portfolio
                             </button>
                             {app.status === "APPOINTED" && (
-                              <a
-                                href={`/api/v1/tenure/applications/${app.id}/resolution/pdf`}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadPdf(app.id, app.employeeCode)}
                                 className="px-2.5 py-1 rounded bg-stone-900 text-white hover:bg-stone-800 transition"
                               >
                                 Tải QĐ (PDF)
-                              </a>
+                              </button>
                             )}
                           </td>
                         </tr>
@@ -910,9 +1018,10 @@ export default function TenurePage() {
                 </button>
                 <button
                   onClick={handleAddWork}
-                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-50"
                 >
-                  Lưu vào e-Portfolio
+                  {isSubmitting ? "Đang lưu..." : "Lưu vào e-Portfolio"}
                 </button>
               </div>
             </div>

@@ -37,6 +37,45 @@ import type {
   ApproveRdWithPkiInput,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_PROJECTS: RdProjectDto[] = [
   {
     id: "rd-dau-001",
@@ -196,10 +235,12 @@ function RdRoyaltyContent() {
   const searchParams = useSearchParams();
   const initialId = searchParams.get("id");
 
-  const [projects, setProjects] = useState<RdProjectDto[]>(INITIAL_PROJECTS);
+  const [projects, setProjects] = useState<RdProjectDto[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
-    initialId || "rd-dau-001"
+    initialId || ""
   );
+  const [alertMsg, setAlertMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Modal States
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -225,21 +266,29 @@ function RdRoyaltyContent() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const token = localStorage.getItem("token") || "mock-token";
         const res = await fetch("/api/v1/rd/projects", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: getAuthHeaders(),
+          credentials: "include",
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-            setProjects(json.data);
-            if (!initialId) {
-              setSelectedProjectId(json.data[0].id);
-            }
+        if (!res.ok) {
+          setAlertMsg({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách dự án R&D & nhuận bút"),
+          });
+          return;
+        }
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          setProjects(json.data);
+          if (json.data.length > 0 && !initialId) {
+            setSelectedProjectId(json.data[0].id);
           }
         }
-      } catch {
-        // Fallback to initial seed
+      } catch (err) {
+        setAlertMsg({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải dữ liệu R&D.",
+        });
       }
     }
     fetchProjects();
@@ -248,9 +297,24 @@ function RdRoyaltyContent() {
   const activeProject =
     projects.find((p) => p.id === selectedProjectId) || projects[0];
 
+  const handleDownloadPdf = async (projectId: string, projectCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/rd/projects/${projectId}/resolution/pdf`,
+        `quyet-dinh-nghiem-thu-${projectCode || projectId}.pdf`
+      );
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Nghiệm thu PDF.",
+      });
+    }
+  };
+
   // Initialize allocation map when opening allocate modal
   const openAllocateModal = () => {
     if (!activeProject) return;
+    setAlertMsg(null);
     const initialMap: { [id: string]: number } = {};
     for (const m of activeProject.members) {
       initialMap[m.employeeId] = m.royaltyPercentage;
@@ -266,9 +330,8 @@ function RdRoyaltyContent() {
   // Council Review Submit
   const handleCouncilReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProject) return;
+    if (!activeProject || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const payload: ReviewRdProjectInput = {
       score: Number(reviewScore),
       ranking: reviewRanking,
@@ -276,157 +339,180 @@ function RdRoyaltyContent() {
       councilNotes: reviewNotes,
     };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/rd/projects/${activeProject.id}/review`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
-      } else {
-        // Local fallback
-        const isPassed = payload.score >= 70;
-        const updated: RdProjectDto = {
-          ...activeProject,
-          status: isPassed ? "REVIEW_COUNCIL" : "TERMINATED",
-          councilReview: {
-            reviewDate: new Date().toISOString(),
-            score: payload.score,
-            ranking: payload.ranking,
-            isPassed,
-            councilNotes: payload.councilNotes || null,
-            councilPresidentName: payload.councilPresidentName || null,
-          },
-          updatedAt: new Date().toISOString(),
-        };
-        setProjects(projects.map((p) => (p.id === activeProject.id ? updated : p)));
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ghi nhận kết quả Hội đồng nghiệm thu"),
+        });
+        setIsReviewModalOpen(false);
+        return;
       }
-    } catch {
-      // Local fallback
-    }
 
-    setIsReviewModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi nghiệm thu không hợp lệ từ máy chủ." });
+        setIsReviewModalOpen(false);
+        return;
+      }
+
+      setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
+      setIsReviewModalOpen(false);
+      setAlertMsg({
+        type: json.data.councilReview?.isPassed ? "success" : "error",
+        text: json.data.councilReview?.isPassed
+          ? `Nghiệm thu ĐẠT (${json.data.councilReview.score} điểm). Dự án đủ điều kiện phân bổ nhuận bút.`
+          : `Nghiệm thu KHÔNG ĐẠT (${json.data.councilReview?.score ?? payload.score} điểm < 70 điểm).`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ghi nhận nghiệm thu.",
+      });
+      setIsReviewModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Allocate Royalty Submit
   const handleAllocateRoyalty = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProject) return;
+    if (!activeProject || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const memberAllocations = Object.entries(allocPercentages).map(([employeeId, royaltyPercentage]) => ({
       employeeId,
       royaltyPercentage: Number(royaltyPercentage),
     }));
 
     const totalPct = memberAllocations.reduce((sum, a) => sum + a.royaltyPercentage, 0);
-    if (totalPct > 100) {
-      alert(`Tổng tỷ lệ phân bổ (${totalPct}%) không được vượt quá 100%!`);
+    if (Math.abs(totalPct - 100) > 0.001) {
+      setAlertMsg({
+        type: "error",
+        text: `Tổng tỷ lệ phân bổ nhuận bút (${totalPct}%) phải bằng đúng 100% cho toàn nhóm tác giả.`,
+      });
+      setIsAllocateModalOpen(false);
       return;
     }
 
     const payload: AllocateRoyaltyInput = { memberAllocations };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/rd/projects/${activeProject.id}/allocate`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
-      } else {
-        // Local fallback
-        const updatedMembers = activeProject.members.map((m) => {
-          const pct = allocPercentages[m.employeeId] ?? m.royaltyPercentage;
-          return {
-            ...m,
-            royaltyPercentage: pct,
-            allocatedAmount: Math.round((activeProject.royaltyFundAmount * pct) / 100),
-            convertedResearchHours: Math.round(pct * 2.5),
-          };
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể phê duyệt phân bổ nhuận bút"),
         });
-        const updated: RdProjectDto = {
-          ...activeProject,
-          members: updatedMembers,
-          payoutStatus: "APPROVED",
-          updatedAt: new Date().toISOString(),
-        };
-        setProjects(projects.map((p) => (p.id === activeProject.id ? updated : p)));
+        setIsAllocateModalOpen(false);
+        return;
       }
-    } catch {
-      // Fallback
-    }
 
-    setIsAllocateModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi phân bổ nhuận bút không hợp lệ từ máy chủ." });
+        setIsAllocateModalOpen(false);
+        return;
+      }
+
+      setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
+      setIsAllocateModalOpen(false);
+      setAlertMsg({
+        type: "success",
+        text: "Đã phê duyệt phương án phân bổ 100% quỹ nhuận bút & quy đổi giờ nghiên cứu khoa học.",
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi phân bổ nhuận bút.",
+      });
+      setIsAllocateModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // PKI Approve Submit
   const handlePkiApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProject) return;
+    if (!activeProject || isProcessing) return;
 
-    const token = localStorage.getItem("token") || "mock-token";
     const payload: ApproveRdWithPkiInput = {
       signerName,
       resolutionNumber,
     };
 
+    setIsProcessing(true);
     try {
       const res = await fetch(
         `/api/v1/rd/projects/${activeProject.id}/approve`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
           body: JSON.stringify(payload),
         }
       );
 
-      if (res.ok) {
-        const json = await res.json();
-        setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
-      } else {
-        // Local fallback
-        const updated: RdProjectDto = {
-          ...activeProject,
-          status: "COMPLETED",
-          payoutStatus: "PAID_VIA_PAYROLL",
-          resolutionNumber: payload.resolutionNumber || "218/QĐ-ĐHKTĐN",
-          pkiSignature: "MIIEPQIBAzCCBM8GCSqGSIb3DQEHAaCCBMIExgSDAU...",
-          pkiSignedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setProjects(projects.map((p) => (p.id === activeProject.id ? updated : p)));
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ký số PKI phê duyệt quyết toán nhuận bút"),
+        });
+        setIsPkiModalOpen(false);
+        return;
       }
-    } catch {
-      // Fallback
-    }
 
-    setIsPkiModalOpen(false);
+      const json = await res.json();
+      if (!json?.success || !json?.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi ký số PKI không hợp lệ từ máy chủ." });
+        setIsPkiModalOpen(false);
+        return;
+      }
+
+      setProjects(projects.map((p) => (p.id === activeProject.id ? json.data : p)));
+      setIsPkiModalOpen(false);
+      setAlertMsg({
+        type: "success",
+        text: `Hiệu trưởng đã ký số PKI QĐ ${json.data.resolutionNumber}. Đã đồng bộ nhuận bút sang Payroll, giờ chuẩn sang Workload và điểm NCKH sang KPI!`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ký số PKI.",
+      });
+      setIsPkiModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
-    <AuthGuard>
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "COUNCIL_MEMBER", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Hội đồng Nghiệm thu & Quyết toán Nhuận bút"
+    >
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
         {/* Navigation Breadcrumb */}
         <div className="flex items-center gap-3">
@@ -442,6 +528,24 @@ function RdRoyaltyContent() {
         </div>
 
         {/* Top Control Bar */}
+        {alertMsg && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              alertMsg.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900 font-medium"
+                : "bg-rose-50 border-rose-200 text-rose-900 font-medium"
+            }`}
+          >
+            <span>{alertMsg.text}</span>
+            <button
+              onClick={() => setAlertMsg(null)}
+              className="text-xs font-bold underline ml-4 hover:opacity-80"
+            >
+              Đóng
+            </button>
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
@@ -740,15 +844,14 @@ function RdRoyaltyContent() {
                       </p>
                     </div>
 
-                    <a
-                      href={`/api/v1/rd/projects/${activeProject.id}/resolution/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadPdf(activeProject.id, activeProject.projectCode)}
                       className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-sm transition-all"
                     >
                       <Download size={14} />
                       <span>Tải Quyết Định PDF (NĐ 30)</span>
-                    </a>
+                    </button>
                   </div>
 
                   {/* Triple Coupling Badges */}

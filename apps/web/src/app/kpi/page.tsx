@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  AlertCircle,
   ExternalLink,
   Lock,
   Award,
@@ -14,6 +15,28 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { AuthGuard } from "../../components/AuthGuard";
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
 
 interface KpiCriterionItem {
   id?: string;
@@ -220,41 +243,114 @@ const DEMO_ITEMS: KpiCriterionItem[] = [
 ];
 
 export default function KpiPersonalPage() {
-  const [periods, setPeriods] = useState<PeriodOption[]>(DEMO_PERIODS);
-  const [selectedPeriodId, setSelectedPeriodId] = useState(DEMO_PERIODS[0].id);
-  const [evaluation, setEvaluation] = useState<KpiEvaluation>(DEMO_EVALUATION);
-  const [items, setItems] = useState<KpiCriterionItem[]>(DEMO_ITEMS);
+  const [periods, setPeriods] = useState<PeriodOption[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState("");
+  const [evaluation, setEvaluation] = useState<KpiEvaluation | null>(null);
+  const [items, setItems] = useState<KpiCriterionItem[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
-    async function fetchKpiData() {
+    let active = true;
+    async function fetchPeriods() {
+      setIsFetching(true);
+      setLoadError(null);
       try {
-        const periodRes = await fetch("/api/v1/kpi/periods");
-        if (periodRes.ok) {
-          const pData = await periodRes.json();
-          if (pData.success && pData.data?.length > 0) {
-            setPeriods(pData.data);
-            setSelectedPeriodId(pData.data[0].id);
-          }
+        const periodRes = await fetch("/api/v1/kpi/periods", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!active) return;
+        if (!periodRes.ok) {
+          setLoadError(await parseErrorMessage(periodRes, "Không thể tải danh sách kỳ đánh giá KPI"));
+          setIsFetching(false);
+          return;
         }
-
-        const evalRes = await fetch("/api/v1/kpi/evaluations/my");
-        if (evalRes.ok) {
-          const eData = await evalRes.json();
-          if (eData.success && eData.data?.evaluation) {
-            setEvaluation(eData.data.evaluation);
-            if (eData.data.items?.length > 0) {
-              setItems(eData.data.items);
-            }
-          }
+        const pData = await periodRes.json();
+        if (pData.success && Array.isArray(pData.data) && pData.data.length > 0) {
+          setPeriods(pData.data);
+          setSelectedPeriodId(pData.data[0].id);
+        } else {
+          setLoadError("Chưa có kỳ đánh giá KPI nào được khởi tạo.");
+          setIsFetching(false);
         }
-      } catch {
-        // Retain Swiss fallback
+      } catch (err) {
+        if (active) {
+          setLoadError(err instanceof Error ? err.message : "Lỗi kết nối máy chủ KPI.");
+          setIsFetching(false);
+        }
       }
     }
-    fetchKpiData();
+    fetchPeriods();
+    return () => {
+      active = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!selectedPeriodId) return;
+    let active = true;
+    async function fetchMyEvaluation() {
+      setIsFetching(true);
+      setLoadError(null);
+      try {
+        const evalRes = await fetch(
+          `/api/v1/kpi/evaluations/my?periodId=${encodeURIComponent(selectedPeriodId)}`,
+          {
+            headers: getAuthHeaders(),
+            credentials: "include",
+          }
+        );
+        if (!active) return;
+        if (!evalRes.ok) {
+          setEvaluation(null);
+          setItems([]);
+          setLoadError(await parseErrorMessage(evalRes, "Không thể tải phiếu đánh giá KPI cá nhân"));
+          return;
+        }
+        const eData = await evalRes.json();
+        if (eData.success && eData.data?.evaluation) {
+          setEvaluation(eData.data.evaluation);
+          if (Array.isArray(eData.data.items) && eData.data.items.length > 0) {
+            setItems(eData.data.items);
+          } else if (Array.isArray(eData.data.template?.criteria)) {
+            setItems(
+              eData.data.template.criteria.map((c: any) => ({
+                criterionId: c.id,
+                criterionName: c.name,
+                category: c.category,
+                pillar: c.pillar,
+                maxScore: c.maxScore,
+                selfScore: 0,
+                selfNote: "",
+                evidenceUrl: null,
+              }))
+            );
+          } else {
+            setItems([]);
+          }
+        } else {
+          setEvaluation(null);
+          setItems([]);
+          setLoadError("Không tìm thấy bộ tiêu chí đánh giá hợp lệ cho kỳ này.");
+        }
+      } catch (err) {
+        if (active) {
+          setEvaluation(null);
+          setItems([]);
+          setLoadError(err instanceof Error ? err.message : "Không thể kết nối tới API KPI.");
+        }
+      } finally {
+        if (active) setIsFetching(false);
+      }
+    }
+    fetchMyEvaluation();
+    return () => {
+      active = false;
+    };
+  }, [selectedPeriodId]);
 
   const totalScore = items.reduce((acc, curr) => acc + (curr.selfScore || 0), 0);
 
@@ -307,8 +403,25 @@ export default function KpiPersonalPage() {
   };
 
   const handleSave = async (isDraft: boolean) => {
-    setIsLoading(true);
     setSaveMessage(null);
+    if (!selectedPeriodId || items.length === 0) {
+      setSaveMessage({
+        type: "error",
+        text: "Chưa tải được phiếu tiêu chí đánh giá từ máy chủ. Vui lòng thử tải lại trang.",
+      });
+      return;
+    }
+
+    const hasInvalidCriterionId = items.some((it) => !UUID_REGEX.test(it.criterionId));
+    if (hasInvalidCriterionId) {
+      setSaveMessage({
+        type: "error",
+        text: "Bộ tiêu chí hiện tại chưa đồng bộ UUID hợp lệ từ máy chủ, không thể nộp phiếu.",
+      });
+      return;
+    }
+
+    setIsLoading(true);
     try {
       const payload = {
         isDraft,
@@ -320,40 +433,51 @@ export default function KpiPersonalPage() {
         })),
       };
 
-      const res = await fetch(`/api/v1/kpi/evaluations/my?periodId=${selectedPeriodId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setEvaluation(json.data.evaluation);
-          setSaveMessage({
-            type: "success",
-            text: isDraft
-              ? "Bản nháp tự đánh giá đã được lưu an toàn vào hệ thống."
-              : "Đã nộp phiếu tự đánh giá thành công lên Trưởng đơn vị thẩm định!",
-          });
+      const res = await fetch(
+        `/api/v1/kpi/evaluations/my?periodId=${encodeURIComponent(selectedPeriodId)}`,
+        {
+          method: "POST",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          credentials: "include",
+          body: JSON.stringify(payload),
         }
-      } else {
+      );
+
+      if (!res.ok) {
+        const errMsg = await parseErrorMessage(res, "Lưu phiếu tự đánh giá thất bại");
+        setSaveMessage({ type: "error", text: errMsg });
+        return;
+      }
+
+      const json = await res.json();
+      if (json.success && json.data?.evaluation) {
+        setEvaluation(json.data.evaluation);
+        if (Array.isArray(json.data.items) && json.data.items.length > 0) {
+          setItems(json.data.items);
+        }
         setSaveMessage({
           type: "success",
-          text: isDraft ? "Đã lưu nháp dữ liệu tự chấm." : "Đã gửi phiếu tự chấm lên Trưởng khoa thẩm định.",
+          text: isDraft
+            ? "Bản nháp tự đánh giá đã được lưu an toàn vào hệ thống."
+            : "Đã nộp phiếu tự đánh giá thành công lên Trưởng đơn vị thẩm định!",
+        });
+      } else {
+        setSaveMessage({
+          type: "error",
+          text: json?.error?.message || "Phản hồi từ máy chủ không hợp lệ.",
         });
       }
-    } catch {
+    } catch (err) {
       setSaveMessage({
-        type: "success",
-        text: isDraft ? "Đã lưu nháp (Chế độ offline)." : "Đã nộp phiếu tự chấm thành công.",
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi lưu phiếu tự đánh giá.",
       });
     } finally {
       setIsLoading(false);
     }
   };
 
-  const isLocked = evaluation.status === "IN_REVIEW" || evaluation.status === "FINALIZED";
+  const isLocked = evaluation?.status === "IN_REVIEW" || evaluation?.status === "FINALIZED";
 
   return (
     <AuthGuard>
@@ -390,6 +514,16 @@ export default function KpiPersonalPage() {
           </div>
         </div>
 
+        {/* Thông báo lỗi tải dữ liệu */}
+        {loadError && (
+          <div className="p-4 rounded-xl flex items-center justify-between text-sm bg-rose-50 text-rose-800 border border-rose-200">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+          </div>
+        )}
+
         {/* Thông báo thông điệp */}
         {saveMessage && (
           <div
@@ -400,7 +534,11 @@ export default function KpiPersonalPage() {
             }`}
           >
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              {saveMessage.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              )}
               <span>{saveMessage.text}</span>
             </div>
             <button onClick={() => setSaveMessage(null)} className="text-xs font-bold underline">
@@ -413,35 +551,42 @@ export default function KpiPersonalPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Cán bộ giảng viên</div>
-            <div className="text-base font-bold text-gray-900 mt-0.5">{evaluation.employeeName}</div>
-            <div className="text-xs text-gray-600">{evaluation.employeeCode} • {evaluation.positionName}</div>
+            <div className="text-base font-bold text-gray-900 mt-0.5">{evaluation?.employeeName || (isFetching ? "Đang tải..." : "Chưa có dữ liệu")}</div>
+            <div className="text-xs text-gray-600">
+              {evaluation ? `${evaluation.employeeCode} • ${evaluation.positionName}` : "Vui lòng chọn kỳ đánh giá"}
+            </div>
           </div>
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Đơn vị công tác</div>
-            <div className="text-base font-semibold text-gray-800 mt-0.5">{evaluation.unitName}</div>
-            <div className="text-xs text-gray-500">Người thẩm định: {evaluation.managerName || "Trưởng đơn vị"}</div>
+            <div className="text-base font-semibold text-gray-800 mt-0.5">{evaluation?.unitName || "—"}</div>
+            <div className="text-xs text-gray-500">Người thẩm định: {evaluation?.managerName || "Trưởng đơn vị"}</div>
           </div>
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider">Trạng thái phiếu</div>
             <div className="mt-1">
-              {evaluation.status === "DRAFT" && (
+              {evaluation?.status === "DRAFT" && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
                   Bản nháp tự chấm
                 </span>
               )}
-              {evaluation.status === "SUBMITTED" && (
+              {evaluation?.status === "SUBMITTED" && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                   Đã nộp - Chờ Khoa duyệt
                 </span>
               )}
-              {evaluation.status === "IN_REVIEW" && (
+              {evaluation?.status === "IN_REVIEW" && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                   Khoa đã thẩm định - Chuyển Hội đồng
                 </span>
               )}
-              {evaluation.status === "FINALIZED" && (
+              {evaluation?.status === "FINALIZED" && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
                   Đã chốt & Ký số PKI
+                </span>
+              )}
+              {!evaluation && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                  {isFetching ? "Đang tải..." : "Chưa khởi tạo"}
                 </span>
               )}
             </div>
@@ -450,13 +595,13 @@ export default function KpiPersonalPage() {
             <div className="text-xs text-gray-500 uppercase tracking-wider">Danh hiệu đề xuất</div>
             <div className="text-sm font-bold text-amber-700 mt-1 flex items-center gap-1.5">
               <Award className="w-4 h-4 text-amber-500" />
-              {evaluation.honorTitle === "CHIEN_SI_THI_DUA_CO_SO"
+              {evaluation?.honorTitle === "CHIEN_SI_THI_DUA_CO_SO"
                 ? "Chiến sĩ thi đua cơ sở"
-                : evaluation.honorTitle === "LAO_DONG_TIEN_TIEN"
+                : evaluation?.honorTitle === "LAO_DONG_TIEN_TIEN"
                 ? "Lao động tiên tiến"
                 : "Chưa đề xuất"}
             </div>
-            {evaluation.councilVote && (
+            {evaluation?.councilVote && (
               <div className="text-xs text-emerald-700 font-medium mt-0.5">
                 Hội đồng bỏ phiếu: {evaluation.councilVote.votesYes}/{evaluation.councilVote.totalVoters} phiếu ({evaluation.councilVote.approvalRatio}%)
               </div>
@@ -483,15 +628,15 @@ export default function KpiPersonalPage() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => handleSave(true)}
-                  disabled={isLoading}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 transition"
+                  disabled={isLoading || isFetching || items.length === 0 || !selectedPeriodId}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 transition disabled:opacity-50"
                 >
                   {isLoading ? "Đang lưu..." : "Lưu bản nháp"}
                 </button>
                 <button
                   onClick={() => handleSave(false)}
-                  disabled={isLoading}
-                  className="px-5 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-md transition"
+                  disabled={isLoading || isFetching || items.length === 0 || !selectedPeriodId}
+                  className="px-5 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-md transition disabled:opacity-50"
                 >
                   {isLoading ? "Đang gửi..." : "Nộp phiếu tự đánh giá"}
                 </button>
@@ -653,13 +798,13 @@ export default function KpiPersonalPage() {
         </div>
 
         {/* Khối Nhận xét của Cấp Quản lý & Hội đồng */}
-        {(evaluation.managerComment || evaluation.councilComment) && (
+        {(evaluation?.managerComment || evaluation?.councilComment) && (
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-4">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
               <FileText className="w-4 h-4 text-purple-600" />
               Ý Kiến Thẩm Định Của Lãnh Đạo & Hội Đồng
             </h3>
-            {evaluation.managerComment && (
+            {evaluation?.managerComment && (
               <div className="bg-blue-50/60 p-4 rounded-xl border border-blue-100">
                 <span className="text-xs font-bold text-blue-900">Trưởng đơn vị / Trưởng khoa nhận xét:</span>
                 <p className="text-sm text-gray-800 mt-1 italic">"{evaluation.managerComment}"</p>
@@ -668,7 +813,7 @@ export default function KpiPersonalPage() {
                 </div>
               </div>
             )}
-            {evaluation.councilComment && (
+            {evaluation?.councilComment && (
               <div className="bg-purple-50/60 p-4 rounded-xl border border-purple-100">
                 <span className="text-xs font-bold text-purple-900">Hội đồng Thi đua - Khen thưởng Trường quyết nghị:</span>
                 <p className="text-sm text-gray-800 mt-1 italic">"{evaluation.councilComment}"</p>

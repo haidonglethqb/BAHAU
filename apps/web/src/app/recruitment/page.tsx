@@ -32,6 +32,45 @@ import type {
   RecruitmentDegree,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const POSITION_OPENINGS: {
   positionKey: RecruitmentPositionTitle;
   title: string;
@@ -217,8 +256,9 @@ const STATUS_BADGES: Record<string, { label: string; color: string }> = {
 export default function RecruitmentPortalPage() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"openings" | "candidates">("openings");
-  const [candidates, setCandidates] = useState<RecruitmentCandidateDto[]>(SAMPLE_CANDIDATES);
+  const [candidates, setCandidates] = useState<RecruitmentCandidateDto[]>([]);
   const [showApplyModal, setShowApplyModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<RecruitmentPositionTitle>("LECTURER_ARCHITECTURE");
   const [selectedDept, setSelectedDept] = useState("Khoa Kiến trúc");
 
@@ -237,19 +277,44 @@ export default function RecruitmentPortalPage() {
   useEffect(() => {
     async function loadCandidates() {
       try {
-        const res = await fetch("/api/v1/recruitment/candidates");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data?.length > 0) {
-            setCandidates(json.data);
-          }
+        const res = await fetch("/api/v1/recruitment/candidates", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!res.ok) {
+          setNotice({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách hồ sơ ứng viên tuyển dụng"),
+          });
+          return;
+        }
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setCandidates(json.data);
         }
       } catch (err) {
-        console.warn("Using offline sample recruitment data", err);
+        setNotice({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải hồ sơ tuyển dụng.",
+        });
       }
     }
     loadCandidates();
   }, []);
+
+  const handleDownloadPdf = async (candidateId: string, candidateCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/recruitment/candidates/${candidateId}/resolution/pdf`,
+        `quyet-dinh-tuyen-dung-${candidateCode || candidateId}.pdf`
+      );
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Tuyển dụng PDF.",
+      });
+    }
+  };
 
   const openApplyForPosition = (pos: typeof POSITION_OPENINGS[0]) => {
     setSelectedPosition(pos.positionKey);
@@ -258,85 +323,68 @@ export default function RecruitmentPortalPage() {
   };
 
   const handleApplySubmit = async () => {
+    if (isSubmitting) return;
     if (!fullName.trim() || !email.trim() || !graduatedSchool.trim()) {
       setNotice({ type: "error", text: "Vui lòng điền đầy đủ họ tên, email và trường đào tạo." });
       return;
     }
 
     const payload: CreateCandidateApplicationInput = {
-      fullName,
-      email,
-      phone: phone || "0900000000",
+      fullName: fullName.trim(),
+      email: email.trim(),
+      phone: phone.trim() || "0900000000",
       birthYear,
       degree,
-      graduatedSchool,
+      graduatedSchool: graduatedSchool.trim(),
       applyingPosition: selectedPosition,
       targetDepartment: selectedDept,
-      portfolioUrl: portfolioUrl || null,
-      cvUrl: cvUrl || null,
-      portfolioSummary: portfolioSummary || null,
+      portfolioUrl: portfolioUrl.trim() || null,
+      cvUrl: cvUrl.trim() || null,
+      portfolioSummary: portfolioSummary.trim() || null,
     };
 
+    setIsSubmitting(true);
     try {
       const res = await fetch("/api/v1/recruitment/candidates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setCandidates([json.data, ...candidates]);
-          setShowApplyModal(false);
-          resetForm();
-          setNotice({
-            type: "success",
-            text: `Nộp hồ sơ thành công! Mã hồ sơ của bạn là ${json.data.candidateCode}. Hội đồng sẽ thông báo lịch thẩm định e-Portfolio.`,
-          });
-          setActiveTab("candidates");
-          return;
-        }
+      if (!res.ok) {
+        setNotice({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể nộp hồ sơ ứng tuyển"),
+        });
+        setShowApplyModal(false);
+        return;
       }
-    } catch {
-      // Fallback
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setNotice({ type: "error", text: "Phản hồi nộp hồ sơ không hợp lệ từ máy chủ." });
+        setShowApplyModal(false);
+        return;
+      }
+
+      setCandidates([json.data, ...candidates]);
+      setShowApplyModal(false);
+      resetForm();
+      setNotice({
+        type: "success",
+        text: `Nộp hồ sơ thành công! Mã hồ sơ của bạn là ${json.data.candidateCode}. Hội đồng sẽ thông báo lịch thẩm định e-Portfolio.`,
+      });
+      setActiveTab("candidates");
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi nộp hồ sơ ứng tuyển.",
+      });
+      setShowApplyModal(false);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // In-memory fallback
-    const newCand: RecruitmentCandidateDto = {
-      id: `cand-dau-${Date.now()}`,
-      candidateCode: `TD2026-${Math.floor(100 + Math.random() * 900)}`,
-      fullName,
-      email,
-      phone: phone || "0900000000",
-      birthYear,
-      degree,
-      graduatedSchool,
-      applyingPosition: selectedPosition,
-      targetDepartment: selectedDept,
-      portfolioUrl: portfolioUrl || null,
-      cvUrl: cvUrl || null,
-      portfolioSummary: portfolioSummary || null,
-      status: "SUBMITTED",
-      portfolioScore: null,
-      auditionScore: null,
-      appointmentResolutionNumber: null,
-      probationSalaryCoeff: null,
-      appointedEmployeeCode: null,
-      pkiSignature: null,
-      pkiSignedAt: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setCandidates([newCand, ...candidates]);
-    setShowApplyModal(false);
-    resetForm();
-    setNotice({
-      type: "success",
-      text: `Nộp hồ sơ thành công! Mã hồ sơ của bạn là ${newCand.candidateCode}.`,
-    });
-    setActiveTab("candidates");
   };
 
   const resetForm = () => {
@@ -568,15 +616,14 @@ export default function RecruitmentPortalPage() {
                             </a>
                           )}
                           {cand.status === "APPOINTED_PROBATION" && (
-                            <a
-                              href={`/api/v1/recruitment/candidates/${cand.id}/resolution/pdf`}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadPdf(cand.id, cand.candidateCode)}
                               className="px-2.5 py-1 rounded bg-stone-900 text-white hover:bg-stone-800 transition inline-flex items-center gap-1"
                             >
                               <FileText size={12} />
                               QĐ Tuyển dụng (PDF)
-                            </a>
+                            </button>
                           )}
                         </td>
                       </tr>

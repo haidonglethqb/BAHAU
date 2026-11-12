@@ -33,6 +33,45 @@ import type {
   ApproveRecruitmentWithPkiInput,
 } from "@bahau/contracts";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("bahau_session_id");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const json = await res.json();
+    return json?.error?.message || json?.message || `${fallback} (HTTP ${res.status})`;
+  } catch {
+    return `${fallback} (HTTP ${res.status})`;
+  }
+}
+
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, "Không thể tải Quyết định PDF"));
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 const INITIAL_AUDITION_CANDIDATES: RecruitmentCandidateDto[] = [
   {
     id: "cand-dau-001",
@@ -143,7 +182,7 @@ const INITIAL_AUDITION_CANDIDATES: RecruitmentCandidateDto[] = [
 
 export default function RecruitmentAuditionCouncilPage() {
   const { user } = useAuth();
-  const [candidates, setCandidates] = useState<RecruitmentCandidateDto[]>(INITIAL_AUDITION_CANDIDATES);
+  const [candidates, setCandidates] = useState<RecruitmentCandidateDto[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<RecruitmentCandidateDto | null>(null);
 
   // Round 1 Score Modal State
@@ -174,23 +213,49 @@ export default function RecruitmentAuditionCouncilPage() {
   useEffect(() => {
     async function fetchCandidates() {
       try {
-        const res = await fetch("/api/v1/recruitment/candidates");
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data?.length > 0) {
-            setCandidates(json.data);
-          }
+        const res = await fetch("/api/v1/recruitment/candidates", {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (!res.ok) {
+          setAlertMsg({
+            type: "error",
+            text: await parseErrorMessage(res, "Không thể tải danh sách ứng viên xét tuyển"),
+          });
+          return;
+        }
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setCandidates(json.data);
         }
       } catch (err) {
-        console.warn("Using offline audition candidate data", err);
+        setAlertMsg({
+          type: "error",
+          text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi tải danh sách ứng viên.",
+        });
       }
     }
     fetchCandidates();
   }, []);
 
+  const handleDownloadPdf = async (candidateId: string, candidateCode?: string) => {
+    try {
+      await downloadPdfBlob(
+        `/api/v1/recruitment/candidates/${candidateId}/resolution/pdf`,
+        `quyet-dinh-tuyen-dung-${candidateCode || candidateId}.pdf`
+      );
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không thể tải Quyết định Tuyển dụng PDF.",
+      });
+    }
+  };
+
   // VÒNG 1: THẨM ĐỊNH e-PORTFOLIO
   const openR1Modal = (cand: RecruitmentCandidateDto) => {
     setSelectedCandidate(cand);
+    setAlertMsg(null);
     setR1Academic(20);
     setR1Projects(32);
     setR1Papers(15);
@@ -215,64 +280,51 @@ export default function RecruitmentAuditionCouncilPage() {
     try {
       const res = await fetch(`/api/v1/recruitment/candidates/${selectedCandidate.id}/score-round-1`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
-          setShowR1Modal(false);
-          setIsProcessing(false);
-          const passed = json.data.portfolioScore?.isPassed;
-          setAlertMsg({
-            type: passed ? "success" : "error",
-            text: passed
-              ? `Chấm điểm Vòng 1 hoàn tất: Đạt ${json.data.portfolioScore?.totalScore}đ (>= 50đ). Ứng viên đủ điều kiện vào Vòng 2 Giảng thử Studio!`
-              : `Chấm điểm Vòng 1 hoàn tất: Tổng điểm ${json.data.portfolioScore?.totalScore}đ (< 50đ) không đạt tiêu chuẩn.`,
-          });
-          return;
-        }
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể lưu điểm thẩm định Vòng 1"),
+        });
+        setShowR1Modal(false);
+        return;
       }
-    } catch {
-      // Fallback in-memory
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi chấm điểm Vòng 1 không hợp lệ từ máy chủ." });
+        setShowR1Modal(false);
+        return;
+      }
+
+      setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
+      setShowR1Modal(false);
+      const passed = json.data.portfolioScore?.isPassed;
+      setAlertMsg({
+        type: passed ? "success" : "error",
+        text: passed
+          ? `Chấm điểm Vòng 1 hoàn tất: Đạt ${json.data.portfolioScore?.totalScore}đ (>= 50đ). Ứng viên đủ điều kiện vào Vòng 2 Giảng thử Studio!`
+          : `Chấm điểm Vòng 1 hoàn tất: Tổng điểm ${json.data.portfolioScore?.totalScore}đ (< 50đ) không đạt tiêu chuẩn.`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi chấm điểm Vòng 1.",
+      });
+      setShowR1Modal(false);
+    } finally {
+      setIsProcessing(false);
     }
-
-    const total = r1Academic + r1Projects + r1Papers + r1Language;
-    const isPassed = total >= 50.0;
-
-    const updatedCand: RecruitmentCandidateDto = {
-      ...selectedCandidate,
-      status: isPassed ? "ROUND_1_PASSED" : "ROUND_1_FAILED",
-      portfolioScore: {
-        academicRecordScore: r1Academic,
-        architecturalProjectsScore: r1Projects,
-        scientificPapersScore: r1Papers,
-        foreignLanguageScore: r1Language,
-        totalScore: total,
-        isPassed,
-        reviewerName: user?.fullName || "Ban Thẩm định Chuyên môn",
-        reviewNotes: r1Notes,
-        reviewedAt: new Date().toISOString(),
-      },
-      updatedAt: new Date().toISOString(),
-    };
-
-    setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? updatedCand : c)));
-    setShowR1Modal(false);
-    setIsProcessing(false);
-    setAlertMsg({
-      type: isPassed ? "success" : "error",
-      text: isPassed
-        ? `Đã hoàn tất Vòng 1: Đạt ${total}đ. Đủ điều kiện vào Vòng 2!`
-        : `Vòng 1 không đạt: ${total}đ (< 50đ).`,
-    });
   };
 
   // VÒNG 2: GIẢNG THỬ STUDIO
   const openR2Modal = (cand: RecruitmentCandidateDto) => {
     setSelectedCandidate(cand);
+    setAlertMsg(null);
     setR2Pedagogy(26);
     setR2Studio(26);
     setR2Sketch(16);
@@ -297,64 +349,51 @@ export default function RecruitmentAuditionCouncilPage() {
     try {
       const res = await fetch(`/api/v1/recruitment/candidates/${selectedCandidate.id}/score-round-2`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
-          setShowR2Modal(false);
-          setIsProcessing(false);
-          const passed = json.data.auditionScore?.isPassed;
-          setAlertMsg({
-            type: passed ? "success" : "error",
-            text: passed
-              ? `Giảng thử Studio Vòng 2 hoàn tất: Đạt ${json.data.auditionScore?.totalScore}đ. ỨNG VIÊN ĐÃ TRÚNG TUYỂN CHÍNH THỨC!`
-              : `Giảng thử Studio Vòng 2: ${json.data.auditionScore?.totalScore}đ (< 50đ) không đạt yêu cầu.`,
-          });
-          return;
-        }
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể lưu điểm Giảng thử Studio Vòng 2"),
+        });
+        setShowR2Modal(false);
+        return;
       }
-    } catch {
-      // Fallback in-memory
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi chấm điểm Vòng 2 không hợp lệ từ máy chủ." });
+        setShowR2Modal(false);
+        return;
+      }
+
+      setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
+      setShowR2Modal(false);
+      const passed = json.data.auditionScore?.isPassed;
+      setAlertMsg({
+        type: passed ? "success" : "error",
+        text: passed
+          ? `Giảng thử Studio Vòng 2 hoàn tất: Đạt ${json.data.auditionScore?.totalScore}đ. ỨNG VIÊN ĐÃ TRÚNG TUYỂN CHÍNH THỨC!`
+          : `Giảng thử Studio Vòng 2: ${json.data.auditionScore?.totalScore}đ (< 50đ) không đạt yêu cầu.`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi chấm điểm Vòng 2.",
+      });
+      setShowR2Modal(false);
+    } finally {
+      setIsProcessing(false);
     }
-
-    const total = r2Pedagogy + r2Studio + r2Sketch + r2Defense;
-    const isPassed = total >= 50.0;
-
-    const updatedCand: RecruitmentCandidateDto = {
-      ...selectedCandidate,
-      status: isPassed ? "PASSED" : "FAILED",
-      auditionScore: {
-        pedagogyScore: r2Pedagogy,
-        studioPracticalScore: r2Studio,
-        liveSketchingScore: r2Sketch,
-        defenseInterviewScore: r2Defense,
-        totalScore: total,
-        isPassed,
-        councilPresidentName: user?.fullName || "Hội đồng Tuyển dụng DAU",
-        auditionNotes: r2Notes,
-        auditionDate: new Date().toISOString(),
-      },
-      updatedAt: new Date().toISOString(),
-    };
-
-    setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? updatedCand : c)));
-    setShowR2Modal(false);
-    setIsProcessing(false);
-    setAlertMsg({
-      type: isPassed ? "success" : "error",
-      text: isPassed
-        ? `Đã hoàn tất Giảng thử Vòng 2: Đạt ${total}đ. Trúng tuyển chính thức!`
-        : `Vòng 2 không đạt: ${total}đ (< 50đ).`,
-    });
   };
 
   // KÝ SỐ PKI HIỆU TRƯỞNG
   const openPkiModal = (cand: RecruitmentCandidateDto) => {
     setSelectedCandidate(cand);
+    setAlertMsg(null);
     setResolutionNum(`${Math.floor(200 + Math.random() * 800)}/QĐ-ĐHKTĐN`);
     setAppointedCode(`DAU26${Math.floor(1000 + Math.random() * 9000)}`);
     setSignerName("GS.TS. Nguyễn Hiệu Trưởng");
@@ -374,53 +413,52 @@ export default function RecruitmentAuditionCouncilPage() {
     try {
       const res = await fetch(`/api/v1/recruitment/candidates/${selectedCandidate.id}/appoint`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
-          setShowPkiModal(false);
-          setIsProcessing(false);
-          setAlertMsg({
-            type: "success",
-            text: `Hiệu trưởng đã ký số PKI RSA-2048 ban hành QĐ số ${json.data.appointmentResolutionNumber}. Đã cấp mã CBGV ${json.data.appointedEmployeeCode}, đồng bộ lương tập sự sang Payroll và giảm 50% giờ chuẩn sang Workload!`,
-          });
-          return;
-        }
+      if (!res.ok) {
+        setAlertMsg({
+          type: "error",
+          text: await parseErrorMessage(res, "Không thể ký số PKI ban hành Quyết định Tuyển dụng"),
+        });
+        setShowPkiModal(false);
+        return;
       }
-    } catch {
-      // Fallback
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        setAlertMsg({ type: "error", text: "Phản hồi ký số PKI không hợp lệ từ máy chủ." });
+        setShowPkiModal(false);
+        return;
+      }
+
+      setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? json.data : c)));
+      setShowPkiModal(false);
+      setAlertMsg({
+        type: "success",
+        text: `Hiệu trưởng đã ký số PKI RSA-2048 ban hành QĐ số ${json.data.appointmentResolutionNumber}. Đã cấp mã CBGV ${json.data.appointedEmployeeCode}, đồng bộ lương tập sự sang Payroll và giảm 50% giờ chuẩn sang Workload!`,
+      });
+    } catch (err) {
+      setAlertMsg({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kết nối máy chủ khi ký số PKI.",
+      });
+      setShowPkiModal(false);
+    } finally {
+      setIsProcessing(false);
     }
-
-    const coeff = selectedCandidate.degree === "DOCTOR" ? 2.67 : 1.989;
-    const updatedCand: RecruitmentCandidateDto = {
-      ...selectedCandidate,
-      status: "APPOINTED_PROBATION",
-      appointmentResolutionNumber: resolutionNum,
-      appointedEmployeeCode: appointedCode,
-      probationSalaryCoeff: coeff,
-      pkiSignature: "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...DAU_RECRUIT_PKI",
-      pkiSignedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setCandidates((prev) => prev.map((c) => (c.id === selectedCandidate.id ? updatedCand : c)));
-    setShowPkiModal(false);
-    setIsProcessing(false);
-    setAlertMsg({
-      type: "success",
-      text: `Hiệu trưởng đã ký số PKI RSA-2048 thành công. Đã cấp mã ${appointedCode}, xếp lương hệ số ${coeff} sang Payroll và giảm 50% giờ chuẩn sang Workload!`,
-    });
   };
 
   const r1Calculated = r1Academic + r1Projects + r1Papers + r1Language;
   const r2Calculated = r2Pedagogy + r2Studio + r2Sketch + r2Defense;
 
   return (
-    <AuthGuard>
+    <AuthGuard
+      allowedRoles={["UNIT_HEAD", "DEAN", "COUNCIL_MEMBER", "HR_SPECIALIST", "RECTOR"]}
+      moduleName="Hội đồng Tuyển dụng & Giảng thử Studio"
+    >
       <div className="space-y-6">
         {/* Navigation & Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-stone-200 pb-5">
@@ -646,15 +684,14 @@ export default function RecruitmentAuditionCouncilPage() {
                     )}
 
                     {isAppointed && (
-                      <a
-                        href={`/api/v1/recruitment/candidates/${cand.id}/resolution/pdf`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadPdf(cand.id, cand.candidateCode)}
                         className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition"
                       >
                         <Download size={14} />
                         Tải QĐ Tuyển Dụng Tập Sự (PDF NĐ 30)
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>
