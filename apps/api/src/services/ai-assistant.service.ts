@@ -1,14 +1,15 @@
-import { prisma, Prisma } from "@bahau/database";
+import { prisma } from "@bahau/database";
 import {
   AiChatRequest,
   AiChatResponse,
+  AiLeaveDraftPayloadSchema,
+  AuthUser,
   PolicyKnowledgeDto,
   PolicySourceCitation,
-  DraftProposal,
 } from "@bahau/contracts";
 import { AppError } from "../middlewares/error.middleware.js";
 import { LeaveLedgerService } from "./leave-ledger.service.js";
-import { WorkflowService } from "./workflow.service.js";
+import { LeaveService } from "./leave.service.js";
 
 export class AiAssistantService {
   /**
@@ -20,7 +21,7 @@ export class AiAssistantService {
       title: "Quy chế làm việc và Định mức giờ chuẩn Giảng viên Trường Đại học Kiến trúc Đà Nẵng",
       category: "ACADEMIC_HOURS",
       chunkText:
-        "Điều 4. Định mức giờ chuẩn giảng dạy trong năm học đối với Giảng viên tiêu chuẩn là 270 giờ chuẩn giảng dạy trực tiếp. Giảng viên kiêm nhiệm chức vụ quản lý (Trưởng khoa, Trưởng bộ môn) được giảm trừ từ 30% đến 50% định mức giờ chuẩn. Giờ hướng dẫn đồ án tốt nghiệp Kiến trúc sư được quy đổi 1 đồ án = 25 giờ chuẩn. Hướng dẫn đồ án môn học Kiến trúc quy đổi 1 sinh viên = 3 giờ chuẩn.",
+        "Điều 4. Định mức giờ chuẩn giảng dạy trong năm học đối với Giảng viên tiêu chuẩn là 270 giờ chuẩn giảng dạy trực tiếp. Giảng viên kiêm nhiệm chức vụ quản lý (Trưởng khoa, Trưởng bộ môn) được giảm trừ từ 30% đến 50% định mức giờ chuẩn. Giờ hướng dẫn đồ án tốt nghiệp Kiến trúc sư được quy đổi 1 đồ án = 18 giờ chuẩn. Hướng dẫn đồ án môn học Kiến trúc quy đổi hệ số 1.25.",
       keywords: ["giờ chuẩn", "giảng viên", "270", "đồ án", "kiến trúc sư", "giảm trừ", "định mức"],
     },
     {
@@ -57,42 +58,63 @@ export class AiAssistantService {
     },
   ];
 
+  private static getVnTodayDateStr(): string {
+    return new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().split("T")[0];
+  }
+
+  private static addDaysToDateStr(dateStr: string, days: number): string {
+    const base = new Date(`${dateStr}T00:00:00.000Z`);
+    base.setUTCDate(base.getUTCDate() + days);
+    return base.toISOString().split("T")[0];
+  }
+
+  private static scorePolicies(
+    listToSearch: Array<{
+      documentNo: string;
+      title: string;
+      category: string;
+      chunkText: string;
+      keywords: string[];
+    }>,
+    query: string
+  ): PolicySourceCitation[] {
+    const qLower = query.toLowerCase();
+    const scored = listToSearch.map((pol) => {
+      let score = 0;
+      for (const kw of pol.keywords) {
+        if (qLower.includes(kw.toLowerCase())) {
+          score += 2;
+        }
+      }
+      if (pol.title.toLowerCase().split(" ").some((w) => qLower.includes(w) && w.length > 3)) {
+        score += 1;
+      }
+      if (pol.chunkText.toLowerCase().includes(qLower)) {
+        score += 3;
+      }
+      return {
+        documentNo: pol.documentNo,
+        title: pol.title,
+        category: pol.category,
+        excerpt: pol.chunkText.slice(0, 200) + "...",
+        relevanceScore: score,
+      };
+    });
+
+    return scored.filter((s) => s.relevanceScore > 0).sort((a, b) => b.relevanceScore - a.relevanceScore);
+  }
+
   /**
    * Tra cứu văn bản quy chế liên quan theo từ khóa và nội dung
    */
   private static async searchPolicies(query: string): Promise<PolicySourceCitation[]> {
-    const qLower = query.toLowerCase();
-    
     // Thử tìm trong CSDL policy_knowledge trước
     try {
       const dbPolicies = await prisma.policyKnowledge.findMany();
       const listToSearch = dbPolicies.length > 0 ? dbPolicies : this.defaultPolicies;
-
-      const scored = listToSearch.map((pol) => {
-        let score = 0;
-        for (const kw of pol.keywords) {
-          if (qLower.includes(kw.toLowerCase())) {
-            score += 2;
-          }
-        }
-        if (pol.title.toLowerCase().split(" ").some((w) => qLower.includes(w) && w.length > 3)) {
-          score += 1;
-        }
-        if (pol.chunkText.toLowerCase().includes(qLower)) {
-          score += 3;
-        }
-        return {
-          documentNo: pol.documentNo,
-          title: pol.title,
-          category: pol.category,
-          excerpt: pol.chunkText.slice(0, 200) + "...",
-          relevanceScore: score,
-        };
-      });
-
-      return scored.filter((s) => s.relevanceScore > 0).sort((a, b) => b.relevanceScore - a.relevanceScore);
+      return this.scorePolicies(listToSearch, query);
     } catch {
-      return [];
+      return this.scorePolicies(this.defaultPolicies, query);
     }
   }
 
@@ -107,6 +129,7 @@ export class AiAssistantService {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
+        roleAssignments: { include: { role: { select: { code: true } } } },
         employee: {
           include: {
             assignments: { where: { status: "ACTIVE" }, include: { unit: true, position: true } },
@@ -118,78 +141,81 @@ export class AiAssistantService {
     const employee = user?.employee;
 
     // 2. Kiểm tra nếu là hành động XÁC NHẬN GỬI ĐƠN NHÁP (Draft Confirmation)
-    if (input.confirmDraft && input.draftPayload && employee) {
-      const p = input.draftPayload;
-      const leaveType = p.leaveType || "ANNUAL";
-      const totalDays = new Prisma.Decimal(p.totalDays || 1);
-      const numDays = Number(totalDays);
-      const reason = p.reason || "Nghỉ phép thường niên (Tạo qua Trợ lý ảo AI)";
-      const startDate = new Date(p.startDate || new Date(Date.now() + 24 * 60 * 60 * 1000));
-      const endDate = new Date(p.endDate || startDate);
-      const targetYear = startDate.getFullYear();
+    if (input.confirmDraft) {
+      if (!user || !employee) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Tài khoản của bạn chưa được liên kết với Hồ sơ Cán bộ, Giảng viên để gửi đơn nghỉ phép."
+        );
+      }
 
-      // Kiểm tra số dư phép nếu là nghỉ phép năm
-      if (leaveType === "ANNUAL") {
-        const balance = await LeaveLedgerService.getBalance(employee.id, targetYear);
-        if (balance.remaining < numDays) {
+      if (!input.draftPayload) {
+        throw new AppError(422, "VALIDATION_FAILED", "Thiếu dữ liệu dự thảo đơn nghỉ phép (draftPayload).");
+      }
+
+      const parsedDraft = AiLeaveDraftPayloadSchema.safeParse(input.draftPayload);
+      if (!parsedDraft.success) {
+        throw new AppError(
+          422,
+          "VALIDATION_FAILED",
+          parsedDraft.error.issues[0]?.message || "Dữ liệu dự thảo đơn nghỉ phép không hợp lệ."
+        );
+      }
+
+      const authUser: AuthUser = {
+        id: user.id,
+        email: user.email,
+        employeeId: employee.id,
+        employeeCode: employee.employeeCode,
+        fullName: employee.fullName,
+        roles: (user.roleAssignments || []).map((ra) => ra.role.code),
+        permissions: [],
+        unitsManaged: [],
+      };
+
+      // Ủy quyền cho LeaveService.createLeaveRequest để đảm bảo $transaction + overlap + ledger + workflow
+      let createdLeave;
+      try {
+        createdLeave = await LeaveService.createLeaveRequest(authUser, parsedDraft.data);
+      } catch (err) {
+        if (err instanceof AppError && err.code === "INSUFFICIENT_LEAVE_BALANCE") {
           return {
-            reply: `⚠️ Không thể khởi tạo đơn: Số dư phép năm ${targetYear} của Thầy/Cô không đủ (còn ${balance.remaining} ngày, nhưng yêu cầu ${numDays} ngày). Vui lòng điều chỉnh lại số ngày nghỉ.`,
+            reply: `⚠️ Không thể khởi tạo đơn: ${err.message}`,
           };
         }
+        throw err;
       }
 
-      // Tạo đơn nghỉ phép thực tế
-      const leaveRequest = await prisma.leaveRequest.create({
-        data: {
-          employeeId: employee.id,
-          leaveType,
-          startDate,
-          endDate,
-          totalDays,
-          reason,
-          status: "PENDING",
-        },
-      });
-
-      // Tạm giữ số dư phép trên Sổ cái nếu là nghỉ phép năm
-      if (leaveType === "ANNUAL") {
-        await LeaveLedgerService.recordHold(employee.id, numDays, leaveRequest.id, targetYear);
-      }
-
-      // Kích hoạt chuỗi Workflow phê duyệt phân cấp cho Trưởng đơn vị
-      const wfInstanceId = await WorkflowService.startLeaveWorkflow(employee.id, leaveRequest.id, numDays);
-
-      // Cập nhật workflowInstanceId vào đơn nghỉ phép
-      await prisma.leaveRequest.update({
-        where: { id: leaveRequest.id },
-        data: { workflowInstanceId: wfInstanceId },
-      });
-
-      // Tạo Outbox Event
-      await prisma.outboxEvent.create({
-        data: {
-          aggregateType: "LEAVE_REQUEST",
-          aggregateId: leaveRequest.id,
-          eventType: "LEAVE_REQUEST_SUBMITTED",
-          payload: {
-            employeeEmail: user?.email,
-            employeeName: employee.fullName,
-            reason,
-            days: numDays,
+      // Tạo Outbox Event best-effort sau khi giao dịch đơn nghỉ phép đã commit
+      try {
+        await prisma.outboxEvent.create({
+          data: {
+            aggregateType: "LEAVE_REQUEST",
+            aggregateId: createdLeave.id,
+            eventType: "LEAVE_REQUEST_SUBMITTED",
+            payload: {
+              employeeEmail: user.email,
+              employeeName: employee.fullName,
+              reason: createdLeave.reason,
+              days: createdLeave.totalDays,
+            },
+            idempotencyKey: `AI-LEAVE-${createdLeave.id}`,
+            status: "PENDING",
           },
-          idempotencyKey: `AI-LEAVE-${leaveRequest.id}`,
-          status: "PENDING",
-        },
-      });
+        });
+      } catch {
+        // Không làm hỏng phản hồi đơn đã tạo thành công
+      }
 
       return {
-        reply: `🎉 Đơn xin nghỉ phép của Thầy/Cô đã được khởi tạo thành công vào hệ thống với mã số **${leaveRequest.id.slice(0, 8)}**.\n\nHệ thống đã tự động gửi sự kiện phê duyệt đến Trưởng đơn vị của Thầy/Cô. Thầy/Cô có thể theo dõi tiến độ duyệt tại phân hệ **Nghỉ phép & Công tác**.`,
+        reply: `🎉 Đơn xin nghỉ phép của Thầy/Cô đã được khởi tạo thành công vào hệ thống với mã số **${createdLeave.id.slice(0, 8)}**.\n\nHệ thống đã tự động gửi sự kiện phê duyệt đến Trưởng đơn vị của Thầy/Cô. Thầy/Cô có thể theo dõi tiến độ duyệt tại phân hệ **Nghỉ phép & Công tác**.`,
         draftProposal: {
           type: "LEAVE",
-          summary: `Đơn nghỉ phép (${leaveType}): ${totalDays} ngày từ ${startDate.toISOString().split("T")[0]} đến ${endDate.toISOString().split("T")[0]}`,
-          payload: p,
+          summary: `Đơn nghỉ phép (${createdLeave.leaveType}): ${createdLeave.totalDays} ngày từ ${createdLeave.startDate} đến ${createdLeave.endDate}`,
+          payload: parsedDraft.data,
           status: "SUBMITTED",
-          createdRecordId: leaveRequest.id,
+          createdRecordId: createdLeave.id,
         },
       };
     }
@@ -207,13 +233,9 @@ export class AiAssistantService {
         };
       }
 
-      const currentYear = new Date().getFullYear();
-      const latestLedger = await prisma.leaveLedger.findFirst({
-        where: { employeeId: employee.id, year: currentYear },
-        orderBy: { createdAt: "desc" },
-      });
-
-      const currentBalance = latestLedger ? Number(latestLedger.balanceAfter) : 12;
+      const currentYear = Number(this.getVnTodayDateStr().slice(0, 4));
+      const balance = await LeaveLedgerService.getBalance(employee.id, currentYear);
+      const currentBalance = balance.remaining;
 
       return {
         reply: `Chào Thầy/Cô **${employee.fullName}**,\n\nTheo dữ liệu Sổ cái Phép năm **${currentYear}** của Trường ĐH Kiến trúc Đà Nẵng:\n- Số dư ngày phép hiện tại của Thầy/Cô là: **${currentBalance} ngày**.\n- Định mức cấp hàng năm: **12 ngày** (kèm cộng dồn thâm niên 1 ngày/5 năm công tác theo Quyết định số 45/QĐ-ĐHKT).\n\nThầy/Cô có muốn tôi hỗ trợ khởi tạo đơn xin nghỉ phép ngay bây giờ không?`,
@@ -233,27 +255,48 @@ export class AiAssistantService {
       };
     }
 
-    // 4. Phát hiện ý định SOẠN ĐƠN NHÁP (Draft Proposal Generation)
-    if (
+    // 4. Phát hiện ý định SOẠN ĐƠN NHÁP (Draft Proposal Generation) - tránh chặn câu hỏi tra cứu quy chế
+    const isPolicyQuestion = /(quy định|quy chế|chế độ|luật|hỏi|là gì|bao nhiêu ngày phép|thâm niên|nghỉ hè)/i.test(
+      mLower
+    );
+    const isLeaveDraftIntent =
       mLower.includes("soạn đơn") ||
       mLower.includes("tạo đơn") ||
       mLower.includes("xin nghỉ") ||
-      mLower.includes("nghỉ phép")
-    ) {
-      // Trích xuất số ngày nếu có
+      (mLower.includes("nghỉ phép") && !isPolicyQuestion);
+
+    if (isLeaveDraftIntent) {
       let days = 1;
-      const dayMatch = message.match(/(\d+)\s*(ngày|buổi|day)/i);
-      if (dayMatch) {
-        days = parseInt(dayMatch[1], 10);
+      const numericMatch = message.match(/(-?\d+(?:[.,]\d+)?)\s*(ngày|buổi|day|days)/i);
+      if (numericMatch) {
+        const rawQty = parseFloat(numericMatch[1].replace(",", "."));
+        if (Number.isNaN(rawQty) || rawQty <= 0) {
+          return {
+            reply:
+              "⚠️ Số ngày/buổi nghỉ phép phải lớn hơn 0 (tối thiểu 0.5 ngày hoặc 1 buổi). Vui lòng nhập lại số ngày nghỉ hợp lệ.",
+          };
+        }
+        const unit = numericMatch[2].toLowerCase();
+        days = unit === "buổi" ? rawQty * 0.5 : rawQty;
+        days = Math.round(days * 2) / 2;
+        if (days < 0.5) {
+          return {
+            reply:
+              "⚠️ Số ngày nghỉ phép tối thiểu là 0.5 ngày (1 buổi). Vui lòng nhập lại số ngày nghỉ hợp lệ.",
+          };
+        }
+      } else if (/nửa\s*(ngày|buổi)/i.test(message)) {
+        days = 0.5;
       }
 
-      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const dayAfter = new Date(tomorrow.getTime() + (days - 1) * 24 * 60 * 60 * 1000);
+      const startDateStr = this.addDaysToDateStr(this.getVnTodayDateStr(), 1);
+      const calendarDaysSpan = Math.max(0, Math.ceil(days) - 1);
+      const endDateStr = this.addDaysToDateStr(startDateStr, calendarDaysSpan);
 
       const draftPayload = {
         leaveType: "ANNUAL",
-        startDate: tomorrow.toISOString().split("T")[0],
-        endDate: dayAfter.toISOString().split("T")[0],
+        startDate: startDateStr,
+        endDate: endDateStr,
         totalDays: days,
         reason: message,
       };
@@ -285,7 +328,7 @@ export class AiAssistantService {
       let customAnswer = "";
 
       if (top.category === "ACADEMIC_HOURS") {
-        customAnswer = `Theo **Quyết định số 128/QĐ-ĐHKT** về Quy chế làm việc và Định mức giờ chuẩn Giảng viên DAU:\n- **Định mức chuẩn**: Giảng viên tiêu chuẩn là **270 giờ chuẩn** giảng dạy trực tiếp trong năm học.\n- **Giảm trừ kiêm nhiệm**: CBGV kiêm nhiệm chức vụ quản lý (Trưởng khoa, Trưởng bộ môn) được giảm trừ từ **30% đến 50%** định mức giờ chuẩn.\n- **Quy đổi đồ án chuyên ngành**: Hướng dẫn 1 đồ án tốt nghiệp Kiến trúc sư = **25 giờ chuẩn**; hướng dẫn 1 đồ án môn học Kiến trúc = **3 giờ chuẩn/sinh viên**.`;
+        customAnswer = `Theo **Quyết định số 128/QĐ-ĐHKT** về Quy chế làm việc và Định mức giờ chuẩn Giảng viên DAU:\n- **Định mức chuẩn**: Giảng viên tiêu chuẩn là **270 giờ chuẩn** giảng dạy trực tiếp trong năm học.\n- **Giảm trừ kiêm nhiệm**: CBGV kiêm nhiệm chức vụ quản lý (Trưởng khoa, Trưởng bộ môn) được giảm trừ từ **30% đến 50%** định mức giờ chuẩn.\n- **Quy đổi đồ án chuyên ngành**: Hướng dẫn 1 đồ án tốt nghiệp Kiến trúc sư = **18 giờ chuẩn**; hướng dẫn đồ án môn học Kiến trúc = **hệ số 1.25**.`;
       } else if (top.category === "SALARY") {
         customAnswer = `Theo **Quy định số 89/QyĐ-ĐHKT** về chế độ nâng bậc lương của Trường ĐH Kiến trúc Đà Nẵng:\n- **Nâng lương thường xuyên**: Thời gian giữ bậc là **3 năm (36 tháng)** đối với ngạch yêu cầu trình độ Đại học (KTS, Kỹ sư, Cử nhân); và **2 năm (24 tháng)** đối với trình độ Thạc sĩ, Tiến sĩ.\n- **Nâng lương trước thời hạn**: CBGV đạt danh hiệu Chiến sĩ thi đua cơ sở hoặc đạt **KPI Xuất sắc (Loại A)** trong 02 năm liên tiếp được xét nâng lương trước thời hạn **tối đa 06 tháng**.`;
       } else if (top.category === "KPI") {
@@ -318,12 +361,8 @@ export class AiAssistantService {
    * Lấy danh sách các chính sách quy chế DAU có trong cơ sở tri thức
    */
   static async getPolicies(): Promise<PolicyKnowledgeDto[]> {
-    const list = await prisma.policyKnowledge.findMany({
-      orderBy: { documentNo: "asc" },
-    });
-
-    if (list.length === 0) {
-      return this.defaultPolicies.map((p, idx) => ({
+    const mapDefaultPolicies = (): PolicyKnowledgeDto[] =>
+      this.defaultPolicies.map((p, idx) => ({
         id: `00000000-0000-0000-0000-00000000000${idx + 1}`,
         documentNo: p.documentNo,
         title: p.title,
@@ -332,18 +371,29 @@ export class AiAssistantService {
         keywords: p.keywords,
         createdAt: new Date().toISOString(),
       }));
-    }
 
-    return list.map((p) => ({
-      id: p.id,
-      documentNo: p.documentNo,
-      title: p.title,
-      category: p.category,
-      chunkText: p.chunkText,
-      keywords: p.keywords,
-      metadata: p.metadata as any,
-      effectiveDate: p.effectiveDate ? p.effectiveDate.toISOString().split("T")[0] : null,
-      createdAt: p.createdAt.toISOString(),
-    }));
+    try {
+      const list = await prisma.policyKnowledge.findMany({
+        orderBy: { documentNo: "asc" },
+      });
+
+      if (list.length === 0) {
+        return mapDefaultPolicies();
+      }
+
+      return list.map((p) => ({
+        id: p.id,
+        documentNo: p.documentNo,
+        title: p.title,
+        category: p.category,
+        chunkText: p.chunkText,
+        keywords: p.keywords,
+        metadata: p.metadata as any,
+        effectiveDate: p.effectiveDate ? p.effectiveDate.toISOString().split("T")[0] : null,
+        createdAt: p.createdAt.toISOString(),
+      }));
+    } catch {
+      return mapDefaultPolicies();
+    }
   }
 }

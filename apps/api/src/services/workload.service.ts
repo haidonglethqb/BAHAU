@@ -58,6 +58,52 @@ export class WorkloadService {
     return this.accumulatedSupervisionHours.get(employeeIdOrCode) || 0;
   }
 
+  private static isDbConnectionError(err: unknown): boolean {
+    if (!err || typeof err !== "object") return false;
+    const e = err as { code?: string; message?: string; name?: string };
+    const code = e.code || "";
+    const msg = (e.message || "").toLowerCase();
+    return (
+      code === "P1001" ||
+      code === "P1002" ||
+      code === "P1008" ||
+      code === "P1017" ||
+      code === "ECONNREFUSED" ||
+      e.name === "PrismaClientInitializationError" ||
+      msg.includes("can't reach database server") ||
+      msg.includes("econnrefused")
+    );
+  }
+
+  private static parseAcademicYearRange(academicYear: string): {
+    startYear: number;
+    endYear: number;
+    yearStart: Date;
+    yearEnd: Date;
+    endDateStr: string;
+  } {
+    const match = /^(\d{4})-(\d{4})$/.exec(academicYear.trim());
+    if (!match) {
+      throw new AppError(422, "VALIDATION_FAILED", "academicYear phải có định dạng YYYY-YYYY.");
+    }
+    const startYear = Number(match[1]);
+    const endYear = Number(match[2]);
+    if (endYear !== startYear + 1 || startYear < 2000 || endYear > 2100) {
+      throw new AppError(422, "VALIDATION_FAILED", "academicYear không hợp lệ (năm kết thúc phải bằng năm bắt đầu + 1).");
+    }
+    return {
+      startYear,
+      endYear,
+      yearStart: new Date(Date.UTC(startYear, 8, 1, 0, 0, 0, 0)),
+      yearEnd: new Date(Date.UTC(endYear, 7, 31, 23, 59, 59, 999)),
+      endDateStr: `${endYear}-08-31`,
+    };
+  }
+
+  private static getVnTodayDateStr(): string {
+    return new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().split("T")[0];
+  }
+
   /**
    * Tính toán định mức giờ giảng pháp định và tỷ lệ miễn giảm kiêm nhiệm theo TT 20/2020/TT-BGDĐT
    */
@@ -69,6 +115,13 @@ export class WorkloadService {
     hourlyRate: number;
   } {
     const academicTitle = employee?.academicTitle;
+    const activeAssignments = (employee?.assignments || []).filter(
+      (a: any) => a?.status === "ACTIVE"
+    );
+    const activeContracts = (employee?.contracts || []).filter(
+      (c: any) => c?.status === "ACTIVE"
+    );
+
     const isPromoted =
       this.promotedSeniorEmployees.has(employee?.id) ||
       this.promotedSeniorEmployees.has(employee?.employeeCode);
@@ -77,11 +130,10 @@ export class WorkloadService {
       isPromoted ||
       academicTitle === "PROFESSOR" ||
       academicTitle === "ASSOCIATE_PROFESSOR" ||
-      employee?.careerClass === "SENIOR_LECTURER" ||
-      employee?.careerClass === "PRINCIPAL_LECTURER" ||
-      employee?.assignments?.some((a: any) =>
-        a.position?.code === "GIANG_VIEN_CHINH" ||
-        a.position?.code === "GIANG_VIEN_CAO_CAP"
+      activeAssignments.some(
+        (a: any) =>
+          a.position?.code === "GIANG_VIEN_CHINH" ||
+          a.position?.code === "GIANG_VIEN_CAO_CAP"
       );
 
     // Định mức giờ chuẩn giảng dạy và NCKH
@@ -92,20 +144,32 @@ export class WorkloadService {
     let reductionPercentage = 0;
     const reductionReasons: string[] = [];
 
-    // Kiểm tra chức vụ lãnh đạo kiêm nhiệm trong assignments
-    for (const assignment of employee.assignments || []) {
-      if (assignment.status !== "ACTIVE") continue;
-
+    // Kiểm tra chức vụ lãnh đạo kiêm nhiệm trong ACTIVE assignments
+    for (const assignment of activeAssignments) {
       const posCode = assignment.position?.code;
-      if (posCode === "HIEU_TRUONG" || posCode === "PHO_HIEU_TRUONG" || posCode === "TRUONG_KHOA") {
+      if (
+        posCode === "HIEU_TRUONG" ||
+        posCode === "PHO_HIEU_TRUONG" ||
+        posCode === "TRUONG_KHOA" ||
+        posCode === "TRUONG_PHONG"
+      ) {
         if (reductionPercentage < 30) {
           reductionPercentage = 30;
-          reductionReasons.push(`Miễn giảm 30% định mức do giữ chức vụ ${assignment.position?.name || "Trưởng đơn vị"}`);
+          reductionReasons.push(
+            `Miễn giảm 30% định mức do giữ chức vụ ${assignment.position?.name || "Trưởng đơn vị"}`
+          );
         }
-      } else if (posCode === "PHO_TRUONG_KHOA" || posCode === "TRUONG_BO_MON") {
+      } else if (
+        posCode === "PHO_TRUONG_KHOA" ||
+        posCode === "PHO_TRUONG_PHONG" ||
+        posCode === "TRUONG_BO_MON" ||
+        posCode === "PHO_TRUONG_BO_MON"
+      ) {
         if (reductionPercentage < 20) {
           reductionPercentage = 20;
-          reductionReasons.push(`Miễn giảm 20% định mức do giữ chức vụ ${assignment.position?.name || "Phó Trưởng khoa/BM"}`);
+          reductionReasons.push(
+            `Miễn giảm 20% định mức do giữ chức vụ ${assignment.position?.name || "Phó Trưởng đơn vị/BM"}`
+          );
         }
       } else if (assignment.isHeadOfUnit && reductionPercentage < 20) {
         reductionPercentage = 20;
@@ -115,20 +179,50 @@ export class WorkloadService {
 
     // Kiểm tra chế độ tập sự theo Nghị định 115/2020/NĐ-CP (Miễn giảm 50% định mức giờ giảng)
     const isProbation =
-      employee?.isProbation ||
-      employee?.positionCode === "GIANG_VIEN_TAP_SU" ||
+      employee?.employmentStatus === "PROBATION" ||
+      activeContracts.some((c: any) => c.contractType === "PROBATION") ||
+      activeAssignments.some((a: any) => a.position?.code === "GIANG_VIEN_TAP_SU") ||
       this.probationaryEmployees.has(employee?.id) ||
       this.probationaryEmployees.has(employee?.employeeCode);
 
     if (isProbation && reductionPercentage < 50) {
       reductionPercentage = 50;
-      reductionReasons.push("Miễn giảm 50% định mức giờ giảng dạy cho Giảng viên tập sự (Nghị định 115/2020/NĐ-CP)");
+      reductionReasons.push(
+        "Miễn giảm 50% định mức giờ giảng dạy cho Giảng viên tập sự (Nghị định 115/2020/NĐ-CP)"
+      );
+    }
+
+    // Kiểm tra nghỉ thai sản (MATERNITY) và nghỉ ốm dài ngày (SICK) đã được phê duyệt
+    const approvedLeaves = (employee?.leaveRequests || []).filter(
+      (l: any) => l?.status === "APPROVED"
+    );
+    const maternityDays = approvedLeaves
+      .filter((l: any) => l.leaveType === "MATERNITY")
+      .reduce((sum: number, l: any) => sum + Number(l.totalDays || 0), 0);
+    const sickDays = approvedLeaves
+      .filter((l: any) => l.leaveType === "SICK")
+      .reduce((sum: number, l: any) => sum + Number(l.totalDays || 0), 0);
+
+    if (maternityDays > 0) {
+      const maternityPct = Math.min(100, Math.round((maternityDays / 360) * 100));
+      if (maternityPct > reductionPercentage) {
+        reductionPercentage = maternityPct;
+        reductionReasons.push(`Miễn giảm ${maternityPct}% định mức do nghỉ thai sản (${maternityDays} ngày)`);
+      }
+    }
+
+    if (sickDays > 0) {
+      const sickPct = Math.min(100, Math.round((sickDays / 260) * 100));
+      if (sickPct > reductionPercentage) {
+        reductionPercentage = sickPct;
+        reductionReasons.push(`Miễn giảm ${sickPct}% định mức do nghỉ ốm (${sickDays} ngày)`);
+      }
     }
 
     return {
       baseTeachingQuota,
       baseResearchQuota,
-      reductionPercentage,
+      reductionPercentage: Math.min(100, Math.max(0, reductionPercentage)),
       reductionReason: reductionReasons.join("; ") || "Không có miễn giảm",
       hourlyRate,
     };
@@ -172,14 +266,81 @@ export class WorkloadService {
     employeeId: string,
     academicYear = "2025-2026"
   ): Promise<AcademicYearQuotaDto> {
-    const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
-      include: {
-        assignments: {
-          include: { position: true, unit: true },
+    const { yearStart, yearEnd, endDateStr } = this.parseAcademicYearRange(academicYear);
+    const todayVn = this.getVnTodayDateStr();
+    const defaultStatus: "IN_PROGRESS" | "SETTLED" = todayVn > endDateStr ? "SETTLED" : "IN_PROGRESS";
+
+    let employee: any = null;
+    try {
+      employee = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: {
+          assignments: {
+            where: { status: "ACTIVE" },
+            include: { position: true, unit: true },
+          },
+          contracts: {
+            where: { status: "ACTIVE" },
+            select: { contractType: true, status: true },
+          },
+          leaveRequests: {
+            where: {
+              status: "APPROVED",
+              leaveType: { in: ["MATERNITY", "SICK"] },
+              startDate: { lte: yearEnd },
+              endDate: { gte: yearStart },
+            },
+            select: {
+              leaveType: true,
+              totalDays: true,
+              status: true,
+              startDate: true,
+              endDate: true,
+            },
+          },
         },
-      },
-    });
+      });
+    } catch (err) {
+      if (!this.isDbConnectionError(err)) {
+        throw err;
+      }
+      const fallbackRd = this.accumulatedRdHours.get(employeeId) ?? 0;
+      const fallbackSup = this.accumulatedSupervisionHours.get(employeeId) ?? 0;
+      const fallbackAssignments: TeachingAssignmentDto[] =
+        fallbackSup > 0
+          ? [
+              {
+                courseCode: "HD_NCKH",
+                courseName: "Hướng dẫn Luận văn / Luận án",
+                classCode: academicYear,
+                semester: 1,
+                workloadType: "GRADUATION_THESIS",
+                rawHours: fallbackSup,
+                multiplier: 1.0,
+                convertedHours: fallbackSup,
+                studentCount: 1,
+              },
+            ]
+          : [];
+      const fallbackTeaching = Math.round(fallbackSup * 10) / 10;
+      return {
+        academicYear,
+        employeeId,
+        employeeName: "Cán bộ giảng viên (Offline Fallback)",
+        employeeCode: employeeId,
+        positionTitle: "Giảng viên",
+        baseTeachingQuota: 270,
+        baseResearchQuota: 600,
+        reductionPercentage: 0,
+        reductionReason: "Dữ liệu tạm tính khi ngoại tuyến CSDL",
+        effectiveTeachingQuota: 270,
+        actualTeachingHours: fallbackTeaching,
+        actualResearchHours: Math.round(fallbackRd * 10) / 10,
+        overtimeHours: Math.max(0, Math.round((fallbackTeaching - 270) * 10) / 10),
+        status: defaultStatus,
+        assignments: fallbackAssignments,
+      };
+    }
 
     if (!employee) {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ cán bộ giảng viên.");
@@ -196,60 +357,39 @@ export class WorkloadService {
       baseTeachingQuota * (1 - reductionPercentage / 100)
     );
 
-    // Dữ liệu phân công mẫu đặc thù của giảng viên kiến trúc
-    const assignments: TeachingAssignmentDto[] = [
-      {
-        courseCode: "KT201",
-        courseName: "Đồ án Kiến trúc Công trình 1 (Studio Xưởng)",
-        classCode: "22KT1",
-        semester: 1,
-        workloadType: "STUDIO_PROJECT",
-        rawHours: 60,
-        multiplier: 1.25,
-        convertedHours: 75.0,
-        studentCount: 28,
-        studioLocation: "Xưởng Thiết kế Tầng 4 - Khu A",
-      },
-      {
-        courseCode: "KT105",
-        courseName: "Nguyên lý Thiết kế Kiến trúc Nhà ở",
-        classCode: "23KT2",
-        semester: 1,
-        workloadType: "THEORY",
-        rawHours: 45,
-        multiplier: 1.0,
-        convertedHours: 45.0,
-        studentCount: 65,
-        studioLocation: "Phòng học A302",
-      },
-      {
-        courseCode: "KT500",
-        courseName: "Hướng dẫn Đồ án Tốt nghiệp KTS",
-        classCode: "20KT_TN",
-        semester: 2,
-        workloadType: "GRADUATION_THESIS",
-        rawHours: 18,
-        multiplier: 18.0,
-        convertedHours: 90.0, // 5 sinh viên x 18 giờ
-        studentCount: 5,
-        studioLocation: "Xưởng ĐATN Tầng 5",
-      },
-      {
-        courseCode: "KT501",
-        courseName: "Chấm Phản biện ĐATN KTS",
-        classCode: "20KT_PB",
-        semester: 2,
-        workloadType: "REVIEW_THESIS",
-        rawHours: 1.5,
-        multiplier: 1.5,
-        convertedHours: 9.0, // 6 đồ án x 1.5 giờ
-        studentCount: 6,
-      },
-    ];
+    const rdHours =
+      this.accumulatedRdHours.get(employee.id) ??
+      this.accumulatedRdHours.get(employee.employeeCode) ??
+      0;
+    const supervisionHours =
+      this.accumulatedSupervisionHours.get(employee.id) ??
+      this.accumulatedSupervisionHours.get(employee.employeeCode) ??
+      0;
 
-    const actualTeachingHours = assignments.reduce((s, a) => s + a.convertedHours, 0);
-    const actualResearchHours = 620; // 1 đề tài cấp trường + 1 bài báo tạp chí
-    const overtimeHours = Math.max(0, actualTeachingHours - effectiveTeachingQuota);
+    const assignments: TeachingAssignmentDto[] =
+      supervisionHours > 0
+        ? [
+            {
+              courseCode: "HD_NCKH",
+              courseName: "Hướng dẫn Luận văn Thạc sĩ / Nghiên cứu sinh",
+              classCode: academicYear,
+              semester: 1,
+              workloadType: "GRADUATION_THESIS",
+              rawHours: supervisionHours,
+              multiplier: 1.0,
+              convertedHours: Math.round(supervisionHours * 10) / 10,
+              studentCount: 1,
+            },
+          ]
+        : [];
+
+    const actualTeachingHours =
+      Math.round(assignments.reduce((s, a) => s + a.convertedHours, 0) * 10) / 10;
+    const actualResearchHours = Math.round(rdHours * 10) / 10;
+    const overtimeHours = Math.max(
+      0,
+      Math.round((actualTeachingHours - effectiveTeachingQuota) * 10) / 10
+    );
 
     return {
       academicYear,
@@ -265,7 +405,7 @@ export class WorkloadService {
       actualTeachingHours,
       actualResearchHours,
       overtimeHours,
-      status: "IN_PROGRESS",
+      status: defaultStatus,
       assignments,
     };
   }
@@ -278,16 +418,73 @@ export class WorkloadService {
     academicYear = "2025-2026"
   ): Promise<WorkloadSettlementResponse> {
     const quota = await this.getEmployeeQuota(employeeId, academicYear);
-    const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
-      include: { assignments: { include: { position: true } } },
-    });
+    const { yearStart, yearEnd } = this.parseAcademicYearRange(academicYear);
 
-    const { hourlyRate } = this.calculateBaseQuotaAndReduction(employee);
-    const reducedHours = quota.baseTeachingQuota - quota.effectiveTeachingQuota;
-    const overtimeHours = Math.max(0, quota.actualTeachingHours - quota.effectiveTeachingQuota);
-    const deficitHours = Math.max(0, quota.effectiveTeachingQuota - quota.actualTeachingHours);
-    const totalOvertimePay = overtimeHours * hourlyRate;
+    let hourlyRate = 160000;
+    try {
+      const employee = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: {
+          assignments: {
+            where: { status: "ACTIVE" },
+            include: { position: true },
+          },
+          contracts: {
+            where: { status: "ACTIVE" },
+            select: { contractType: true, status: true },
+          },
+          leaveRequests: {
+            where: {
+              status: "APPROVED",
+              leaveType: { in: ["MATERNITY", "SICK"] },
+              startDate: { lte: yearEnd },
+              endDate: { gte: yearStart },
+            },
+            select: { leaveType: true, totalDays: true, status: true },
+          },
+        },
+      });
+      if (employee) {
+        hourlyRate = this.calculateBaseQuotaAndReduction(employee).hourlyRate;
+      }
+    } catch (err) {
+      if (!this.isDbConnectionError(err)) {
+        throw err;
+      }
+    }
+
+    const reducedHours = Math.max(0, quota.baseTeachingQuota - quota.effectiveTeachingQuota);
+    const effectiveResearchQuota = Math.round(
+      quota.baseResearchQuota * (1 - quota.reductionPercentage / 100)
+    );
+
+    // Đối soát NCKH theo quy đổi TT 20/2020 (3 giờ NCKH = 1 giờ chuẩn giảng dạy)
+    const rawTeachingSurplus = Math.max(0, quota.actualTeachingHours - quota.effectiveTeachingQuota);
+    const rawTeachingDeficit = Math.max(0, quota.effectiveTeachingQuota - quota.actualTeachingHours);
+    const researchDelta = quota.actualResearchHours - effectiveResearchQuota;
+    const convertedResearchDelta = Math.round((researchDelta / 3) * 10) / 10;
+
+    let overtimeHours = rawTeachingSurplus;
+    let deficitHours = rawTeachingDeficit;
+
+    if (convertedResearchDelta >= 0) {
+      deficitHours = Math.max(
+        0,
+        Math.round((rawTeachingDeficit - convertedResearchDelta) * 10) / 10
+      );
+    } else {
+      const netBalance = rawTeachingSurplus + convertedResearchDelta - rawTeachingDeficit;
+      if (netBalance >= 0) {
+        overtimeHours = Math.round(netBalance * 10) / 10;
+        deficitHours = 0;
+      } else {
+        overtimeHours = 0;
+        deficitHours = Math.round(Math.abs(netBalance) * 10) / 10;
+      }
+    }
+
+    const totalOvertimePay = Math.round(overtimeHours * hourlyRate);
+    const isSettled = quota.status === "SETTLED" && deficitHours === 0;
 
     return {
       academicYear,
@@ -303,7 +500,7 @@ export class WorkloadService {
       totalOvertimePay,
       deficitHours,
       settlementDate: new Date().toISOString(),
-      isSettled: true,
+      isSettled,
     };
   }
 }

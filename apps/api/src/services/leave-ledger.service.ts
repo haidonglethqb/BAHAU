@@ -1,6 +1,22 @@
-import { prisma } from "@bahau/database";
+import { prisma, Prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
 import type { LeaveBalanceDto, LeaveLedgerEntryDto } from "@bahau/contracts";
+
+export type LeaveDbClient = Prisma.TransactionClient | typeof prisma;
+
+function getCurrentVnYear(): number {
+  return new Date(Date.now() + 7 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+function isDbConnectionError(err: any): boolean {
+  return Boolean(
+    err?.code === "P1001" ||
+      err?.code === "P1002" ||
+      err?.code === "P1008" ||
+      err?.message?.includes("connect") ||
+      err?.message?.includes("Can't reach database")
+  );
+}
 
 export class LeaveLedgerService {
   /**
@@ -8,10 +24,11 @@ export class LeaveLedgerService {
    */
   public static async getBalance(
     employeeId: string,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear(),
+    db: LeaveDbClient = prisma
   ): Promise<LeaveBalanceDto> {
     try {
-      const entries = await prisma.leaveLedger.findMany({
+      const entries = await db.leaveLedger.findMany({
         where: {
           employeeId,
           year,
@@ -19,17 +36,17 @@ export class LeaveLedgerService {
         orderBy: { createdAt: "asc" },
       });
 
-      // Mặc định nhân sự có 12 ngày phép năm tiêu chuẩn nếu chưa có giao dịch GRANT_ANNUAL
-      let totalGranted = 12;
+      let totalGranted = 0;
       let carriedForward = 0;
       let used = 0;
       let pendingHold = 0;
+      let expired = 0;
 
       for (const entry of entries) {
         const amt = Number(entry.amount);
         switch (entry.action) {
           case "GRANT_ANNUAL":
-            totalGranted = amt;
+            totalGranted += amt;
             break;
           case "CARRY_FORWARD":
             carriedForward += amt;
@@ -41,15 +58,18 @@ export class LeaveLedgerService {
             pendingHold += amt;
             break;
           case "RESTORE":
-            // Release hold
-            pendingHold = Math.max(0, pendingHold - amt);
+            // Release hold without masking negative anomalies mid-loop
+            pendingHold -= amt;
+            break;
+          case "EXPIRE":
+            expired += amt;
             break;
           default:
             break;
         }
       }
 
-      const remaining = Math.max(0, totalGranted + carriedForward - used - pendingHold);
+      const remaining = totalGranted + carriedForward - used - pendingHold - expired;
 
       return {
         year,
@@ -60,16 +80,9 @@ export class LeaveLedgerService {
         remaining,
       };
     } catch (err: any) {
-      // Resilience fallback nếu database chưa sẵn sàng trong môi trường test/dev
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return {
-          year,
-          totalGranted: 12,
-          carriedForward: 0,
-          used: 0,
-          pendingHold: 0,
-          remaining: 12,
-        };
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -80,10 +93,11 @@ export class LeaveLedgerService {
    */
   public static async getLedgerHistory(
     employeeId: string,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear(),
+    db: LeaveDbClient = prisma
   ): Promise<LeaveLedgerEntryDto[]> {
     try {
-      const entries = await prisma.leaveLedger.findMany({
+      const entries = await db.leaveLedger.findMany({
         where: {
           employeeId,
           year,
@@ -103,8 +117,9 @@ export class LeaveLedgerService {
         createdAt: entry.createdAt.toISOString(),
       }));
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return [];
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -117,9 +132,10 @@ export class LeaveLedgerService {
     employeeId: string,
     days: number,
     leaveRequestId: string,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear(),
+    db: LeaveDbClient = prisma
   ): Promise<void> {
-    const balance = await this.getBalance(employeeId, year);
+    const balance = await this.getBalance(employeeId, year, db);
     if (balance.remaining < days) {
       throw new AppError(
         422,
@@ -129,7 +145,7 @@ export class LeaveLedgerService {
     }
 
     try {
-      await prisma.leaveLedger.create({
+      await db.leaveLedger.create({
         data: {
           employeeId,
           year,
@@ -141,8 +157,9 @@ export class LeaveLedgerService {
         },
       });
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return; // Dev fallback
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -155,13 +172,14 @@ export class LeaveLedgerService {
     employeeId: string,
     days: number,
     leaveRequestId: string,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear(),
+    db: LeaveDbClient = prisma
   ): Promise<void> {
-    const balance = await this.getBalance(employeeId, year);
+    const balance = await this.getBalance(employeeId, year, db);
 
     try {
       // 1. Giải phóng HOLD
-      await prisma.leaveLedger.create({
+      await db.leaveLedger.create({
         data: {
           employeeId,
           year,
@@ -174,7 +192,7 @@ export class LeaveLedgerService {
       });
 
       // 2. Trừ phép chính thức
-      await prisma.leaveLedger.create({
+      await db.leaveLedger.create({
         data: {
           employeeId,
           year,
@@ -186,8 +204,9 @@ export class LeaveLedgerService {
         },
       });
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return;
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -200,12 +219,13 @@ export class LeaveLedgerService {
     employeeId: string,
     days: number,
     leaveRequestId: string,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear(),
+    db: LeaveDbClient = prisma
   ): Promise<void> {
-    const balance = await this.getBalance(employeeId, year);
+    const balance = await this.getBalance(employeeId, year, db);
 
     try {
-      await prisma.leaveLedger.create({
+      await db.leaveLedger.create({
         data: {
           employeeId,
           year,
@@ -217,8 +237,9 @@ export class LeaveLedgerService {
         },
       });
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return;
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
     }

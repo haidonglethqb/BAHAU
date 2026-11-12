@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { LeaveService } from "../services/leave.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
 
 export async function createLeaveRequest(req: Request, res: Response): Promise<void> {
   const result = await LeaveService.createLeaveRequest(req.user!, req.body);
@@ -74,7 +75,16 @@ export async function getMyLeaveBalance(req: Request, res: Response): Promise<vo
 }
 
 export async function getMyLeaveLedger(req: Request, res: Response): Promise<void> {
-  const year = req.query["year"] ? Number(req.query["year"]) : undefined;
+  let year: number | undefined;
+  const rawYear = req.query["year"];
+  if (rawYear !== undefined && rawYear !== "") {
+    const parsedYear = Number(rawYear);
+    if (!Number.isInteger(parsedYear) || parsedYear < 2000 || parsedYear > 2100) {
+      throw new AppError(422, "VALIDATION_FAILED", "Tham số year không hợp lệ (2000-2100).");
+    }
+    year = parsedYear;
+  }
+
   const ledger = await LeaveService.getMyLeaveLedger(req.user!, year);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 

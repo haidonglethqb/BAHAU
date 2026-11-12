@@ -1,4 +1,4 @@
-import { prisma } from "@bahau/database";
+import { prisma, Prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
 import { LeaveLedgerService } from "./leave-ledger.service.js";
 import { WorkflowService } from "./workflow.service.js";
@@ -14,6 +14,104 @@ import type {
   BusinessTripDetailDto,
 } from "@bahau/contracts";
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isDbConnectionError(err: any): boolean {
+  return Boolean(
+    err?.code === "P1001" ||
+      err?.code === "P1002" ||
+      err?.code === "P1008" ||
+      err?.message?.includes("connect") ||
+      err?.message?.includes("Can't reach database")
+  );
+}
+
+function getCurrentVnYear(): number {
+  return new Date(Date.now() + 7 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+function getVnYearFromDate(date: Date): number {
+  return new Date(date.getTime() + 7 * 60 * 60 * 1000).getUTCFullYear();
+}
+
+function parseCalendarDate(dateStr: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) {
+    throw new AppError(422, "INVALID_DATE_RANGE", `Định dạng ngày không hợp lệ: ${dateStr}`);
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new AppError(422, "INVALID_DATE_RANGE", `Ngày lịch không tồn tại: ${dateStr}`);
+  }
+  return date;
+}
+
+function validateDaysAgainstRange(startDate: Date, endDate: Date, totalDays: number): void {
+  if (endDate < startDate) {
+    throw new AppError(422, "INVALID_DATE_RANGE", "Ngày kết thúc không được nhỏ hơn ngày bắt đầu.");
+  }
+  if (!Number.isFinite(totalDays) || totalDays < 0.5 || Math.abs(totalDays * 2 - Math.round(totalDays * 2)) >= 1e-9) {
+    throw new AppError(422, "VALIDATION_FAILED", "Số ngày đăng ký phải từ 0.5 ngày và là bội số của 0.5.");
+  }
+  const calendarDays = Math.floor((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  if (totalDays > calendarDays) {
+    throw new AppError(
+      422,
+      "INVALID_TOTAL_DAYS",
+      `Số ngày đăng ký (${totalDays}) không được vượt quá số ngày lịch trong khoảng đã chọn (${calendarDays} ngày).`
+    );
+  }
+}
+
+async function lockEmployeeInTx(tx: Prisma.TransactionClient, employeeId: string): Promise<void> {
+  if (UUID_REGEX.test(employeeId) && typeof (tx as any).$executeRaw === "function") {
+    await tx.$executeRaw`SELECT id FROM employees WHERE id = ${employeeId}::uuid FOR UPDATE`;
+  }
+}
+
+async function assertNoOverlappingRequests(
+  tx: Prisma.TransactionClient,
+  employeeId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<void> {
+  const [overlappingLeave, overlappingTrip] = await Promise.all([
+    tx.leaveRequest.findFirst({
+      where: {
+        employeeId,
+        status: { in: ["PENDING", "APPROVED"] },
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+      select: { id: true, startDate: true, endDate: true },
+    }),
+    tx.businessTripRequest.findFirst({
+      where: {
+        employeeId,
+        status: { in: ["PENDING", "APPROVED"] },
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+      select: { id: true, startDate: true, endDate: true },
+    }),
+  ]);
+
+  if (overlappingLeave || overlappingTrip) {
+    throw new AppError(
+      409,
+      "OVERLAPPING_REQUEST",
+      "Khoảng thời gian đăng ký trùng với đơn nghỉ phép hoặc công tác đang chờ duyệt/đã duyệt."
+    );
+  }
+}
+
 export class LeaveService {
   /**
    * Tạo đơn xin nghỉ phép mới kèm tạm giữ phép trên Sổ cái và kích hoạt Workflow
@@ -26,33 +124,38 @@ export class LeaveService {
       throw new AppError(403, "FORBIDDEN", "Tài khoản hiện tại chưa được gán hồ sơ nhân sự.");
     }
 
-    const startDate = new Date(input.startDate);
-    const endDate = new Date(input.endDate);
-
-    if (endDate < startDate) {
-      throw new AppError(422, "INVALID_DATE_RANGE", "Ngày kết thúc không được nhỏ hơn ngày bắt đầu.");
-    }
-
     const employeeId = currentUser.employeeId;
-    const targetYear = startDate.getFullYear();
 
-    // 1. Kiểm tra số dư phép nếu là nghỉ phép năm
-    if (input.leaveType === "ANNUAL") {
-      const balance = await LeaveLedgerService.getBalance(employeeId, targetYear);
-      if (balance.remaining < input.totalDays) {
-        throw new AppError(
-          422,
-          "INSUFFICIENT_LEAVE_BALANCE",
-          `Số dư phép năm ${targetYear} không đủ. Bạn còn ${balance.remaining} ngày nhưng xin nghỉ ${input.totalDays} ngày.`
-        );
-      }
+    if (input.substituteEmployeeId && input.substituteEmployeeId === employeeId) {
+      throw new AppError(422, "INVALID_SUBSTITUTE", "Không thể chọn chính mình làm người thay thế.");
     }
+
+    const startDate = parseCalendarDate(input.startDate);
+    const endDate = parseCalendarDate(input.endDate);
+    validateDaysAgainstRange(startDate, endDate, input.totalDays);
+
+    const targetYear = getVnYearFromDate(startDate);
 
     try {
       return await prisma.$transaction(async (tx) => {
-        // Re-verify balance inside transaction
+        await lockEmployeeInTx(tx, employeeId);
+
+        if (input.substituteEmployeeId) {
+          const substitute = await tx.employee.findUnique({
+            where: { id: input.substituteEmployeeId },
+            select: { id: true },
+          });
+          if (!substitute) {
+            throw new AppError(422, "INVALID_SUBSTITUTE", "Người thay thế được chọn không tồn tại.");
+          }
+        }
+
+        // 1. Kiểm tra trùng lặp thời gian với đơn nghỉ phép / công tác PENDING hoặc APPROVED
+        await assertNoOverlappingRequests(tx, employeeId, startDate, endDate);
+
+        // 2. Kiểm tra số dư phép trong transaction nếu là nghỉ phép năm
         if (input.leaveType === "ANNUAL") {
-          const balance = await LeaveLedgerService.getBalance(employeeId, targetYear);
+          const balance = await LeaveLedgerService.getBalance(employeeId, targetYear, tx);
           if (balance.remaining < input.totalDays) {
             throw new AppError(
               422,
@@ -62,7 +165,7 @@ export class LeaveService {
           }
         }
 
-        // 2. Tạo bản ghi đơn nghỉ phép
+        // 3. Tạo bản ghi đơn nghỉ phép
         const leave = await tx.leaveRequest.create({
           data: {
             employeeId,
@@ -80,13 +183,13 @@ export class LeaveService {
           },
         });
 
-        // 3. Nếu là phép năm -> Ghi nhận TẠM GIỮ trên Sổ cái (HOLD)
+        // 4. Nếu là phép năm -> Ghi nhận TẠM GIỮ trên Sổ cái (HOLD) trong cùng transaction
         if (input.leaveType === "ANNUAL") {
-          await LeaveLedgerService.recordHold(employeeId, input.totalDays, leave.id, targetYear);
+          await LeaveLedgerService.recordHold(employeeId, input.totalDays, leave.id, targetYear, tx);
         }
 
-        // 4. Kích hoạt chuỗi Workflow phê duyệt phân cấp
-        const wfInstanceId = await WorkflowService.startLeaveWorkflow(employeeId, leave.id, input.totalDays);
+        // 5. Kích hoạt chuỗi Workflow phê duyệt phân cấp trong cùng transaction
+        const wfInstanceId = await WorkflowService.startLeaveWorkflow(employeeId, leave.id, input.totalDays, tx);
 
         return {
           id: leave.id,
@@ -106,7 +209,7 @@ export class LeaveService {
       });
     } catch (err: any) {
       if (err instanceof AppError) throw err;
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
+      if (isDbConnectionError(err)) {
         throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối tới cơ sở dữ liệu.");
       }
       throw err;
@@ -147,8 +250,9 @@ export class LeaveService {
         createdAt: l.createdAt.toISOString(),
       }));
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return [];
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -251,13 +355,24 @@ export class LeaveService {
     if (leave.workflowInstanceId) {
       await WorkflowService.cancelWorkflow(leave.workflowInstanceId, currentUser);
     } else {
-      await prisma.leaveRequest.update({
-        where: { id },
-        data: { status: "CANCELLED" },
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.leaveRequest.updateMany({
+          where: { id, status: "PENDING" },
+          data: { status: "CANCELLED" },
+        });
+        if (updated.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Đơn nghỉ phép đã được xử lý trước đó.");
+        }
+        if (leave.leaveType === "ANNUAL") {
+          await LeaveLedgerService.releaseHold(
+            leave.employeeId,
+            Number(leave.totalDays),
+            leave.id,
+            getVnYearFromDate(leave.startDate),
+            tx
+          );
+        }
       });
-      if (leave.leaveType === "ANNUAL") {
-        await LeaveLedgerService.releaseHold(leave.employeeId, Number(leave.totalDays), leave.id);
-      }
     }
   }
 
@@ -268,7 +383,7 @@ export class LeaveService {
     if (!currentUser.employeeId) {
       throw new AppError(403, "FORBIDDEN", "Tài khoản hiện tại chưa được gán hồ sơ nhân sự.");
     }
-    return await LeaveLedgerService.getBalance(currentUser.employeeId);
+    return await LeaveLedgerService.getBalance(currentUser.employeeId, getCurrentVnYear());
   }
 
   /**
@@ -276,7 +391,7 @@ export class LeaveService {
    */
   public static async getMyLeaveLedger(
     currentUser: AuthUser,
-    year = new Date().getFullYear()
+    year = getCurrentVnYear()
   ): Promise<LeaveLedgerEntryDto[]> {
     if (!currentUser.employeeId) {
       throw new AppError(403, "FORBIDDEN", "Tài khoản hiện tại chưa được gán hồ sơ nhân sự.");
@@ -295,53 +410,55 @@ export class LeaveService {
       throw new AppError(403, "FORBIDDEN", "Tài khoản hiện tại chưa được gán hồ sơ nhân sự.");
     }
 
-    const startDate = new Date(input.startDate);
-    const endDate = new Date(input.endDate);
-
-    if (endDate < startDate) {
-      throw new AppError(422, "INVALID_DATE_RANGE", "Ngày kết thúc không được nhỏ hơn ngày bắt đầu.");
-    }
+    const startDate = parseCalendarDate(input.startDate);
+    const endDate = parseCalendarDate(input.endDate);
+    validateDaysAgainstRange(startDate, endDate, input.totalDays);
 
     const employeeId = currentUser.employeeId;
 
     try {
-      const trip = await prisma.businessTripRequest.create({
-        data: {
-          employeeId,
-          purpose: input.purpose,
-          destination: input.destination,
-          startDate,
-          endDate,
-          totalDays: input.totalDays,
-          budgetEstimate: input.budgetEstimate || null,
-          fundingSource: input.fundingSource || null,
-          status: "PENDING",
-        },
-        include: {
-          employee: { select: { fullName: true } },
-        },
+      return await prisma.$transaction(async (tx) => {
+        await lockEmployeeInTx(tx, employeeId);
+        await assertNoOverlappingRequests(tx, employeeId, startDate, endDate);
+
+        const trip = await tx.businessTripRequest.create({
+          data: {
+            employeeId,
+            purpose: input.purpose,
+            destination: input.destination,
+            startDate,
+            endDate,
+            totalDays: input.totalDays,
+            budgetEstimate: input.budgetEstimate || null,
+            fundingSource: input.fundingSource || null,
+            status: "PENDING",
+          },
+          include: {
+            employee: { select: { fullName: true } },
+          },
+        });
+
+        const wfInstanceId = await WorkflowService.startTripWorkflow(employeeId, trip.id, tx);
+
+        return {
+          id: trip.id,
+          employeeId: trip.employeeId,
+          employeeName: trip.employee.fullName,
+          purpose: trip.purpose,
+          destination: trip.destination,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          totalDays: Number(trip.totalDays),
+          budgetEstimate: trip.budgetEstimate ? Number(trip.budgetEstimate) : null,
+          fundingSource: trip.fundingSource,
+          workflowInstanceId: wfInstanceId,
+          status: trip.status as any,
+          createdAt: trip.createdAt.toISOString(),
+        };
       });
-
-      const wfInstanceId = await WorkflowService.startTripWorkflow(employeeId, trip.id);
-
-      return {
-        id: trip.id,
-        employeeId: trip.employeeId,
-        employeeName: trip.employee.fullName,
-        purpose: trip.purpose,
-        destination: trip.destination,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        totalDays: Number(trip.totalDays),
-        budgetEstimate: trip.budgetEstimate ? Number(trip.budgetEstimate) : null,
-        fundingSource: trip.fundingSource,
-        workflowInstanceId: wfInstanceId,
-        status: trip.status as any,
-        createdAt: trip.createdAt.toISOString(),
-      };
     } catch (err: any) {
       if (err instanceof AppError) throw err;
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
+      if (isDbConnectionError(err)) {
         throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
@@ -381,8 +498,9 @@ export class LeaveService {
         createdAt: t.createdAt.toISOString(),
       }));
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return [];
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -483,10 +601,13 @@ export class LeaveService {
     if (trip.workflowInstanceId) {
       await WorkflowService.cancelWorkflow(trip.workflowInstanceId, currentUser);
     } else {
-      await prisma.businessTripRequest.update({
-        where: { id },
+      const updated = await prisma.businessTripRequest.updateMany({
+        where: { id, status: "PENDING" },
         data: { status: "CANCELLED" },
       });
+      if (updated.count === 0) {
+        throw new AppError(409, "CONFLICT_STATE", "Đơn công tác đã được xử lý trước đó.");
+      }
     }
   }
 }

@@ -85,14 +85,28 @@ export type WorkflowInstanceDetailDto = z.infer<typeof WorkflowInstanceDetailDto
 // LEAVE SCHEMAS
 // =============================================================================
 
-export const CreateLeaveRequestSchema = z.object({
-  leaveType: LeaveTypeEnum,
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu không đúng định dạng YYYY-MM-DD"),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc không đúng định dạng YYYY-MM-DD"),
-  totalDays: z.coerce.number().positive("Số ngày nghỉ phải lớn hơn 0"),
-  reason: z.string().min(5, "Lý do nghỉ phép tối thiểu 5 ký tự"),
-  substituteEmployeeId: z.string().uuid("Người thay thế không hợp lệ").nullable().optional(),
-});
+const HalfDayCountSchema = z.coerce
+  .number()
+  .min(0.5, "Số ngày phải từ 0.5 ngày trở lên")
+  .max(365, "Số ngày không vượt quá 365 ngày")
+  .refine(
+    (v) => Math.abs(v * 2 - Math.round(v * 2)) < 1e-9,
+    "Số ngày phải là bội số của 0.5 ngày"
+  );
+
+export const CreateLeaveRequestSchema = z
+  .object({
+    leaveType: LeaveTypeEnum,
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu không đúng định dạng YYYY-MM-DD"),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc không đúng định dạng YYYY-MM-DD"),
+    totalDays: HalfDayCountSchema,
+    reason: z.string().min(5, "Lý do nghỉ phép tối thiểu 5 ký tự"),
+    substituteEmployeeId: z.string().uuid("Người thay thế không hợp lệ").nullable().optional(),
+  })
+  .refine((data) => data.endDate >= data.startDate, {
+    message: "Ngày kết thúc không được nhỏ hơn ngày bắt đầu",
+    path: ["endDate"],
+  });
 
 export type CreateLeaveRequestInput = z.infer<typeof CreateLeaveRequestSchema>;
 
@@ -149,15 +163,20 @@ export type LeaveLedgerEntryDto = z.infer<typeof LeaveLedgerEntryDtoSchema>;
 // BUSINESS TRIP SCHEMAS
 // =============================================================================
 
-export const CreateTripRequestSchema = z.object({
-  purpose: z.string().min(5, "Mục đích công tác tối thiểu 5 ký tự"),
-  destination: z.string().min(2, "Địa điểm công tác không được để trống"),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu không đúng định dạng YYYY-MM-DD"),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc không đúng định dạng YYYY-MM-DD"),
-  totalDays: z.coerce.number().positive("Số ngày công tác phải lớn hơn 0"),
-  budgetEstimate: z.coerce.number().nonnegative().optional(),
-  fundingSource: z.string().optional(),
-});
+export const CreateTripRequestSchema = z
+  .object({
+    purpose: z.string().min(5, "Mục đích công tác tối thiểu 5 ký tự"),
+    destination: z.string().min(2, "Địa điểm công tác không được để trống"),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu không đúng định dạng YYYY-MM-DD"),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc không đúng định dạng YYYY-MM-DD"),
+    totalDays: HalfDayCountSchema,
+    budgetEstimate: z.coerce.number().nonnegative().optional(),
+    fundingSource: z.string().optional(),
+  })
+  .refine((data) => data.endDate >= data.startDate, {
+    message: "Ngày kết thúc không được nhỏ hơn ngày bắt đầu",
+    path: ["endDate"],
+  });
 
 export type CreateTripRequestInput = z.infer<typeof CreateTripRequestSchema>;
 
@@ -200,6 +219,12 @@ export const WorkflowRejectionActionSchema = z.object({
 });
 
 export type WorkflowRejectionActionInput = z.infer<typeof WorkflowRejectionActionSchema>;
+
+export const WorkflowReturnActionSchema = z.object({
+  reason: z.string().min(3, "Vui lòng nhập lý do yêu cầu bổ sung (tối thiểu 3 ký tự)"),
+});
+
+export type WorkflowReturnActionInput = z.infer<typeof WorkflowReturnActionSchema>;
 
 export const PendingWorkflowTaskDtoSchema = z.object({
   stepId: z.string().uuid(),

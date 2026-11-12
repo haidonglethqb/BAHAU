@@ -1,5 +1,6 @@
-import { prisma } from "@bahau/database";
+import { prisma, Prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
+import { AttendanceService } from "./attendance.service.js";
 import { LeaveLedgerService } from "./leave-ledger.service.js";
 import { UnitService } from "./unit.service.js";
 import type {
@@ -7,6 +8,27 @@ import type {
   PendingWorkflowTaskDto,
   WorkflowInstanceDetailDto,
 } from "@bahau/contracts";
+
+export type WorkflowDbClient = Prisma.TransactionClient | typeof prisma;
+
+function isDbConnectionError(err: any): boolean {
+  return Boolean(
+    err?.code === "P1001" ||
+      err?.code === "P1002" ||
+      err?.code === "P1008" ||
+      err?.message?.includes("connect") ||
+      err?.message?.includes("Can't reach database")
+  );
+}
+
+function getVnDateParts(date: Date): { year: number; month: number; day: number } {
+  const vn = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+  return {
+    year: vn.getUTCFullYear(),
+    month: vn.getUTCMonth() + 1,
+    day: vn.getUTCDate(),
+  };
+}
 
 export class WorkflowService {
   /** Mở rộng danh sách đơn vị quản lý trực tiếp sang toàn bộ cây đơn vị con */
@@ -24,8 +46,11 @@ export class WorkflowService {
   }
 
   /** Lấy danh sách đơn vị đang công tác (gồm cả kiêm nhiệm CONCURRENT và chính thức PRIMARY) */
-  private static async getEmployeeActiveUnitIds(employeeId: string): Promise<string[]> {
-    const assignments = await prisma.employmentAssignment.findMany({
+  private static async getEmployeeActiveUnitIds(
+    employeeId: string,
+    db: WorkflowDbClient = prisma
+  ): Promise<string[]> {
+    const assignments = await db.employmentAssignment.findMany({
       where: {
         employeeId,
         assignmentType: { in: ["PRIMARY", "CONCURRENT"] },
@@ -37,13 +62,16 @@ export class WorkflowService {
   }
 
   /** Xác định luồng phê duyệt bước 0 dựa trên PRIMARY + CONCURRENT và leo thang cây parentId nếu thiếu trưởng đơn vị */
-  private static async resolveRequesterRouting(requesterEmployeeId: string): Promise<{
+  private static async resolveRequesterRouting(
+    requesterEmployeeId: string,
+    db: WorkflowDbClient = prisma
+  ): Promise<{
     isHeadOfUnit: boolean;
     unitName: string;
     approverRoleCode: "ROLE_UNIT_HEAD" | "ROLE_RECTOR";
     approverEmployeeId: string | null;
   }> {
-    const activeAssignments = await prisma.employmentAssignment.findMany({
+    const activeAssignments = await db.employmentAssignment.findMany({
       where: {
         employeeId: requesterEmployeeId,
         assignmentType: { in: ["PRIMARY", "CONCURRENT"] },
@@ -98,7 +126,7 @@ export class WorkflowService {
         };
       }
       if (!currentUnit.parentId) break;
-      currentUnit = await prisma.organizationalUnit.findUnique({
+      currentUnit = await db.organizationalUnit.findUnique({
         where: { id: currentUnit.parentId },
         select: {
           id: true,
@@ -126,7 +154,8 @@ export class WorkflowService {
       instance: { requesterEmployeeId: string };
     },
     currentUser: AuthUser,
-    actionDeniedMessage: string
+    actionDeniedMessage: string,
+    db: WorkflowDbClient = prisma
   ): Promise<void> {
     const isGlobalHR = currentUser.roles.some((r) =>
       ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
@@ -145,7 +174,7 @@ export class WorkflowService {
     if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
       const [managedUnitIds, requesterUnitIds] = await Promise.all([
         this.getExpandedManagedUnitIds(currentUser.unitsManaged),
-        this.getEmployeeActiveUnitIds(step.instance.requesterEmployeeId),
+        this.getEmployeeActiveUnitIds(step.instance.requesterEmployeeId, db),
       ]);
       const isManaged = requesterUnitIds.some((uid) => managedUnitIds.has(uid));
       if (!isManaged) {
@@ -160,14 +189,15 @@ export class WorkflowService {
   public static async startLeaveWorkflow(
     requesterEmployeeId: string,
     leaveRequestId: string,
-    totalDays: number
+    totalDays: number,
+    db: WorkflowDbClient = prisma
   ): Promise<string> {
     try {
       // 1. Tìm đơn vị và chuỗi phê duyệt phân cấp của người yêu cầu
-      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId, db);
 
       // 2. Tạo WorkflowInstance
-      const instance = await prisma.workflowInstance.create({
+      const instance = await db.workflowInstance.create({
         data: {
           module: "LEAVE",
           recordId: leaveRequestId,
@@ -180,7 +210,7 @@ export class WorkflowService {
       // 3. Khởi tạo các bước phê duyệt dựa trên cơ chế Anti-Self-Approval & leo thang cây đơn vị
       if (routing.isHeadOfUnit) {
         // Lãnh đạo đơn vị nộp -> Leo thang lên Ban Giám hiệu, sau đó Phòng TCHC
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -204,7 +234,7 @@ export class WorkflowService {
             ? `Ban Giám hiệu phê duyệt (${routing.unitName})`
             : `Trưởng đơn vị phê duyệt (${routing.unitName})`;
 
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -226,15 +256,16 @@ export class WorkflowService {
       }
 
       // 4. Cập nhật workflowInstanceId vào đơn nghỉ phép
-      await prisma.leaveRequest.update({
+      await db.leaveRequest.update({
         where: { id: leaveRequestId },
         data: { workflowInstanceId: instance.id },
       });
 
       return instance.id;
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return "00000000-0000-0000-0000-000000000001";
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -245,12 +276,13 @@ export class WorkflowService {
    */
   public static async startTripWorkflow(
     requesterEmployeeId: string,
-    tripRequestId: string
+    tripRequestId: string,
+    db: WorkflowDbClient = prisma
   ): Promise<string> {
     try {
-      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId, db);
 
-      const instance = await prisma.workflowInstance.create({
+      const instance = await db.workflowInstance.create({
         data: {
           module: "BUSINESS_TRIP",
           recordId: tripRequestId,
@@ -262,7 +294,7 @@ export class WorkflowService {
 
       if (routing.isHeadOfUnit) {
         // Trưởng đơn vị đi công tác -> Ban Giám hiệu phê duyệt trực tiếp
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -287,7 +319,7 @@ export class WorkflowService {
             ? "Ban Giám hiệu phê duyệt kế hoạch công tác"
             : "Trưởng đơn vị phê duyệt kế hoạch công tác";
 
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -308,15 +340,16 @@ export class WorkflowService {
         });
       }
 
-      await prisma.businessTripRequest.update({
+      await db.businessTripRequest.update({
         where: { id: tripRequestId },
         data: { workflowInstanceId: instance.id },
       });
 
       return instance.id;
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return "00000000-0000-0000-0000-000000000002";
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -327,12 +360,13 @@ export class WorkflowService {
    */
   public static async startAdjustmentWorkflow(
     requesterEmployeeId: string,
-    adjustmentRequestId: string
+    adjustmentRequestId: string,
+    db: WorkflowDbClient = prisma
   ): Promise<string> {
     try {
-      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId, db);
 
-      const instance = await prisma.workflowInstance.create({
+      const instance = await db.workflowInstance.create({
         data: {
           module: "ATTENDANCE_ADJUSTMENT",
           recordId: adjustmentRequestId,
@@ -344,7 +378,7 @@ export class WorkflowService {
 
       if (routing.isHeadOfUnit) {
         // Lãnh đạo đơn vị giải trình -> Leo thang lên Ban Giám hiệu, sau đó Phòng TCHC
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -368,7 +402,7 @@ export class WorkflowService {
             ? `Ban Giám hiệu xác nhận giải trình (${routing.unitName})`
             : `Trưởng đơn vị xác nhận giải trình (${routing.unitName})`;
 
-        await prisma.workflowStep.createMany({
+        await db.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
@@ -389,15 +423,16 @@ export class WorkflowService {
         });
       }
 
-      await prisma.attendanceAdjustmentRequest.update({
+      await db.attendanceAdjustmentRequest.update({
         where: { id: adjustmentRequestId },
         data: { workflowInstanceId: instance.id },
       });
 
       return instance.id;
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return "00000000-0000-0000-0000-000000000003";
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -476,8 +511,9 @@ export class WorkflowService {
         createdAt: s.createdAt.toISOString(),
       }));
     } catch (err: any) {
-      if (err.code === "P1001" || err.message?.includes("connect") || err.message?.includes("Can't reach database")) {
-        return [];
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
       throw err;
     }
@@ -585,151 +621,198 @@ export class WorkflowService {
     currentUser: AuthUser,
     comment?: string
   ): Promise<void> {
-    const step = await prisma.workflowStep.findUnique({
-      where: { id: stepId },
-      include: {
-        instance: true,
-      },
-    });
-
-    if (!step || step.status !== "WAITING") {
-      throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại hoặc đã được xử lý.");
-    }
-
-    // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
-    if (step.stepIndex !== step.instance.currentStepIndex) {
-      throw new AppError(
-        422,
-        "INVALID_STEP_ORDER",
-        `Không thể phê duyệt bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
-      );
-    }
-
-    // 2. Anti-Self-Approval: Không cho phép người nộp đơn tự duyệt bước của chính mình
-    if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
-      throw new AppError(
-        403,
-        "FORBIDDEN",
-        "Quy tắc Anti-Self-Approval: Bạn không được tự phê duyệt đơn của chính mình."
-      );
-    }
-
-    // 3. Kiểm tra quyền duyệt và Scope cây đơn vị
-    await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền phê duyệt bước này.");
-
-    // 1. Cập nhật bước hiện tại thành APPROVED
-    await prisma.workflowStep.update({
-      where: { id: stepId },
-      data: {
-        status: "APPROVED",
-        comment: comment || null,
-        actionAt: new Date(),
-      },
-    });
-
-    // 2. Kiểm tra xem còn bước tiếp theo không
-    const nextStep = await prisma.workflowStep.findFirst({
-      where: {
-        instanceId: step.instanceId,
-        stepIndex: step.stepIndex + 1,
-      },
-    });
-
-    if (nextStep) {
-      // Chuyển sang bước tiếp theo
-      await prisma.workflowInstance.update({
-        where: { id: step.instanceId },
-        data: { currentStepIndex: step.stepIndex + 1 },
-      });
-    } else {
-      // Đã duyệt xong bước cuối cùng -> Hoàn tất Workflow
-      await prisma.workflowInstance.update({
-        where: { id: step.instanceId },
-        data: { status: "APPROVED" },
-      });
-
-      // Hook xử lý kết quả hoàn tất cho từng module
-      if (step.instance.module === "LEAVE") {
-        const leave = await prisma.leaveRequest.findUnique({
-          where: { id: step.instance.recordId },
+    try {
+      await prisma.$transaction(async (tx) => {
+        const step = await tx.workflowStep.findUnique({
+          where: { id: stepId },
+          include: {
+            instance: true,
+          },
         });
 
-        if (leave) {
-          await prisma.leaveRequest.update({
-            where: { id: leave.id },
-            data: { status: "APPROVED" },
+        if (!step) {
+          throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại.");
+        }
+
+        if (step.status !== "WAITING" || step.instance.status !== "PENDING") {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt hoặc quy trình đã được xử lý trước đó.");
+        }
+
+        // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
+        if (step.stepIndex !== step.instance.currentStepIndex) {
+          throw new AppError(
+            422,
+            "INVALID_STEP_ORDER",
+            `Không thể phê duyệt bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
+          );
+        }
+
+        // 2. Anti-Self-Approval: Không cho phép người nộp đơn tự duyệt bước của chính mình
+        if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Quy tắc Anti-Self-Approval: Bạn không được tự phê duyệt đơn của chính mình."
+          );
+        }
+
+        // 3. Kiểm tra quyền duyệt và Scope cây đơn vị
+        await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền phê duyệt bước này.", tx);
+
+        // 4. Cập nhật nguyên tử bước hiện tại thành APPROVED
+        const stepUpdate = await tx.workflowStep.updateMany({
+          where: { id: stepId, status: "WAITING" },
+          data: {
+            status: "APPROVED",
+            comment: comment || null,
+            actionAt: new Date(),
+          },
+        });
+
+        if (stepUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt đã được xử lý bởi thao tác khác.");
+        }
+
+        // 5. Kiểm tra xem còn bước tiếp theo không
+        const nextStep = await tx.workflowStep.findFirst({
+          where: {
+            instanceId: step.instanceId,
+            stepIndex: step.stepIndex + 1,
+          },
+        });
+
+        if (nextStep) {
+          const instUpdate = await tx.workflowInstance.updateMany({
+            where: {
+              id: step.instanceId,
+              status: "PENDING",
+              currentStepIndex: step.stepIndex,
+            },
+            data: { currentStepIndex: step.stepIndex + 1 },
+          });
+          if (instUpdate.count === 0) {
+            throw new AppError(409, "CONFLICT_STATE", "Trạng thái quy trình đã bị thay đổi.");
+          }
+          return;
+        }
+
+        // Đã duyệt xong bước cuối cùng -> Hoàn tất Workflow
+        const instUpdate = await tx.workflowInstance.updateMany({
+          where: { id: step.instanceId, status: "PENDING" },
+          data: { status: "APPROVED" },
+        });
+        if (instUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Quy trình đã được xử lý trước đó.");
+        }
+
+        // Hook xử lý kết quả hoàn tất cho từng module
+        if (step.instance.module === "LEAVE") {
+          const leave = await tx.leaveRequest.findUnique({
+            where: { id: step.instance.recordId },
           });
 
-          // Trừ phép chính thức trên Sổ cái nếu là nghỉ phép năm
-          if (leave.leaveType === "ANNUAL") {
-            await LeaveLedgerService.recordUse(
-              leave.employeeId,
-              Number(leave.totalDays),
-              leave.id
+          if (leave) {
+            await tx.leaveRequest.update({
+              where: { id: leave.id },
+              data: { status: "APPROVED" },
+            });
+
+            // Trừ phép chính thức trên Sổ cái nếu là nghỉ phép năm theo đúng năm bắt đầu nghỉ (VN)
+            if (leave.leaveType === "ANNUAL") {
+              const leaveYear = getVnDateParts(leave.startDate).year;
+              await LeaveLedgerService.recordUse(
+                leave.employeeId,
+                Number(leave.totalDays),
+                leave.id,
+                leaveYear,
+                tx
+              );
+            }
+          }
+        } else if (step.instance.module === "BUSINESS_TRIP") {
+          await tx.businessTripRequest.update({
+            where: { id: step.instance.recordId },
+            data: { status: "APPROVED" },
+          });
+        } else if (step.instance.module === "ATTENDANCE_ADJUSTMENT") {
+          const adj = await tx.attendanceAdjustmentRequest.findUnique({
+            where: { id: step.instance.recordId },
+          });
+          if (adj) {
+            const { year, month } = getVnDateParts(adj.workDate);
+            const period = await AttendanceService.getOrCreatePeriod(month, year, tx);
+            if (period.isLocked) {
+              throw new AppError(
+                409,
+                "PERIOD_LOCKED",
+                `Kỳ công tháng ${month}/${year} đã bị khóa, không thể duyệt điều chỉnh công.`
+              );
+            }
+
+            await tx.attendanceAdjustmentRequest.update({
+              where: { id: adj.id },
+              data: { status: "APPROVED" },
+            });
+
+            const existingRecord = await tx.attendanceRecord.findUnique({
+              where: {
+                employeeId_workDate: {
+                  employeeId: adj.employeeId,
+                  workDate: adj.workDate,
+                },
+              },
+            });
+
+            // Bảo toàn checkIn/checkOut hiện hữu nếu chỉ điều chỉnh một mốc
+            const checkIn = adj.adjustedCheckIn ?? existingRecord?.checkInTime ?? adj.originalCheckIn ?? null;
+            const checkOut = adj.adjustedCheckOut ?? existingRecord?.checkOutTime ?? adj.originalCheckOut ?? null;
+
+            const classified = AttendanceService.classifyAttendanceStatus(checkIn, checkOut);
+
+            await tx.attendanceRecord.upsert({
+              where: {
+                employeeId_workDate: {
+                  employeeId: adj.employeeId,
+                  workDate: adj.workDate,
+                },
+              },
+              update: {
+                periodId: period.id,
+                checkInTime: checkIn,
+                checkOutTime: checkOut,
+                rawWorkingHours: new Prisma.Decimal(classified.hours),
+                status: classified.status,
+                adjustmentRequestId: adj.id,
+              },
+              create: {
+                employeeId: adj.employeeId,
+                periodId: period.id,
+                workDate: adj.workDate,
+                checkInTime: checkIn,
+                checkOutTime: checkOut,
+                rawWorkingHours: new Prisma.Decimal(classified.hours),
+                status: classified.status,
+                adjustmentRequestId: adj.id,
+                deviceSource: "ADJUSTMENT_REQUEST",
+              },
+            });
+
+            await AttendanceService.recalculateMonthlySummary(
+              adj.employeeId,
+              period.id,
+              month,
+              year,
+              tx
             );
           }
         }
-      } else if (step.instance.module === "BUSINESS_TRIP") {
-        await prisma.businessTripRequest.update({
-          where: { id: step.instance.recordId },
-          data: { status: "APPROVED" },
-        });
-      } else if (step.instance.module === "ATTENDANCE_ADJUSTMENT") {
-        const adj = await prisma.attendanceAdjustmentRequest.findUnique({
-          where: { id: step.instance.recordId },
-        });
-        if (adj) {
-          await prisma.attendanceAdjustmentRequest.update({
-            where: { id: adj.id },
-            data: { status: "APPROVED" },
-          });
-
-          const checkIn = adj.adjustedCheckIn;
-          const checkOut = adj.adjustedCheckOut;
-          let rawHours = 0;
-          let status: any = "PRESENT";
-
-          if (checkIn && checkOut) {
-            const diffMs = new Date(checkOut).getTime() - new Date(checkIn).getTime();
-            rawHours = Math.max(0, Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100);
-          }
-
-          if (checkIn) {
-            const inDate = new Date(checkIn);
-            const inHour = inDate.getUTCHours() + 7;
-            const inMin = inDate.getUTCMinutes();
-            if (inHour > 8 || (inHour === 8 && inMin > 15)) {
-              status = "LATE";
-            }
-          }
-
-          await prisma.attendanceRecord.upsert({
-            where: {
-              employeeId_workDate: {
-                employeeId: adj.employeeId,
-                workDate: adj.workDate,
-              },
-            },
-            update: {
-              checkInTime: checkIn,
-              checkOutTime: checkOut,
-              rawWorkingHours: rawHours,
-              status: status,
-              adjustmentRequestId: adj.id,
-            },
-            create: {
-              employeeId: adj.employeeId,
-              workDate: adj.workDate,
-              checkInTime: checkIn,
-              checkOutTime: checkOut,
-              rawWorkingHours: rawHours,
-              status: status,
-              adjustmentRequestId: adj.id,
-              deviceSource: "ADJUSTMENT_REQUEST",
-            },
-          });
-        }
+      });
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
+      throw err;
     }
   }
 
@@ -741,85 +824,220 @@ export class WorkflowService {
     currentUser: AuthUser,
     reason: string
   ): Promise<void> {
-    const step = await prisma.workflowStep.findUnique({
-      where: { id: stepId },
-      include: {
-        instance: true,
-      },
-    });
-
-    if (!step || step.status !== "WAITING") {
-      throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại hoặc đã được xử lý.");
-    }
-
-    // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
-    if (step.stepIndex !== step.instance.currentStepIndex) {
-      throw new AppError(
-        422,
-        "INVALID_STEP_ORDER",
-        `Không thể từ chối bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
-      );
-    }
-
-    // 2. Anti-Self-Approval: Không cho phép người nộp đơn tự từ chối/xử lý bước của chính mình
-    if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
-      throw new AppError(
-        403,
-        "FORBIDDEN",
-        "Quy tắc Anti-Self-Approval: Bạn không được tự xử lý đơn của chính mình."
-      );
-    }
-
-    // 3. Kiểm tra quyền từ chối và Scope cây đơn vị
-    await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền từ chối bước này.");
-
-    // 1. Cập nhật bước thành REJECTED
-    await prisma.workflowStep.update({
-      where: { id: stepId },
-      data: {
-        status: "REJECTED",
-        comment: reason,
-        actionAt: new Date(),
-      },
-    });
-
-    // 2. Chuyển toàn bộ Instance thành REJECTED
-    await prisma.workflowInstance.update({
-      where: { id: step.instanceId },
-      data: { status: "REJECTED" },
-    });
-
-    // 3. Hook xử lý khi bị từ chối
-    if (step.instance.module === "LEAVE") {
-      const leave = await prisma.leaveRequest.findUnique({
-        where: { id: step.instance.recordId },
-      });
-
-      if (leave) {
-        await prisma.leaveRequest.update({
-          where: { id: leave.id },
-          data: { status: "REJECTED" },
+    try {
+      await prisma.$transaction(async (tx) => {
+        const step = await tx.workflowStep.findUnique({
+          where: { id: stepId },
+          include: {
+            instance: true,
+          },
         });
 
-        // Giải phóng ngày phép bị tạm giữ trên Sổ cái
-        if (leave.leaveType === "ANNUAL") {
-          await LeaveLedgerService.releaseHold(
-            leave.employeeId,
-            Number(leave.totalDays),
-            leave.id
+        if (!step) {
+          throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại.");
+        }
+
+        if (step.status !== "WAITING" || step.instance.status !== "PENDING") {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt hoặc quy trình đã được xử lý trước đó.");
+        }
+
+        // 1. Kiểm tra thứ tự bước phê duyệt (Strict Sequential Workflow)
+        if (step.stepIndex !== step.instance.currentStepIndex) {
+          throw new AppError(
+            422,
+            "INVALID_STEP_ORDER",
+            `Không thể từ chối bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
           );
         }
+
+        // 2. Anti-Self-Approval
+        if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Quy tắc Anti-Self-Approval: Bạn không được tự xử lý đơn của chính mình."
+          );
+        }
+
+        // 3. Kiểm tra quyền từ chối và Scope cây đơn vị
+        await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền từ chối bước này.", tx);
+
+        // 4. Cập nhật nguyên tử bước thành REJECTED
+        const stepUpdate = await tx.workflowStep.updateMany({
+          where: { id: stepId, status: "WAITING" },
+          data: {
+            status: "REJECTED",
+            comment: reason,
+            actionAt: new Date(),
+          },
+        });
+        if (stepUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt đã được xử lý bởi thao tác khác.");
+        }
+
+        await tx.workflowStep.updateMany({
+          where: { instanceId: step.instanceId, status: "WAITING" },
+          data: { status: "SKIPPED" },
+        });
+
+        // 5. Chuyển toàn bộ Instance thành REJECTED
+        const instUpdate = await tx.workflowInstance.updateMany({
+          where: { id: step.instanceId, status: "PENDING" },
+          data: { status: "REJECTED" },
+        });
+        if (instUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Quy trình đã được xử lý trước đó.");
+        }
+
+        // 6. Hook xử lý khi bị từ chối
+        if (step.instance.module === "LEAVE") {
+          const leave = await tx.leaveRequest.findUnique({
+            where: { id: step.instance.recordId },
+          });
+
+          if (leave) {
+            await tx.leaveRequest.update({
+              where: { id: leave.id },
+              data: { status: "REJECTED" },
+            });
+
+            // Giải phóng ngày phép bị tạm giữ trên Sổ cái theo đúng năm bắt đầu nghỉ (VN)
+            if (leave.leaveType === "ANNUAL") {
+              const leaveYear = getVnDateParts(leave.startDate).year;
+              await LeaveLedgerService.releaseHold(
+                leave.employeeId,
+                Number(leave.totalDays),
+                leave.id,
+                leaveYear,
+                tx
+              );
+            }
+          }
+        } else if (step.instance.module === "BUSINESS_TRIP") {
+          await tx.businessTripRequest.update({
+            where: { id: step.instance.recordId },
+            data: { status: "REJECTED" },
+          });
+        } else if (step.instance.module === "ATTENDANCE_ADJUSTMENT") {
+          await tx.attendanceAdjustmentRequest.update({
+            where: { id: step.instance.recordId },
+            data: { status: "REJECTED" },
+          });
+        }
+      });
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
       }
-    } else if (step.instance.module === "BUSINESS_TRIP") {
-      await prisma.businessTripRequest.update({
-        where: { id: step.instance.recordId },
-        data: { status: "REJECTED" },
+      throw err;
+    }
+  }
+
+  /**
+   * Trả lại đơn để người nộp bổ sung / chỉnh sửa (RETURNED)
+   */
+  public static async returnStep(
+    stepId: string,
+    currentUser: AuthUser,
+    reason: string
+  ): Promise<void> {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const step = await tx.workflowStep.findUnique({
+          where: { id: stepId },
+          include: { instance: true },
+        });
+
+        if (!step) {
+          throw new AppError(404, "RESOURCE_NOT_FOUND", "Bước phê duyệt không tồn tại.");
+        }
+
+        if (step.status !== "WAITING" || step.instance.status !== "PENDING") {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt hoặc quy trình đã được xử lý trước đó.");
+        }
+
+        if (step.stepIndex !== step.instance.currentStepIndex) {
+          throw new AppError(
+            422,
+            "INVALID_STEP_ORDER",
+            `Không thể trả lại bước ${step.stepIndex} khi tiến trình đang ở bước ${step.instance.currentStepIndex}.`
+          );
+        }
+
+        if (currentUser.employeeId && step.instance.requesterEmployeeId === currentUser.employeeId) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Quy tắc Anti-Self-Approval: Bạn không được tự xử lý đơn của chính mình."
+          );
+        }
+
+        await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền trả lại bước này.", tx);
+
+        const stepUpdate = await tx.workflowStep.updateMany({
+          where: { id: stepId, status: "WAITING" },
+          data: {
+            status: "REJECTED",
+            comment: `[Yêu cầu bổ sung] ${reason}`,
+            actionAt: new Date(),
+          },
+        });
+        if (stepUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Bước phê duyệt đã được xử lý bởi thao tác khác.");
+        }
+
+        await tx.workflowStep.updateMany({
+          where: { instanceId: step.instanceId, status: "WAITING" },
+          data: { status: "SKIPPED" },
+        });
+
+        const instUpdate = await tx.workflowInstance.updateMany({
+          where: { id: step.instanceId, status: "PENDING" },
+          data: { status: "RETURNED" },
+        });
+        if (instUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Quy trình đã được xử lý trước đó.");
+        }
+
+        if (step.instance.module === "LEAVE") {
+          const leave = await tx.leaveRequest.findUnique({
+            where: { id: step.instance.recordId },
+          });
+          if (leave) {
+            await tx.leaveRequest.update({
+              where: { id: leave.id },
+              data: { status: "RETURNED" },
+            });
+            if (leave.leaveType === "ANNUAL") {
+              const leaveYear = getVnDateParts(leave.startDate).year;
+              await LeaveLedgerService.releaseHold(
+                leave.employeeId,
+                Number(leave.totalDays),
+                leave.id,
+                leaveYear,
+                tx
+              );
+            }
+          }
+        } else if (step.instance.module === "BUSINESS_TRIP") {
+          await tx.businessTripRequest.update({
+            where: { id: step.instance.recordId },
+            data: { status: "RETURNED" },
+          });
+        } else if (step.instance.module === "ATTENDANCE_ADJUSTMENT") {
+          await tx.attendanceAdjustmentRequest.update({
+            where: { id: step.instance.recordId },
+            data: { status: "RETURNED" },
+          });
+        }
       });
-    } else if (step.instance.module === "ATTENDANCE_ADJUSTMENT") {
-      await prisma.attendanceAdjustmentRequest.update({
-        where: { id: step.instance.recordId },
-        data: { status: "REJECTED" },
-      });
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
+      }
+      throw err;
     }
   }
 
@@ -830,62 +1048,83 @@ export class WorkflowService {
     instanceId: string,
     currentUser: AuthUser
   ): Promise<void> {
-    const instance = await prisma.workflowInstance.findUnique({
-      where: { id: instanceId },
-    });
-
-    if (!instance) {
-      throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy quy trình cần hủy.");
-    }
-
-    const isOwner = currentUser.employeeId === instance.requesterEmployeeId;
-    const isHR = currentUser.roles.includes("ROLE_HR_OFFICER") || currentUser.roles.includes("ROLE_SYSADMIN");
-
-    if (!isOwner && !isHR) {
-      throw new AppError(403, "FORBIDDEN", "Bạn không có quyền hủy đơn này.");
-    }
-
-    if (instance.status !== "PENDING") {
-      throw new AppError(422, "INVALID_STATE", "Chỉ có thể hủy đơn khi đang chờ phê duyệt (PENDING).");
-    }
-
-    // 1. Cập nhật Instance thành CANCELLED
-    await prisma.workflowInstance.update({
-      where: { id: instanceId },
-      data: { status: "CANCELLED" },
-    });
-
-    // 2. Cập nhật các bước WAITING thành SKIPPED
-    await prisma.workflowStep.updateMany({
-      where: { instanceId, status: "WAITING" },
-      data: { status: "SKIPPED", comment: "Người gửi đã hủy yêu cầu" },
-    });
-
-    // 3. Hook giải phóng tài nguyên
-    if (instance.module === "LEAVE") {
-      const leave = await prisma.leaveRequest.findUnique({
-        where: { id: instance.recordId },
-      });
-
-      if (leave) {
-        await prisma.leaveRequest.update({
-          where: { id: leave.id },
-          data: { status: "CANCELLED" },
+    try {
+      await prisma.$transaction(async (tx) => {
+        const instance = await tx.workflowInstance.findUnique({
+          where: { id: instanceId },
         });
 
-        if (leave.leaveType === "ANNUAL") {
-          await LeaveLedgerService.releaseHold(
-            leave.employeeId,
-            Number(leave.totalDays),
-            leave.id
-          );
+        if (!instance) {
+          throw new AppError(404, "RESOURCE_NOT_FOUND", "Không tìm thấy quy trình cần hủy.");
         }
-      }
-    } else if (instance.module === "BUSINESS_TRIP") {
-      await prisma.businessTripRequest.update({
-        where: { id: instance.recordId },
-        data: { status: "CANCELLED" },
+
+        const isOwner = currentUser.employeeId === instance.requesterEmployeeId;
+        const isHR = currentUser.roles.includes("ROLE_HR_OFFICER") || currentUser.roles.includes("ROLE_SYSADMIN");
+
+        if (!isOwner && !isHR) {
+          throw new AppError(403, "FORBIDDEN", "Bạn không có quyền hủy đơn này.");
+        }
+
+        if (instance.status !== "PENDING") {
+          throw new AppError(409, "CONFLICT_STATE", "Quy trình đã được xử lý trước đó, không thể hủy.");
+        }
+
+        // 1. Cập nhật nguyên tử Instance thành CANCELLED
+        const instUpdate = await tx.workflowInstance.updateMany({
+          where: { id: instanceId, status: "PENDING" },
+          data: { status: "CANCELLED" },
+        });
+        if (instUpdate.count === 0) {
+          throw new AppError(409, "CONFLICT_STATE", "Quy trình đã được xử lý bởi thao tác khác.");
+        }
+
+        // 2. Cập nhật các bước WAITING thành SKIPPED
+        await tx.workflowStep.updateMany({
+          where: { instanceId, status: "WAITING" },
+          data: { status: "SKIPPED", comment: "Người gửi đã hủy yêu cầu" },
+        });
+
+        // 3. Hook giải phóng tài nguyên
+        if (instance.module === "LEAVE") {
+          const leave = await tx.leaveRequest.findUnique({
+            where: { id: instance.recordId },
+          });
+
+          if (leave) {
+            await tx.leaveRequest.update({
+              where: { id: leave.id },
+              data: { status: "CANCELLED" },
+            });
+
+            if (leave.leaveType === "ANNUAL") {
+              const leaveYear = getVnDateParts(leave.startDate).year;
+              await LeaveLedgerService.releaseHold(
+                leave.employeeId,
+                Number(leave.totalDays),
+                leave.id,
+                leaveYear,
+                tx
+              );
+            }
+          }
+        } else if (instance.module === "BUSINESS_TRIP") {
+          await tx.businessTripRequest.update({
+            where: { id: instance.recordId },
+            data: { status: "CANCELLED" },
+          });
+        } else if (instance.module === "ATTENDANCE_ADJUSTMENT") {
+          await tx.attendanceAdjustmentRequest.update({
+            where: { id: instance.recordId },
+            data: { status: "CANCELLED" },
+          });
+        }
       });
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
+      }
+      throw err;
     }
   }
 }

@@ -110,22 +110,62 @@ export type AttendanceMonthDto = z.infer<typeof AttendanceMonthDtoSchema>;
 // INPUT REQUEST SCHEMAS
 // =============================================================================
 
-export const CreateAttendanceAdjustmentSchema = z.object({
-  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày điều chỉnh công không hợp lệ (YYYY-MM-DD)"),
-  adjustedCheckIn: z.string().optional().nullable(),
-  adjustedCheckOut: z.string().optional().nullable(),
-  reason: z.string().min(5, "Lý do điều chỉnh tối thiểu 5 ký tự"),
-});
+const IsoDateTimeOptionalSchema = z
+  .string()
+  .refine(
+    (val) => !Number.isNaN(Date.parse(val)),
+    "Thời gian không đúng định dạng ISO datetime hợp lệ"
+  )
+  .optional()
+  .nullable();
+
+export const CreateAttendanceAdjustmentSchema = z
+  .object({
+    workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày điều chỉnh công không hợp lệ (YYYY-MM-DD)"),
+    adjustedCheckIn: IsoDateTimeOptionalSchema,
+    adjustedCheckOut: IsoDateTimeOptionalSchema,
+    reason: z.string().min(5, "Lý do điều chỉnh tối thiểu 5 ký tự"),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.adjustedCheckIn && !data.adjustedCheckOut) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["adjustedCheckIn"],
+        message: "Vui lòng cung cấp ít nhất giờ vào hoặc giờ ra cần điều chỉnh",
+      });
+    }
+    if (data.adjustedCheckIn && data.adjustedCheckOut) {
+      if (Date.parse(data.adjustedCheckOut) <= Date.parse(data.adjustedCheckIn)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["adjustedCheckOut"],
+          message: "Giờ ra điều chỉnh phải sau giờ vào điều chỉnh",
+        });
+      }
+    }
+  });
 
 export type CreateAttendanceAdjustmentInput = z.infer<typeof CreateAttendanceAdjustmentSchema>;
 
-export const ImportAttendanceItemSchema = z.object({
-  employeeCode: z.string().min(1, "Mã CBGV không được để trống"),
-  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày công không đúng định dạng YYYY-MM-DD"),
-  checkInTime: z.string().optional().nullable(),
-  checkOutTime: z.string().optional().nullable(),
-  deviceSource: z.string().optional().nullable(),
-});
+export const ImportAttendanceItemSchema = z
+  .object({
+    employeeCode: z.string().min(1, "Mã CBGV không được để trống"),
+    workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày công không đúng định dạng YYYY-MM-DD"),
+    checkInTime: IsoDateTimeOptionalSchema,
+    checkOutTime: IsoDateTimeOptionalSchema,
+    deviceSource: z.string().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.checkInTime && data.checkOutTime) {
+      if (Date.parse(data.checkOutTime) <= Date.parse(data.checkInTime)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["checkOutTime"],
+          message: "Giờ ra phải sau giờ vào",
+        });
+      }
+    }
+  });
 
 export type ImportAttendanceItem = z.infer<typeof ImportAttendanceItemSchema>;
 

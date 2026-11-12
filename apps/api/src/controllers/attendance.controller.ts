@@ -18,10 +18,18 @@ export const FaceAttendanceSchema = z.preprocess(
   })
 );
 
+function getCurrentVnMonthYear(): { month: number; year: number } {
+  const vn = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  return {
+    month: vn.getUTCMonth() + 1,
+    year: vn.getUTCFullYear(),
+  };
+}
+
 export async function getMyAttendance(req: Request, res: Response): Promise<void> {
-  const now = new Date();
-  const month = req.query["month"] ? Number(req.query["month"]) : now.getMonth() + 1;
-  const year = req.query["year"] ? Number(req.query["year"]) : now.getFullYear();
+  const vnNow = getCurrentVnMonthYear();
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : vnNow.month;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : vnNow.year;
 
   const data = await AttendanceService.getMyMonthlyAttendance(month, year, req.user!);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
@@ -37,9 +45,9 @@ export async function getMyAttendance(req: Request, res: Response): Promise<void
 }
 
 export async function getUnitAttendance(req: Request, res: Response): Promise<void> {
-  const now = new Date();
-  const month = req.query["month"] ? Number(req.query["month"]) : now.getMonth() + 1;
-  const year = req.query["year"] ? Number(req.query["year"]) : now.getFullYear();
+  const vnNow = getCurrentVnMonthYear();
+  const month = req.query["month"] !== undefined ? Number(req.query["month"]) : vnNow.month;
+  const year = req.query["year"] !== undefined ? Number(req.query["year"]) : vnNow.year;
   const unitId = req.query["unitId"] ? String(req.query["unitId"]) : undefined;
 
   const data = await AttendanceService.getUnitAttendance(unitId, month, year, req.user!);
