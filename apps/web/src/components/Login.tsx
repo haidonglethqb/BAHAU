@@ -2,10 +2,33 @@
 
 import { useState } from 'react'
 import { ArrowLeft, Building2, Lock, Mail, ShieldCheck, UserCheck } from 'lucide-react'
-import { ROLES, type Role } from '../data'
+import { type Role } from '../data'
 import { Button } from './ui'
-import { useAuth, ROLE_USER_MAP } from '../context/AuthContext'
+import { useAuth } from '../context/AuthContext'
 import { useRouter } from 'next/navigation'
+
+const DEV_SEED_ACCOUNTS: Array<{ label: string; email: string; uiRole: Role }> = [
+  { label: 'Giảng viên (CBGV)', email: 'employee@dau.edu.vn', uiRole: 'cbgv' },
+  { label: 'Trưởng đơn vị', email: 'unithead@dau.edu.vn', uiRole: 'truongkhoa' },
+  { label: 'Phòng TCHC', email: 'hrspecialist@dau.edu.vn', uiRole: 'tchc' },
+  { label: 'Hiệu trưởng', email: 'rector@dau.edu.vn', uiRole: 'hieutruong' },
+  { label: 'Admin Hệ thống', email: 'admin@dau.edu.vn', uiRole: 'admin' },
+]
+
+function mapToUiRole(role?: string): Role {
+  switch (role) {
+    case 'DEAN':
+      return 'truongkhoa'
+    case 'HR_SPECIALIST':
+      return 'tchc'
+    case 'RECTOR':
+      return 'hieutruong'
+    case 'SYSTEM_ADMIN':
+      return 'admin'
+    default:
+      return 'cbgv'
+  }
+}
 
 export function Login({
   onLogin,
@@ -22,49 +45,41 @@ export function Login({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSelectAccount = (rKey: Role) => {
-    const userAcc = ROLE_USER_MAP[rKey]
-    if (userAcc) {
-      setEmail(userAcc.email)
-      setPassword('Admin@123456')
-      setError(null)
-    }
+  const isDevMode = process.env.NODE_ENV !== 'production'
+
+  const handleSelectSeedEmail = (seedEmail: string) => {
+    setEmail(seedEmail)
+    setError(null)
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setLoading(true)
 
-    if (!email || !password) {
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail || !password) {
       setError('Vui lòng nhập đầy đủ Email và Mật khẩu.')
-      setLoading(false)
       return
     }
 
-    // Identify user account from email
-    let matchedRole: Role = 'cbgv'
-    if (email.includes('rector') || email.includes('dung.hd')) matchedRole = 'hieutruong'
-    else if (email.includes('hr') || email.includes('cuong.lm') || email.includes('tchc')) matchedRole = 'tchc'
-    else if (email.includes('admin') || email.includes('quantri')) matchedRole = 'admin'
-    else if (email.includes('dean') || email.includes('binh.tt') || email.includes('truongkhoa')) matchedRole = 'truongkhoa'
-    else if (email.includes('an.nv') || email.includes('gv.an') || email.includes('cbgv')) matchedRole = 'cbgv'
-
-    const targetUser = ROLE_USER_MAP[matchedRole]
-
-    setTimeout(() => {
-      setLoading(false)
-      if (targetUser) {
-        login(targetUser)
-        if (onLogin) {
-          onLogin(matchedRole)
-        } else {
-          router.push('/dashboard')
-        }
-      } else {
-        setError('Tài khoản hoặc mật khẩu không chính xác.')
+    setLoading(true)
+    try {
+      const result = await login(trimmedEmail, password)
+      if (!result.ok || !result.user) {
+        setError(result.error || 'Email hoặc mật khẩu không chính xác.')
+        return
       }
-    }, 400)
+
+      if (onLogin) {
+        onLogin(mapToUiRole(result.user.role))
+      } else {
+        router.push('/dashboard')
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Không thể kết nối tới máy chủ xác thực.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -163,6 +178,7 @@ export function Login({
                 icon={<Mail size={16} />}
                 placeholder="hoten@dau.edu.vn"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
@@ -171,6 +187,7 @@ export function Login({
                 icon={<Lock size={16} />}
                 placeholder="••••••••"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -188,35 +205,34 @@ export function Login({
               </Button>
             </form>
 
-            <div className="mt-7 border-t border-line pt-5">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted">
-                  TÀI KHOẢN MẪU PHÂN QUYỀN DAU
-                </span>
-                <span className="text-[10px] text-slate-400">Bấm để điền mẫu</span>
-              </div>
-              <div className="grid grid-cols-1 gap-1.5">
-                {ROLES.map((r) => {
-                  const acc = ROLE_USER_MAP[r.id]
-                  return (
+            {isDevMode && (
+              <div className="mt-7 border-t border-line pt-5">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted">
+                    TÀI KHOẢN SEED MÔI TRƯỜNG DEV
+                  </span>
+                  <span className="text-[10px] text-slate-400">Bấm để điền email</span>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {DEV_SEED_ACCOUNTS.map((acc) => (
                     <button
-                      key={r.id}
+                      key={acc.email}
                       type="button"
-                      onClick={() => handleSelectAccount(r.id)}
+                      onClick={() => handleSelectSeedEmail(acc.email)}
                       className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-left text-xs text-slate-700 transition hover:bg-brand-50 hover:border-brand-200 cursor-pointer"
                     >
                       <div className="truncate">
-                        <span className="font-semibold text-slate-800">{r.label}:</span>{' '}
-                        <span className="text-muted">{acc?.email}</span>
+                        <span className="font-semibold text-slate-800">{acc.label}:</span>{' '}
+                        <span className="text-muted">{acc.email}</span>
                       </div>
                       <span className="text-[10px] text-brand-600 font-medium shrink-0 flex items-center gap-0.5">
-                        <UserCheck size={11} /> Chọn
+                        <UserCheck size={11} /> Điền email
                       </span>
                     </button>
-                  )
-                })}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
           <p className="mt-6 text-center font-mono text-[11px] text-slate-400">© 2026 DAU · Phân quyền Hệ thống Nhân sự</p>
         </div>

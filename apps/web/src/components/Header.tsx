@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   Banknote,
@@ -10,7 +11,6 @@ import {
   LogOut,
   ScrollText,
   Sparkles,
-  User,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { NotificationDropdown } from "./NotificationDropdown";
@@ -19,9 +19,15 @@ import { ExecutiveResolutionsModal } from "./ExecutiveResolutionsModal";
 import { Avatar } from "./ui";
 
 export function Header() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const router = useRouter();
+  const { user, isAuthenticated, logout, hasRole } = useAuth();
   const [showPayslip, setShowPayslip] = useState(false);
   const [showExecutive, setShowExecutive] = useState(false);
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/login");
+  };
 
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-surface/95 backdrop-blur-md shadow-2xs">
@@ -83,12 +89,16 @@ export function Header() {
               <Link href="/dashboard" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 text-brand-600 font-bold">
                 Dashboard
               </Link>
-              <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                CBGV
-              </Link>
-              <Link href="/contracts" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                Hợp đồng
-              </Link>
+              {hasRole(["DEAN", "HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]) && (
+                <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                  CBGV
+                </Link>
+              )}
+              {hasRole(["HR_SPECIALIST", "SYSTEM_ADMIN"]) && (
+                <Link href="/contracts" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                  Hợp đồng
+                </Link>
+              )}
               <Link href="/leave" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Nghỉ phép
               </Link>
@@ -98,9 +108,11 @@ export function Header() {
               <Link href="/workload" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
                 Giờ chuẩn
               </Link>
-              <Link href="/approvals" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                Phê duyệt
-              </Link>
+              {hasRole(["DEAN", "HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]) && (
+                <Link href="/approvals" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                  Phê duyệt
+                </Link>
+              )}
               <Link
                 href="/ai-assistant"
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"
@@ -108,7 +120,7 @@ export function Header() {
                 <Sparkles size={13} />
                 <span>AI Trợ lý</span>
               </Link>
-              {(user?.role === "SYSTEM_ADMIN" || user?.role === "RECTOR") && (
+              {hasRole(["SYSTEM_ADMIN", "RECTOR"]) && (
                 <Link
                   href="/admin/system"
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold"
@@ -132,12 +144,14 @@ export function Header() {
                 >
                   <Banknote size={14} /> Phiếu lương
                 </button>
-                <button
-                  onClick={() => setShowExecutive(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold cursor-pointer shadow-2xs"
-                >
-                  <ScrollText size={14} /> QĐ NĐ 30
-                </button>
+                {hasRole(["HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]) && (
+                  <button
+                    onClick={() => setShowExecutive(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold cursor-pointer shadow-2xs"
+                  >
+                    <ScrollText size={14} /> QĐ NĐ 30
+                  </button>
+                )}
               </div>
 
               <NotificationDropdown />
@@ -149,7 +163,7 @@ export function Header() {
                   <p className="text-[10px] text-muted">{user.roleLabel}</p>
                 </div>
                 <button
-                  onClick={() => logout()}
+                  onClick={handleLogout}
                   title="Đăng xuất"
                   className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
                 >
@@ -169,8 +183,8 @@ export function Header() {
         </div>
       </div>
 
-      {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
-      {showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
+      {isAuthenticated && showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
+      {isAuthenticated && showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
     </header>
   );
 }

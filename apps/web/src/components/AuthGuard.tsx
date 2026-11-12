@@ -8,11 +8,17 @@ import { useAuth } from "../context/AuthContext";
 interface AuthGuardProps {
   children: React.ReactNode;
   allowedRoles?: string[];
+  requiredPermissions?: string[];
   moduleName?: string;
 }
 
-export function AuthGuard({ children, allowedRoles, moduleName = "Phân hệ Nghiệp vụ" }: AuthGuardProps) {
-  const { user, loading, isAuthenticated } = useAuth();
+export function AuthGuard({
+  children,
+  allowedRoles,
+  requiredPermissions,
+  moduleName = "Phân hệ Nghiệp vụ",
+}: AuthGuardProps) {
+  const { user, loading, isAuthenticated, hasRole, can } = useAuth();
 
   if (loading) {
     return (
@@ -65,8 +71,11 @@ export function AuthGuard({ children, allowedRoles, moduleName = "Phân hệ Ngh
     );
   }
 
-  // Check role authorization if specified
-  if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+  const roleAllowed = !allowedRoles || allowedRoles.length === 0 || hasRole(allowedRoles);
+  const permAllowed =
+    !requiredPermissions || requiredPermissions.length === 0 || can(requiredPermissions);
+
+  if (!roleAllowed || !permAllowed) {
     return (
       <div className="mx-auto max-w-xl py-16 px-4 text-center">
         <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-8 shadow-sm">
@@ -79,9 +88,11 @@ export function AuthGuard({ children, allowedRoles, moduleName = "Phân hệ Ngh
           <p className="mt-2 text-xs text-slate-600 leading-relaxed">
             Tài khoản của bạn (<strong>{user.fullName}</strong> — vai trò <strong>{user.roleLabel}</strong>) không thuộc phạm vi thẩm quyền truy cập phân hệ <strong>{moduleName}</strong>.
           </p>
-          <div className="mt-3 text-[11px] text-amber-900 font-mono bg-amber-100/70 py-1.5 px-3 rounded-lg inline-block">
-            Phân hệ này yêu cầu vai trò: {allowedRoles.join(", ")}
-          </div>
+          {allowedRoles && allowedRoles.length > 0 && (
+            <div className="mt-3 text-[11px] text-amber-900 font-mono bg-amber-100/70 py-1.5 px-3 rounded-lg inline-block">
+              Phân hệ này yêu cầu vai trò: {allowedRoles.join(", ")}
+            </div>
+          )}
           <div className="mt-6 flex justify-center space-x-3">
             <Link
               href="/"

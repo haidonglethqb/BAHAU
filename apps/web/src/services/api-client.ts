@@ -1,18 +1,29 @@
 import { getMockPayrollData } from './payroll-mock'
 /**
  * BAHAU Hybrid Data Adapter & API Client
- * Kết nối 2 chiều giữa Swiss UI và Backend API (Port 4000)
- * Tích hợp Zero-Crash Fallback: Nếu API Server tạm ngắt hoặc chưa kết nối DB, tự động fallback sang Mock Data an toàn.
+ * Kết nối giữa Next.js UI và Backend API (Port 4000 hoặc same-origin rewrite /api/v1/*)
  */
 
 import { EMPLOYEES, MY_REQUESTS, PENDING, type Employee, type LeaveRequest } from '../data'
 
-const DEFAULT_API_URL = 'http://127.0.0.1:4000'
+const DEFAULT_SERVER_API_URL = 'http://127.0.0.1:4000'
 const SESSION_KEY = 'bahau_session_id'
+
+export const AUTH_UNAUTHORIZED_EVENT = 'bahau:unauthorized'
+
+export interface ApiPagination {
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+}
 
 export interface ApiResponse<T = any> {
   success: boolean
   data?: T
+  pagination?: ApiPagination
   error?: {
     code: string
     message: string
@@ -21,7 +32,34 @@ export interface ApiResponse<T = any> {
   meta?: {
     timestamp: string
     requestId: string
+    pagination?: ApiPagination
   }
+}
+
+export interface ApiRequestOptions extends RequestInit {
+  _retried?: boolean
+}
+
+export interface ApiClientResult<T = any> {
+  ok: boolean
+  status: number
+  data?: T
+  error?: string
+  pagination?: ApiPagination
+  meta?: ApiResponse['meta']
+}
+
+function resolveBaseUrl(): string {
+  const configured =
+    typeof process !== 'undefined' ? process.env?.NEXT_PUBLIC_API_URL?.trim() : undefined
+  if (configured) {
+    return configured.replace(/\/+$/, '')
+  }
+  if (typeof window !== 'undefined') {
+    // Use same-origin relative /api/v1/* in browser so Next.js rewrites forward cookies cleanly
+    return ''
+  }
+  return DEFAULT_SERVER_API_URL
 }
 
 class ApiClient {
@@ -30,7 +68,11 @@ class ApiClient {
   private lastHealthCheckTime = 0
 
   constructor() {
-    this.baseUrl = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || DEFAULT_API_URL
+    this.baseUrl = resolveBaseUrl()
+  }
+
+  private getBaseUrl(): string {
+    return resolveBaseUrl() || this.baseUrl
   }
 
   public getSessionId(): string | null {
@@ -55,6 +97,18 @@ class ApiClient {
     }
   }
 
+  private clearSessionOnUnauthorized(): void {
+    this.setSessionId(null)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('bahau_auth_user')
+      } catch {
+        // ignore storage cleanup errors
+      }
+      window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT))
+    }
+  }
+
   /**
    * Kiểm tra nhanh trạng thái kết nối tới Backend API (cache 5s)
    */
@@ -64,16 +118,15 @@ class ApiClient {
       return this.isServerHealthy
     }
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 2000)
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 2000)
-
-      const res = await fetch(`${this.baseUrl}/api/v1/health`, {
+      const res = await fetch(`${this.getBaseUrl()}/api/v1/health`, {
         method: 'GET',
+        credentials: 'include',
         signal: controller.signal,
         cache: 'no-store',
       })
-      clearTimeout(timeoutId)
 
       this.isServerHealthy = res.ok
       this.lastHealthCheckTime = now
@@ -82,6 +135,8 @@ class ApiClient {
       this.isServerHealthy = false
       this.lastHealthCheckTime = now
       return false
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
@@ -90,12 +145,14 @@ class ApiClient {
    */
   public async request<T = any>(
     path: string,
-    options: RequestInit = {}
-  ): Promise<{ ok: boolean; status: number; data?: T; error?: string }> {
-    const url = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`
-    const headers = new Headers(options.headers || {})
+    options: ApiRequestOptions = {}
+  ): Promise<ApiClientResult<T>> {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+    const url = `${this.getBaseUrl()}${normalizedPath}`
+    const { _retried, ...fetchOptions } = options
+    const headers = new Headers(fetchOptions.headers || {})
 
-    if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+    if (!headers.has('Content-Type') && !(fetchOptions.body instanceof FormData)) {
       headers.set('Content-Type', 'application/json')
     }
 
@@ -104,17 +161,16 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${sessionId}`)
     }
 
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 6000)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
 
+    try {
       const response = await fetch(url, {
-        ...options,
+        ...fetchOptions,
         headers,
         credentials: 'include',
         signal: controller.signal,
       })
-      clearTimeout(timeoutId)
 
       let json: any = null
       try {
@@ -128,36 +184,27 @@ class ApiClient {
           ok: true,
           status: response.status,
           data: json?.data !== undefined ? json.data : json,
+          pagination: json?.pagination ?? json?.meta?.pagination,
+          meta: json?.meta,
         }
       }
 
-      if (response.status === 401 && !(options as any)._retried) {
-        try {
-          const authUserStr = typeof window !== 'undefined' ? localStorage.getItem('bahau_auth_user') : null;
-          if (authUserStr) {
-            const authUser = JSON.parse(authUserStr);
-            const roleEmailMap: Record<string, string> = {
-              LECTURER: 'employee@dau.edu.vn',
-              DEAN: 'unithead@dau.edu.vn',
-              HR_SPECIALIST: 'hrspecialist@dau.edu.vn',
-              RECTOR: 'rector@dau.edu.vn',
-              SYSTEM_ADMIN: 'admin@dau.edu.vn',
-            };
-            const email = roleEmailMap[authUser.role] || authUser.email || 'hrspecialist@dau.edu.vn';
-            const loginRes = await this.auth.login(email, 'Admin@123456');
-            if (loginRes.ok) {
-              return await this.request(path, { ...options, _retried: true } as any);
-            }
-          }
-        } catch {
-          // ignore auto-login error
-        }
+      // Clear persisted session only on a real 401 (never on transient 5xx, and never recurse on /auth/login)
+      if (
+        response.status === 401 &&
+        !_retried &&
+        !normalizedPath.startsWith('/api/v1/auth/login')
+      ) {
+        this.clearSessionOnUnauthorized()
       }
+
       const errorMessage = json?.error?.message || json?.message || `HTTP ${response.status}`
       return {
         ok: false,
         status: response.status,
         error: errorMessage,
+        pagination: json?.pagination ?? json?.meta?.pagination,
+        meta: json?.meta,
       }
     } catch (err: any) {
       return {
@@ -165,6 +212,8 @@ class ApiClient {
         status: 0,
         error: err?.message || 'Network request failed',
       }
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
@@ -172,10 +221,11 @@ class ApiClient {
   // AUTH SERVICE
   // ===========================================================================
   public auth = {
-    login: async (email: string, password = 'Admin@123456') => {
+    login: async (email: string, password: string) => {
       const res = await this.request('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
+        _retried: true,
       })
       if (res.ok && res.data?.sessionId) {
         this.setSessionId(res.data.sessionId)
@@ -184,12 +234,119 @@ class ApiClient {
     },
 
     logout: async () => {
-      await this.request('/api/v1/auth/logout', { method: 'POST' }).catch(() => {})
+      await this.request('/api/v1/auth/logout', { method: 'POST', _retried: true }).catch(() => {})
       this.setSessionId(null)
     },
 
     getMe: async () => {
       return await this.request('/api/v1/auth/me', { method: 'GET' })
+    },
+  }
+
+  // ===========================================================================
+  // ORGANIZATIONAL UNITS SERVICE
+  // ===========================================================================
+  public units = {
+    getTree: async () => {
+      return await this.request('/api/v1/units/tree', { method: 'GET' })
+    },
+
+    getAll: async () => {
+      return await this.request('/api/v1/units', { method: 'GET' })
+    },
+  }
+
+  // ===========================================================================
+  // NOTIFICATIONS SERVICE
+  // ===========================================================================
+  public notifications = {
+    getMy: async (limit = 30) => {
+      return await this.request(`/api/v1/notifications/my?limit=${encodeURIComponent(String(limit))}`, {
+        method: 'GET',
+      })
+    },
+
+    markAsRead: async (id: string) => {
+      return await this.request(`/api/v1/notifications/${encodeURIComponent(id)}/read`, {
+        method: 'PATCH',
+      })
+    },
+
+    markAllAsRead: async () => {
+      return await this.request('/api/v1/notifications/read-all', {
+        method: 'POST',
+      })
+    },
+  }
+
+  // ===========================================================================
+  // CONTRACTS SERVICE
+  // ===========================================================================
+  public contracts = {
+    list: async (params?: {
+      page?: number
+      pageSize?: number
+      search?: string
+      status?: string
+      contractType?: string
+      unitId?: string
+      expiringWithinDays?: number
+    }) => {
+      const q = new URLSearchParams()
+      if (params?.page) q.set('page', String(params.page))
+      if (params?.pageSize) q.set('pageSize', String(params.pageSize))
+      if (params?.search) q.set('search', params.search)
+      if (params?.status) q.set('status', params.status)
+      if (params?.contractType) q.set('contractType', params.contractType)
+      if (params?.unitId) q.set('unitId', params.unitId)
+      if (params?.expiringWithinDays !== undefined) {
+        q.set('expiringWithinDays', String(params.expiringWithinDays))
+      }
+      const queryStr = q.toString()
+      const res = await this.request(`/api/v1/contracts${queryStr ? `?${queryStr}` : ''}`, {
+        method: 'GET',
+      })
+      const items = Array.isArray(res.data) ? res.data : res.data?.items || []
+      const pagination = res.pagination ?? res.meta?.pagination ?? null
+      return {
+        ...res,
+        items,
+        pagination,
+      }
+    },
+
+    getContracts: async (params?: {
+      page?: number
+      pageSize?: number
+      search?: string
+      status?: string
+      contractType?: string
+      unitId?: string
+      expiringWithinDays?: number
+    }) => {
+      return await this.contracts.list(params)
+    },
+
+    getAlertSummary: async () => {
+      return await this.request('/api/v1/contracts/summary/alerts', { method: 'GET' })
+    },
+
+    getById: async (id: string) => {
+      return await this.request(`/api/v1/contracts/${encodeURIComponent(id)}`, { method: 'GET' })
+    },
+
+    create: async (data: Record<string, any>) => {
+      return await this.request('/api/v1/contracts', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    },
+
+    renew: async (id: string, data: Record<string, any>) => {
+      return await this.request(`/api/v1/contracts/${encodeURIComponent(id)}/renew`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
     },
   }
 
@@ -255,7 +412,7 @@ class ApiClient {
     },
 
     cancelRequest: async (id: string) => {
-      return await this.request(`/api/v1/leave/requests/${id}/cancel`, {
+      return await this.request(`/api/v1/leave/requests/${encodeURIComponent(id)}/cancel`, {
         method: 'POST',
       })
     },
@@ -278,7 +435,7 @@ class ApiClient {
           to: new Date(Date.now() + 86400000 * 2).toLocaleDateString('vi-VN'),
           days: 2,
           reason: task.summary || 'Đơn trình phê duyệt công tác',
-          substitute: 'ThS. Võ Hoàng Long',
+          substitute: 'Chưa chỉ định',
           substituteOk: true,
           status: 'submitted',
         }))
@@ -287,14 +444,14 @@ class ApiClient {
     },
 
     approveStep: async (stepId: string, comment = 'Đồng ý phê duyệt') => {
-      return await this.request(`/api/v1/workflow/steps/${stepId}/approve`, {
+      return await this.request(`/api/v1/workflow/steps/${encodeURIComponent(stepId)}/approve`, {
         method: 'POST',
         body: JSON.stringify({ comment }),
       })
     },
 
     rejectStep: async (stepId: string, reason: string) => {
-      return await this.request(`/api/v1/workflow/steps/${stepId}/reject`, {
+      return await this.request(`/api/v1/workflow/steps/${encodeURIComponent(stepId)}/reject`, {
         method: 'POST',
         body: JSON.stringify({ reason }),
       })
@@ -307,27 +464,53 @@ class ApiClient {
   public employees = {
     getAll: async (): Promise<Employee[]> => {
       const res = await this.request('/api/v1/employees', { method: 'GET' })
-      const list = Array.isArray(res.data) ? res.data : (Array.isArray(res.data?.items) ? res.data.items : null)
+      const list = Array.isArray(res.data) ? res.data : Array.isArray(res.data?.items) ? res.data.items : null
       if (res.ok && list) {
         return list.map((emp: any) => ({
           code: emp.employeeCode,
           name: emp.fullName,
           degree: emp.academicDegree || 'ThS',
-          unit: emp.assignments?.[0]?.unit?.name || 'Khoa Kiến trúc',
-          position: emp.assignments?.[0]?.position?.name || 'Giảng viên',
+          unit: emp.primaryUnitName || emp.assignments?.[0]?.unit?.name || 'Chưa phân đơn vị',
+          position: emp.primaryPositionName || emp.assignments?.[0]?.position?.name || 'Cán bộ / Giảng viên',
           concurrent: emp.assignments?.find((a: any) => a.isHeadOfUnit)?.unit?.name
             ? `Kiêm Lãnh đạo ${emp.assignments?.find((a: any) => a.isHeadOfUnit)?.unit?.name}`
             : undefined,
-          email: emp.workEmail || emp.user?.email || `${emp.employeeCode.toLowerCase()}@dau.edu.vn`,
-          phone: emp.phoneNumber || '0905 000 000',
-          status: emp.employmentStatus === 'ACTIVE' ? 'active' : 'leave',
+          email: emp.workEmail || emp.user?.email || `${String(emp.employeeCode || '').toLowerCase()}@dau.edu.vn`,
+          phone: emp.phoneNumber || '—',
+          status:
+            emp.employmentStatus === 'ACTIVE'
+              ? 'active'
+              : emp.employmentStatus === 'RESIGNED' || emp.employmentStatus === 'RETIRED'
+              ? 'terminated'
+              : 'leave',
         }))
       }
       return EMPLOYEES
     },
 
     getById: async (id: string) => {
-      return await this.request(`/api/v1/employees/${id}`, { method: 'GET' })
+      return await this.request(`/api/v1/employees/${encodeURIComponent(id)}`, { method: 'GET' })
+    },
+
+    getMyProfile: async () => {
+      return await this.request('/api/v1/employees/me', { method: 'GET' })
+    },
+
+    updateMyContact: async (data: {
+      phoneNumber?: string | null
+      personalEmail?: string | null
+      currentAddress?: string | null
+    }) => {
+      return await this.request('/api/v1/employees/me/contact', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    },
+
+    getEvents: async (employeeId: string) => {
+      return await this.request(`/api/v1/employees/${encodeURIComponent(employeeId)}/events`, {
+        method: 'GET',
+      })
     },
   }
 
@@ -336,15 +519,21 @@ class ApiClient {
   // ===========================================================================
   public workload = {
     getMyQuota: async (academicYear = '2025-2026') => {
-      return await this.request(`/api/v1/workload/my-quota?academicYear=${academicYear}`, {
-        method: 'GET',
-      })
+      return await this.request(
+        `/api/v1/workload/my-quota?academicYear=${encodeURIComponent(academicYear)}`,
+        {
+          method: 'GET',
+        }
+      )
     },
 
     getSettlement: async (academicYear = '2025-2026') => {
-      return await this.request(`/api/v1/workload/settlement?academicYear=${academicYear}`, {
-        method: 'GET',
-      })
+      return await this.request(
+        `/api/v1/workload/settlement?academicYear=${encodeURIComponent(academicYear)}`,
+        {
+          method: 'GET',
+        }
+      )
     },
 
     convert: async (data: { workloadType: string; rawHours: number; studentCount?: number }) => {
@@ -433,7 +622,7 @@ class ApiClient {
 
     exportPayslipPdf: async (employeeId = 'my', month = 9, year = 2026): Promise<Blob | null> => {
       try {
-        const url = `${this.baseUrl}/api/v1/payroll/payslip/${encodeURIComponent(employeeId)}/pdf?month=${month}&year=${year}`
+        const url = `${this.getBaseUrl()}/api/v1/payroll/payslip/${encodeURIComponent(employeeId)}/pdf?month=${month}&year=${year}`
         const headers = new Headers()
         const sessionId = this.getSessionId()
         if (sessionId) {
@@ -442,6 +631,7 @@ class ApiClient {
         const res = await fetch(url, {
           method: 'GET',
           headers,
+          credentials: 'include',
         })
         if (!res.ok) return null
         return await res.blob()
@@ -485,7 +675,7 @@ class ApiClient {
 
     exportPdf: async (resolution: any): Promise<Blob | null> => {
       try {
-        const url = `${this.baseUrl}/api/v1/executive/export-pdf`
+        const url = `${this.getBaseUrl()}/api/v1/executive/export-pdf`
         const headers = new Headers({
           'Content-Type': 'application/json',
         })
@@ -496,6 +686,7 @@ class ApiClient {
         const res = await fetch(url, {
           method: 'POST',
           headers,
+          credentials: 'include',
           body: JSON.stringify(resolution),
         })
         if (!res.ok) return null
@@ -535,7 +726,16 @@ class ApiClient {
 
     getMetricsText: async (): Promise<string | null> => {
       try {
-        const res = await fetch(`${this.baseUrl}/api/v1/metrics`, { method: 'GET' })
+        const headers = new Headers()
+        const sessionId = this.getSessionId()
+        if (sessionId) {
+          headers.set('Authorization', `Bearer ${sessionId}`)
+        }
+        const res = await fetch(`${this.getBaseUrl()}/api/v1/metrics`, {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        })
         if (!res.ok) return null
         return await res.text()
       } catch {

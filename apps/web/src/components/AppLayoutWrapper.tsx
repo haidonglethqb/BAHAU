@@ -8,7 +8,11 @@ export function AppLayoutWrapper({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   // Landing page, login page, and public document verification have standalone full-page layouts
-  const isPublicStandalonePage = pathname === '/' || pathname === '/login' || pathname?.startsWith('/verify');
+  const isPublicStandalonePage =
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname === '/verify' ||
+    Boolean(pathname?.startsWith('/verify/'));
 
   if (isPublicStandalonePage) {
     return <div className="min-h-screen bg-canvas text-ink">{children}</div>;

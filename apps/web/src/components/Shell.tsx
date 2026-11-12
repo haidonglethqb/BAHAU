@@ -17,13 +17,13 @@ import {
   GraduationCap,
   Inbox,
   LayoutDashboard,
+  Lock,
+  LogIn,
   LogOut,
   Menu,
   Network,
   Plane,
   ScrollText,
-  Search,
-  ShieldCheck,
   Signal,
   Sparkles,
   TrendingUp,
@@ -35,7 +35,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import type { Role } from '../data'
-import { Avatar, Badge, cx } from './ui'
+import { Avatar, cx } from './ui'
 import { NotificationDropdown } from './NotificationDropdown'
 import { PayslipModal } from './PayslipModal'
 import { ExecutiveResolutionsModal } from './ExecutiveResolutionsModal'
@@ -107,45 +107,37 @@ export function Shell({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { user, logout } = useAuth()
+  const { user, loading, isAuthenticated, logout, hasRole } = useAuth()
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showPayslip, setShowPayslip] = useState(false)
   const [showExecutive, setShowExecutive] = useState(false)
 
-  const currentUser = user || {
-    id: 'usr-guest',
-    email: 'cbgv@dau.edu.vn',
-    fullName: 'Cán bộ Giảng viên DAU',
-    role: 'LECTURER',
-    roleLabel: 'Giảng viên (CBGV)',
-    unitName: 'Khoa Kiến trúc',
-    title: 'Giảng viên',
-    code: 'DAU260003',
-  }
+  const userRole = isAuthenticated && user ? user.role : null
 
-  const userRole = currentUser.role || 'LECTURER'
-
-  const filteredNavGroups = NAV_GROUPS.map((group) => {
-    const items = group.items
-      .filter((item) => !item.allowedRoles || item.allowedRoles.includes(userRole))
-      .map((item) => {
-        if (item.href === '/payroll') {
-          if (userRole === 'LECTURER') {
-            return { ...item, label: 'Phiếu lương cá nhân' }
-          }
-          if (userRole === 'DEAN') {
-            return { ...item, label: 'Bảng lương Khoa KT' }
-          }
-          return { ...item, label: 'Bảng lương Toàn trường' }
-        }
-        return item
-      })
-    return { ...group, items }
-  }).filter((group) => group.items.length > 0)
+  const filteredNavGroups = userRole
+    ? NAV_GROUPS.map((group) => {
+        const items = group.items
+          .filter((item) => !item.allowedRoles || hasRole(item.allowedRoles))
+          .map((item) => {
+            if (item.href === '/payroll') {
+              if (userRole === 'LECTURER') {
+                return { ...item, label: 'Phiếu lương cá nhân' }
+              }
+              if (userRole === 'DEAN') {
+                return { ...item, label: 'Bảng lương Khoa' }
+              }
+              return { ...item, label: 'Bảng lương Toàn trường' }
+            }
+            return item
+          })
+        return { ...group, items }
+      }).filter((group) => group.items.length > 0)
+    : []
 
   const handleLogout = async () => {
+    setUserMenuOpen(false)
     await logout()
     router.push('/login')
   }
@@ -158,7 +150,7 @@ export function Shell({
       <aside className="sticky top-0 hidden h-screen flex-col border-r border-line bg-surface md:flex select-none z-30">
         {/* Brand Banner */}
         <Link
-          href="/dashboard"
+          href={isAuthenticated ? '/dashboard' : '/'}
           className="flex h-16 items-center gap-3 border-b border-line px-5 hover:bg-slate-50/70 transition-colors"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500 text-white shadow-xs">
@@ -177,56 +169,77 @@ export function Shell({
 
         {/* Navigation items - Filtered by Authenticated Role */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-          {filteredNavGroups.map((group) => (
-            <div key={group.group}>
-              <div className="mb-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {group.group}
-              </div>
-              <div className="space-y-0.5">
-                {group.items.map((item) => {
-                  const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cx(
-                        'flex items-center justify-between rounded-lg py-2 px-3 text-[13px] transition-all duration-150 ease-out font-medium',
-                        isActive
-                          ? 'border-l-4 border-brand-500 bg-brand-50 font-bold text-brand-700 pl-2 shadow-2xs'
-                          : 'border-l-4 border-transparent text-muted hover:bg-slate-50 hover:text-ink',
-                      )}
-                    >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <span className={isActive ? 'text-brand-600' : 'text-slate-400'}>{item.icon}</span>
-                        <span className="truncate">{item.label}</span>
-                      </div>
-                      {item.badge && (
-                        <span
-                          className={cx(
-                            'rounded-full px-1.5 py-0.2 text-[10px] font-mono font-semibold',
-                            item.badge === 'AI'
-                              ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                              : item.badge === 'K8s'
-                              ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                              : 'bg-amber-100 text-amber-800 border border-amber-200',
-                          )}
-                        >
-                          {item.badge}
-                        </span>
-                      )}
-                    </Link>
-                  )
-                })}
-              </div>
+          {loading ? (
+            <div className="px-3 py-6 text-center text-xs text-muted">
+              Đang tải phiên làm việc...
             </div>
-          ))}
+          ) : filteredNavGroups.length === 0 ? (
+            <div className="mx-1 rounded-xl border border-line bg-slate-50 p-4 text-center space-y-3">
+              <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+                <Lock size={16} />
+              </div>
+              <p className="text-xs text-muted leading-relaxed">
+                Vui lòng đăng nhập tài khoản @dau.edu.vn để truy cập các phân hệ nội bộ.
+              </p>
+              <Link
+                href="/login"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors"
+              >
+                <LogIn size={14} /> Đăng nhập
+              </Link>
+            </div>
+          ) : (
+            filteredNavGroups.map((group) => (
+              <div key={group.group}>
+                <div className="mb-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {group.group}
+                </div>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={cx(
+                          'flex items-center justify-between rounded-lg py-2 px-3 text-[13px] transition-all duration-150 ease-out font-medium',
+                          isActive
+                            ? 'border-l-4 border-brand-500 bg-brand-50 font-bold text-brand-700 pl-2 shadow-2xs'
+                            : 'border-l-4 border-transparent text-muted hover:bg-slate-50 hover:text-ink',
+                        )}
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          <span className={isActive ? 'text-brand-600' : 'text-slate-400'}>{item.icon}</span>
+                          <span className="truncate">{item.label}</span>
+                        </div>
+                        {item.badge && (
+                          <span
+                            className={cx(
+                              'rounded-full px-1.5 py-0.2 text-[10px] font-mono font-semibold',
+                              item.badge === 'AI'
+                                ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                                : item.badge === 'K8s'
+                                ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200',
+                            )}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </div>
+            ))
+          )}
         </nav>
 
         {/* System telemetry footer */}
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-muted border border-slate-100">
             <Signal size={13} className="text-emerald-600 shrink-0" />
-            <span className="font-mono text-[10px] truncate">API 4000: OK · PostgreSQL 17</span>
+            <span className="font-mono text-[10px] truncate">API 4000 · PostgreSQL 17</span>
           </div>
         </div>
       </aside>
@@ -252,43 +265,57 @@ export function Shell({
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-              {filteredNavGroups.map((group) => (
-                <div key={group.group}>
-                  <div className="mb-1 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    {group.group}
-                  </div>
-                  <div className="space-y-0.5">
-                    {group.items.map((item) => {
-                      const isActive = pathname === item.href
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onClick={() => setMobileMenuOpen(false)}
-                          className={cx(
-                            'flex items-center justify-between rounded-lg py-2 px-3 text-xs transition-colors',
-                            isActive ? 'bg-brand-50 font-bold text-brand-700' : 'text-muted hover:bg-slate-50',
-                          )}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span>{item.icon}</span>
-                            <span>{item.label}</span>
-                          </div>
-                        </Link>
-                      )
-                    })}
-                  </div>
+              {filteredNavGroups.length === 0 ? (
+                <div className="p-3 text-center">
+                  <Link
+                    href="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    <LogIn size={14} /> Đăng nhập hệ thống
+                  </Link>
                 </div>
-              ))}
+              ) : (
+                filteredNavGroups.map((group) => (
+                  <div key={group.group}>
+                    <div className="mb-1 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {group.group}
+                    </div>
+                    <div className="space-y-0.5">
+                      {group.items.map((item) => {
+                        const isActive = pathname === item.href
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            onClick={() => setMobileMenuOpen(false)}
+                            className={cx(
+                              'flex items-center justify-between rounded-lg py-2 px-3 text-xs transition-colors',
+                              isActive ? 'bg-brand-50 font-bold text-brand-700' : 'text-muted hover:bg-slate-50',
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span>{item.icon}</span>
+                              <span>{item.label}</span>
+                            </div>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
             </nav>
-            <div className="border-t border-line p-3">
-              <button
-                onClick={handleLogout}
-                className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-              >
-                <LogOut size={15} /> Đăng xuất
-              </button>
-            </div>
+            {isAuthenticated && (
+              <div className="border-t border-line p-3">
+                <button
+                  onClick={handleLogout}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                >
+                  <LogOut size={15} /> Đăng xuất
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex-1" onClick={() => setMobileMenuOpen(false)} />
         </div>
@@ -310,94 +337,107 @@ export function Shell({
               <Menu size={18} />
             </button>
 
-            {/* Scope / Official User Identity Badge (Fixed - Non-Demo Switchable) */}
-            <div className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink shadow-2xs">
-              <Building2 size={15} className="text-brand-500 shrink-0" />
-              <span className="hidden sm:inline font-medium text-slate-700">{currentUser.unitName || 'Đơn vị'}</span>
-              <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 border border-brand-200">
-                {currentUser.roleLabel}
-              </span>
-            </div>
+            {/* Official User Identity / Auth Badge */}
+            {isAuthenticated && user ? (
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-ink shadow-2xs">
+                <Building2 size={15} className="text-brand-500 shrink-0" />
+                <span className="hidden sm:inline font-medium text-slate-700">{user.unitName || 'ĐH Kiến trúc Đà Nẵng'}</span>
+                <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 border border-brand-200">
+                  {user.roleLabel}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold text-muted shadow-2xs">
+                <Lock size={14} className="text-slate-400 shrink-0" />
+                <span>Chưa đăng nhập</span>
+              </div>
+            )}
           </div>
 
           {/* Quick Action Badges & User Controls */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Quick Actions */}
-            <div className="hidden lg:flex items-center gap-1.5">
-              {/* Nút truy cập nhanh System Control Center chỉ cho Admin */}
-              {userRole === 'SYSTEM_ADMIN' && (
-                <Link
-                  href="/admin/system"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-semibold transition-colors shadow-2xs"
-                >
-                  <Activity size={14} className="text-blue-600" />
-                  <span>Control Center</span>
-                </Link>
-              )}
+            {isAuthenticated && user ? (
+              <>
+                <div className="hidden lg:flex items-center gap-1.5">
+                  {hasRole('SYSTEM_ADMIN') && (
+                    <Link
+                      href="/admin/system"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-semibold transition-colors shadow-2xs"
+                    >
+                      <Activity size={14} className="text-blue-600" />
+                      <span>Control Center</span>
+                    </Link>
+                  )}
 
-              {/* Phiếu lương cá nhân */}
-              <button
-                onClick={() => setShowPayslip(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-              >
-                <Banknote size={14} className="text-emerald-700" />
-                <span>Phiếu lương</span>
-              </button>
-
-              {/* QĐ NĐ 30: Cho TCHC (soạn thảo), Hiệu trưởng (ký số), Admin */}
-              {(userRole === 'HR_SPECIALIST' || userRole === 'RECTOR' || userRole === 'SYSTEM_ADMIN') && (
-                <button
-                  onClick={() => setShowExecutive(true)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                >
-                  <ScrollText size={14} className="text-amber-700" />
-                  <span>QĐ NĐ 30</span>
-                </button>
-              )}
-            </div>
-
-            {/* Notification Bell Dropdown */}
-            <NotificationDropdown />
-
-            {/* User Identity Pill */}
-            <div className="relative border-l border-line pl-2 sm:pl-3">
-              <button
-                onClick={() => setUserMenuOpen((v) => !v)}
-                className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 cursor-pointer"
-              >
-                <Avatar name={currentUser.fullName} size={32} />
-                <div className="hidden text-left leading-tight sm:block">
-                  <div className="text-[13px] font-bold text-ink">{currentUser.fullName}</div>
-                  <div className="text-[10px] text-muted font-mono">{currentUser.code || 'DAU260003'}</div>
-                </div>
-                <ChevronDown size={14} className="hidden text-slate-400 sm:block" />
-              </button>
-
-              {userMenuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-52 rounded-xl border border-line bg-white p-1.5 shadow-xl z-50">
-                  <div className="px-3 py-2 border-b border-line mb-1">
-                    <p className="text-xs font-bold text-ink truncate">{currentUser.fullName}</p>
-                    <p className="text-[11px] text-muted truncate">{currentUser.email}</p>
-                    <span className="mt-1 inline-block rounded bg-brand-50 px-1.5 py-0.2 text-[10px] font-bold text-brand-700 border border-brand-200">
-                      {currentUser.roleLabel}
-                    </span>
-                  </div>
-                  <Link
-                    href="/profile"
-                    onClick={() => setUserMenuOpen(false)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    <User size={15} /> Hồ sơ cá nhân
-                  </Link>
                   <button
-                    onClick={handleLogout}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-medium text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                    onClick={() => setShowPayslip(true)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
                   >
-                    <LogOut size={15} /> Đăng xuất
+                    <Banknote size={14} className="text-emerald-700" />
+                    <span>Phiếu lương</span>
                   </button>
+
+                  {hasRole(['HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN']) && (
+                    <button
+                      onClick={() => setShowExecutive(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                    >
+                      <ScrollText size={14} className="text-amber-700" />
+                      <span>QĐ NĐ 30</span>
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
+
+                <NotificationDropdown />
+
+                {/* User Identity Pill */}
+                <div className="relative border-l border-line pl-2 sm:pl-3">
+                  <button
+                    onClick={() => setUserMenuOpen((v) => !v)}
+                    className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 cursor-pointer"
+                  >
+                    <Avatar name={user.fullName} size={32} />
+                    <div className="hidden text-left leading-tight sm:block">
+                      <div className="text-[13px] font-bold text-ink">{user.fullName}</div>
+                      <div className="text-[10px] text-muted font-mono">{user.code || user.employeeCode || user.email}</div>
+                    </div>
+                    <ChevronDown size={14} className="hidden text-slate-400 sm:block" />
+                  </button>
+
+                  {userMenuOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-52 rounded-xl border border-line bg-white p-1.5 shadow-xl z-50">
+                      <div className="px-3 py-2 border-b border-line mb-1">
+                        <p className="text-xs font-bold text-ink truncate">{user.fullName}</p>
+                        <p className="text-[11px] text-muted truncate">{user.email}</p>
+                        <span className="mt-1 inline-block rounded bg-brand-50 px-1.5 py-0.2 text-[10px] font-bold text-brand-700 border border-brand-200">
+                          {user.roleLabel}
+                        </span>
+                      </div>
+                      <Link
+                        href="/profile"
+                        onClick={() => setUserMenuOpen(false)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <User size={15} /> Hồ sơ cá nhân
+                      </Link>
+                      <button
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-medium text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                      >
+                        <LogOut size={15} /> Đăng xuất
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors"
+              >
+                <LogIn size={14} /> Đăng nhập
+              </Link>
+            )}
           </div>
         </header>
 
@@ -406,8 +446,8 @@ export function Shell({
       </div>
 
       {/* Modals */}
-      {showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
-      {showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
+      {isAuthenticated && showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
+      {isAuthenticated && showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
     </div>
   )
 }

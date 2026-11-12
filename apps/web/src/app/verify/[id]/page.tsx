@@ -1,30 +1,41 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Copy,
-  ExternalLink,
   FileCheck,
-  FileText,
   Loader2,
   Lock,
   Printer,
-  QrCode,
   ShieldAlert,
   ShieldCheck,
-  Stamp,
 } from 'lucide-react'
 import apiClient from '../../../services/api-client'
+
+function safeDecodeParam(raw: string | string[] | undefined): string {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (!value) return ''
+  let current = value
+  for (let i = 0; i < 2; i++) {
+    try {
+      const decoded = decodeURIComponent(current)
+      if (decoded === current) break
+      current = decoded
+    } catch {
+      break
+    }
+  }
+  return current.trim()
+}
 
 export default function DocumentVerificationPage() {
   const params = useParams()
   const router = useRouter()
-  const rawId = params?.['id'] as string
-  const resolutionNumber = rawId ? decodeURIComponent(rawId) : ''
+  const rawId = params?.['id']
+  const resolutionNumber = useMemo(() => safeDecodeParam(rawId), [rawId])
 
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<any>(null)
@@ -34,27 +45,39 @@ export default function DocumentVerificationPage() {
   useEffect(() => {
     if (!resolutionNumber) {
       setLoading(false)
+      setData(null)
       setError('Thiếu mã định danh hoặc số hiệu văn bản cần tra cứu.')
       return
     }
 
+    let cancelled = false
     const verify = async () => {
       setLoading(true)
+      setError(null)
+      setData(null)
       try {
         const res = await apiClient.executive.verifyResolution(resolutionNumber)
+        if (cancelled) return
         if (res.ok && res.data) {
           setData(res.data)
         } else {
           setError(res.error || 'Không tìm thấy thông tin văn bản hoặc văn bản chưa được phát hành.')
         }
       } catch (err: any) {
-        setError(err?.message || 'Không thể kết nối đến máy chủ tra cứu văn thư điện tử.')
+        if (!cancelled) {
+          setError(err?.message || 'Không thể kết nối đến máy chủ tra cứu văn thư điện tử.')
+        }
       } finally {
-        setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+        }
       }
     }
 
     verify()
+    return () => {
+      cancelled = true
+    }
   }, [resolutionNumber])
 
   const handleCopyHash = () => {
@@ -85,7 +108,7 @@ export default function DocumentVerificationPage() {
           </div>
           <button
             onClick={() => router.push('/')}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
           >
             <ArrowLeft size={14} /> Trang chủ
           </button>
@@ -150,7 +173,7 @@ export default function DocumentVerificationPage() {
                 <div className="flex items-center gap-2 self-start sm:self-center">
                   <button
                     onClick={() => window.print()}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
                   >
                     <Printer size={14} /> In kết quả
                   </button>
@@ -238,7 +261,7 @@ export default function DocumentVerificationPage() {
                       <button
                         onClick={handleCopyHash}
                         title="Sao chép mã băm"
-                        className="text-slate-400 hover:text-slate-700 shrink-0"
+                        className="text-slate-400 hover:text-slate-700 shrink-0 cursor-pointer"
                       >
                         {copiedHash ? <CheckCircle2 size={13} className="text-emerald-600" /> : <Copy size={13} />}
                       </button>

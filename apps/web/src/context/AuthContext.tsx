@@ -1,8 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
-import type { Role } from "../data";
-import apiClient from "../services/api-client";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import apiClient, { AUTH_UNAUTHORIZED_EVENT } from "../services/api-client";
 
 export interface AuthUser {
   id: string;
@@ -10,189 +9,323 @@ export interface AuthUser {
   fullName: string;
   role: string;
   roleLabel: string;
+  roles: string[];
+  permissions: string[];
+  unitsManaged: string[];
+  employeeId?: string | null;
+  employeeCode?: string | null;
   unitName?: string;
   title?: string;
   code?: string;
 }
 
+export interface LoginResult {
+  ok: boolean;
+  error?: string;
+  user?: AuthUser;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
-  login: (userData: AuthUser) => void;
-  loginAsRole: (role: Role) => void;
-  logout: () => Promise<void>;
   isAuthenticated: boolean;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  hasRole: (roles: string | string[]) => boolean;
+  can: (permission: string | string[]) => boolean;
 }
+
+const ROLE_ALIAS_MAP: Record<string, string> = {
+  ROLE_SYSADMIN: "SYSTEM_ADMIN",
+  SYSTEM_ADMIN: "SYSTEM_ADMIN",
+  SYSADMIN: "SYSTEM_ADMIN",
+  ADMIN: "SYSTEM_ADMIN",
+  ROLE_RECTOR: "RECTOR",
+  RECTOR: "RECTOR",
+  HIEUTRUONG: "RECTOR",
+  ROLE_HR_OFFICER: "HR_SPECIALIST",
+  ROLE_HR_SPECIALIST: "HR_SPECIALIST",
+  HR_OFFICER: "HR_SPECIALIST",
+  HR_SPECIALIST: "HR_SPECIALIST",
+  TCHC: "HR_SPECIALIST",
+  ROLE_ACCOUNTANT: "ACCOUNTANT",
+  ACCOUNTANT: "ACCOUNTANT",
+  ROLE_UNIT_HEAD: "DEAN",
+  UNIT_HEAD: "DEAN",
+  DEAN: "DEAN",
+  TRUONGKHOA: "DEAN",
+  ROLE_EMPLOYEE: "LECTURER",
+  EMPLOYEE: "LECTURER",
+  LECTURER: "LECTURER",
+  CBGV: "LECTURER",
+};
+
+const ROLE_PRIORITY = [
+  "SYSTEM_ADMIN",
+  "RECTOR",
+  "HR_SPECIALIST",
+  "ACCOUNTANT",
+  "DEAN",
+  "LECTURER",
+];
+
+const ROLE_LABEL_MAP: Record<string, { roleLabel: string; title: string }> = {
+  SYSTEM_ADMIN: { roleLabel: "Quản trị hệ thống", title: "Quản trị viên" },
+  RECTOR: { roleLabel: "Hiệu trưởng", title: "Ban Giám hiệu" },
+  HR_SPECIALIST: { roleLabel: "Phòng TCHC", title: "Chuyên viên TCHC" },
+  ACCOUNTANT: { roleLabel: "Kế toán", title: "Chuyên viên Tài chính" },
+  DEAN: { roleLabel: "Trưởng đơn vị", title: "Trưởng khoa / Đơn vị" },
+  LECTURER: { roleLabel: "Giảng viên (CBGV)", title: "Giảng viên / Cán bộ" },
+};
+
+export function normalizeRoleCode(roleCode: string): string {
+  const key = roleCode.trim().toUpperCase();
+  return ROLE_ALIAS_MAP[key] || key;
+}
+
+function resolvePrimaryRole(roles: string[]): string {
+  const normalized = roles.map(normalizeRoleCode);
+  for (const candidate of ROLE_PRIORITY) {
+    if (normalized.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return normalized[0] || "LECTURER";
+}
+
+function mapBackendUserToAuthUser(raw: any): AuthUser {
+  const rawRoles: string[] = Array.isArray(raw?.roles)
+    ? raw.roles
+    : raw?.role
+      ? [String(raw.role)]
+      : [];
+  const primaryRole = resolvePrimaryRole(rawRoles);
+  const meta = ROLE_LABEL_MAP[primaryRole] || ROLE_LABEL_MAP.LECTURER;
+
+  return {
+    id: String(raw?.id || ""),
+    email: String(raw?.email || ""),
+    fullName: String(raw?.fullName || raw?.email || "Cán bộ DAU"),
+    role: primaryRole,
+    roleLabel: raw?.roleLabel || meta.roleLabel,
+    roles: rawRoles.length > 0 ? rawRoles : [primaryRole],
+    permissions: Array.isArray(raw?.permissions) ? raw.permissions : [],
+    unitsManaged: Array.isArray(raw?.unitsManaged) ? raw.unitsManaged : [],
+    employeeId: raw?.employeeId ?? null,
+    employeeCode: raw?.employeeCode ?? null,
+    code: raw?.employeeCode ?? raw?.code ?? undefined,
+    unitName: raw?.unitName ?? undefined,
+    title: raw?.title || meta.title,
+  };
+}
+
+const STORAGE_KEY = "bahau_auth_user";
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  login: () => {},
-  loginAsRole: () => {},
-  logout: async () => {},
   isAuthenticated: false,
+  login: async () => ({ ok: false, error: "AuthProvider chưa được khởi tạo." }),
+  logout: async () => {},
+  refreshUser: async () => {},
+  hasRole: () => false,
+  can: () => false,
 });
-
-export const ROLE_USER_MAP: Record<Role, AuthUser> = {
-  cbgv: {
-    id: "usr-gv-01",
-    email: "an.nv@dau.edu.vn",
-    fullName: "ThS. Nguyễn Văn An",
-    role: "LECTURER",
-    roleLabel: "Giảng viên (CBGV)",
-    unitName: "Khoa Kiến trúc",
-    title: "Giảng viên",
-    code: "DAU260003",
-  },
-  truongkhoa: {
-    id: "usr-tk-02",
-    email: "binh.tt@dau.edu.vn",
-    fullName: "PGS.TS. Trần Thị Bình",
-    role: "DEAN",
-    roleLabel: "Trưởng khoa (Khoa KT)",
-    unitName: "Khoa Kiến trúc",
-    title: "Trưởng khoa",
-    code: "DAU260001",
-  },
-  tchc: {
-    id: "usr-hr-03",
-    email: "cuong.lm@dau.edu.vn",
-    fullName: "ThS. Lê Minh Cường",
-    role: "HR_SPECIALIST",
-    roleLabel: "Phòng TCHC",
-    unitName: "Phòng Tổ chức Hành chính",
-    title: "Chuyên viên TCHC",
-    code: "DAU260008",
-  },
-  hieutruong: {
-    id: "usr-rector-04",
-    email: "dung.hd@dau.edu.vn",
-    fullName: "GS.TS. Hoàng Đức Dũng",
-    role: "RECTOR",
-    roleLabel: "Hiệu trưởng",
-    unitName: "Ban Giám hiệu",
-    title: "Hiệu trưởng",
-    code: "DAU260002",
-  },
-  admin: {
-    id: "usr-admin-05",
-    email: "quantri@dau.edu.vn",
-    fullName: "KS. Phạm Quản Trị",
-    role: "SYSTEM_ADMIN",
-    roleLabel: "Admin",
-    unitName: "Toàn hệ thống",
-    title: "Quản trị viên",
-    code: "DAU260000",
-  },
-};
-
-export const SAMPLE_USERS: Record<string, AuthUser> = {
-  "gv.an@dau.edu.vn": ROLE_USER_MAP.cbgv,
-  "an.nv@dau.edu.vn": ROLE_USER_MAP.cbgv,
-  "tk.binh@dau.edu.vn": ROLE_USER_MAP.truongkhoa,
-  "binh.tt@dau.edu.vn": ROLE_USER_MAP.truongkhoa,
-  "hr.cuong@dau.edu.vn": ROLE_USER_MAP.tchc,
-  "cuong.lm@dau.edu.vn": ROLE_USER_MAP.tchc,
-  "rector.dung@dau.edu.vn": ROLE_USER_MAP.hieutruong,
-  "dung.hd@dau.edu.vn": ROLE_USER_MAP.hieutruong,
-  "admin@dau.edu.vn": ROLE_USER_MAP.admin,
-  "quantri@dau.edu.vn": ROLE_USER_MAP.admin,
-};
-
-export const ROLE_API_EMAIL_MAP: Record<string, string> = {
-  LECTURER: 'employee@dau.edu.vn',
-  DEAN: 'unithead@dau.edu.vn',
-  HR_SPECIALIST: 'hrspecialist@dau.edu.vn',
-  RECTOR: 'rector@dau.edu.vn',
-  SYSTEM_ADMIN: 'admin@dau.edu.vn',
-  cbgv: 'employee@dau.edu.vn',
-  truongkhoa: 'unithead@dau.edu.vn',
-  tchc: 'hrspecialist@dau.edu.vn',
-  hieutruong: 'rector@dau.edu.vn',
-  admin: 'admin@dau.edu.vn',
-};
-
-const STORAGE_KEY = "bahau_auth_user";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  useEffect(() => {
-    // Check saved session in localStorage
+  const persistUser = useCallback((nextUser: AuthUser | null) => {
+    setUser(nextUser);
+    if (typeof window === "undefined") return;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-        const parsed = JSON.parse(saved);
-        setUser(parsed);
-        if (!apiClient.getSessionId()) {
-          syncBackendSession(parsed);
-        }
+      if (nextUser) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
       }
-    } catch (e) {
-      console.warn("Could not read auth from storage", e);
-    } finally {
-      setLoading(false);
+    } catch {
+      // ignore localStorage errors
     }
   }, []);
 
-    const syncBackendSession = async (targetUser: AuthUser) => {
-    try {
-      const apiEmail =
-        ROLE_API_EMAIL_MAP[targetUser.role] ||
-        ROLE_API_EMAIL_MAP[targetUser.id] ||
-        targetUser.email;
-      await apiClient.auth.login(apiEmail, 'Admin@123456');
-    } catch (e) {
-      console.warn('[AuthContext] Backend session sync fallback', e);
+  const refreshUser = useCallback(async () => {
+    const res = await apiClient.auth.getMe();
+    if (res.ok && res.data?.user) {
+      const mapped = mapBackendUserToAuthUser(res.data.user);
+      // Enrich unitName/title if employee profile is accessible
+      if (mapped.employeeId && !mapped.unitName) {
+        const profileRes = await apiClient.employees.getMyProfile().catch(() => null);
+        if (profileRes?.ok && profileRes.data) {
+          if (profileRes.data.primaryUnitName) {
+            mapped.unitName = profileRes.data.primaryUnitName;
+          }
+          if (profileRes.data.primaryPositionName) {
+            mapped.title = profileRes.data.primaryPositionName;
+          }
+        }
+      }
+      persistUser(mapped);
+      return;
     }
-  };
 
-  const login = (userData: AuthUser) => {
-    setUser(userData);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
-      syncBackendSession(userData);
-    } catch (e) {
-      console.warn("Could not save auth to storage", e);
+    if (res.status === 401) {
+      apiClient.setSessionId(null);
+      persistUser(null);
     }
-  };
+  }, [persistUser]);
 
-  const loginAsRole = (role: Role) => {
-    const target = ROLE_USER_MAP[role];
-    if (target) {
-      login(target);
-      const roleApiEmailMap: Record<Role, string> = {
-        cbgv: "employee@dau.edu.vn",
-        truongkhoa: "unithead@dau.edu.vn",
-        tchc: "hrspecialist@dau.edu.vn",
-        hieutruong: "rector@dau.edu.vn",
-        admin: "admin@dau.edu.vn",
-      };
-      const apiEmail = roleApiEmailMap[role] || target.email;
-      apiClient.auth.login(apiEmail, "Admin@123456").catch(() => {});
+  useEffect(() => {
+    let active = true;
+
+    const bootstrapSession = async () => {
+      try {
+        const hasSessionToken = Boolean(apiClient.getSessionId());
+        const res = await apiClient.auth.getMe();
+        if (!active) return;
+
+        if (res.ok && res.data?.user) {
+          const mapped = mapBackendUserToAuthUser(res.data.user);
+          if (mapped.employeeId) {
+            const profileRes = await apiClient.employees.getMyProfile().catch(() => null);
+            if (active && profileRes?.ok && profileRes.data) {
+              if (profileRes.data.primaryUnitName) {
+                mapped.unitName = profileRes.data.primaryUnitName;
+              }
+              if (profileRes.data.primaryPositionName) {
+                mapped.title = profileRes.data.primaryPositionName;
+              }
+            }
+          }
+          persistUser(mapped);
+        } else if (res.status === 401 || !hasSessionToken) {
+          if (res.status === 401) {
+            apiClient.setSessionId(null);
+          }
+          persistUser(null);
+        } else {
+          // Transient 5xx / network outage while a session token is stored: keep token, restore cached user if present
+          try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed?.id && parsed?.email) {
+                setUser(mapBackendUserToAuthUser(parsed));
+              }
+            }
+          } catch {
+            // ignore corrupt cached user
+          }
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    bootstrapSession();
+
+    const handleUnauthorized = () => {
+      if (active) {
+        persistUser(null);
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
     }
-  };
 
-  const logout = async () => {
-    setUser(null);
+    return () => {
+      active = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+      }
+    };
+  }, [persistUser]);
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<LoginResult> => {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (!normalizedEmail || !password) {
+        return { ok: false, error: "Vui lòng nhập đầy đủ Email và Mật khẩu." };
+      }
+
+      const res = await apiClient.auth.login(normalizedEmail, password);
+      if (!res.ok || !res.data?.user) {
+        return {
+          ok: false,
+          error: res.error || "Email hoặc mật khẩu không chính xác.",
+        };
+      }
+
+      const mapped = mapBackendUserToAuthUser(res.data.user);
+      if (mapped.employeeId) {
+        const profileRes = await apiClient.employees.getMyProfile().catch(() => null);
+        if (profileRes?.ok && profileRes.data) {
+          if (profileRes.data.primaryUnitName) {
+            mapped.unitName = profileRes.data.primaryUnitName;
+          }
+          if (profileRes.data.primaryPositionName) {
+            mapped.title = profileRes.data.primaryPositionName;
+          }
+        }
+      }
+
+      persistUser(mapped);
+      return { ok: true, user: mapped };
+    },
+    [persistUser]
+  );
+
+  const logout = useCallback(async () => {
+    persistUser(null);
     try {
-      localStorage.removeItem(STORAGE_KEY);
       await apiClient.auth.logout();
     } catch (e) {
       console.warn("Logout error", e);
     }
-  };
+  }, [persistUser]);
+
+  const hasRole = useCallback(
+    (targetRoles: string | string[]): boolean => {
+      if (!user) return false;
+      const targets = (Array.isArray(targetRoles) ? targetRoles : [targetRoles]).map(
+        normalizeRoleCode
+      );
+      if (targets.length === 0) return true;
+      const userRoles = new Set([
+        normalizeRoleCode(user.role),
+        ...(user.roles || []).map(normalizeRoleCode),
+      ]);
+      return targets.some((role) => userRoles.has(role));
+    },
+    [user]
+  );
+
+  const can = useCallback(
+    (permission: string | string[]): boolean => {
+      if (!user) return false;
+      const required = Array.isArray(permission) ? permission : [permission];
+      if (required.length === 0) return true;
+      return required.some((perm) => user.permissions.includes(perm));
+    },
+    [user]
+  );
 
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
-        login,
-        loginAsRole,
-        logout,
         isAuthenticated: !!user,
+        login,
+        logout,
+        refreshUser,
+        hasRole,
+        can,
       }}
     >
       {children}
