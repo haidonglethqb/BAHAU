@@ -752,6 +752,10 @@ export class AttendanceService {
       timestamp?: Date;
     } = {}
   ): Promise<any> {
+    if (!employeeId) {
+      throw new AppError(403, 'FORBIDDEN', 'Tài khoản chưa được liên kết hồ sơ nhân sự để điểm danh.');
+    }
+
     const now = params.timestamp ? new Date(params.timestamp) : new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -828,6 +832,10 @@ export class AttendanceService {
       timestamp?: Date;
     } = {}
   ): Promise<any> {
+    if (!employeeId) {
+      throw new AppError(403, 'FORBIDDEN', 'Tài khoản chưa được liên kết hồ sơ nhân sự để điểm danh.');
+    }
+
     const now = params.timestamp ? new Date(params.timestamp) : new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -851,33 +859,31 @@ export class AttendanceService {
         },
       });
 
-      const checkIn = existing?.checkInTime || now;
+      if (!existing || !existing.checkInTime) {
+        throw new AppError(
+          422,
+          'NO_CHECKIN_RECORD',
+          'Chưa có bản ghi check-in cho ngày làm việc hôm nay, không thể thực hiện check-out.'
+        );
+      }
+
+      const checkIn = existing.checkInTime;
       const diffMs = Math.max(0, now.getTime() - checkIn.getTime());
       const rawWorkingHours = Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100;
 
-      let status = existing?.status || ('PRESENT' as AttendanceStatus);
+      let status = existing.status;
       if (vnHour < 17 && status === 'PRESENT') {
         status = 'EARLY_LEAVE' as AttendanceStatus;
       }
 
-      const record = await prisma.attendanceRecord.upsert({
+      const record = await prisma.attendanceRecord.update({
         where: {
           employeeId_workDate: {
             employeeId,
             workDate,
           },
         },
-        update: {
-          checkOutTime: now,
-          rawWorkingHours: new Prisma.Decimal(rawWorkingHours),
-          status,
-          deviceSource: params.deviceSource || 'BIOMETRIC_FACE_RECOGNITION',
-        },
-        create: {
-          employeeId,
-          periodId: period.id,
-          workDate,
-          checkInTime: checkIn,
+        data: {
           checkOutTime: now,
           rawWorkingHours: new Prisma.Decimal(rawWorkingHours),
           status,

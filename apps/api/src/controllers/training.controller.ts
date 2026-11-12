@@ -37,10 +37,12 @@ export async function submitCertificate(req: Request, res: Response): Promise<vo
 }
 
 export async function getAllCertificates(req: Request, res: Response): Promise<void> {
-  const query: CertificateFilterQuery = req.query as any;
-  const scopeUnitId = (req as any).user?.scopeUnitId;
+  if (!req.user) {
+    throw new AppError(401, "UNAUTHENTICATED", "Yêu cầu đăng nhập để tra cứu chứng chỉ.");
+  }
 
-  const certs = await TrainingService.getAllCertificates(query, scopeUnitId);
+  const query: CertificateFilterQuery = req.query as any;
+  const certs = await TrainingService.getAllCertificates(query, req.user);
   res.json({
     success: true,
     data: certs,
@@ -48,9 +50,15 @@ export async function getAllCertificates(req: Request, res: Response): Promise<v
 }
 
 export async function verifyCertificate(req: Request, res: Response): Promise<void> {
-  const verifierEmployeeId = (req as any).user?.employeeId;
-  if (!verifierEmployeeId) {
+  if (!req.user) {
     throw new AppError(401, "UNAUTHENTICATED", "Yêu cầu đăng nhập để thực hiện thẩm định");
+  }
+  if (!req.user.roles.includes("ROLE_HR_OFFICER")) {
+    throw new AppError(403, "FORBIDDEN", "Chỉ cán bộ Phòng Tổ chức - Hành chính mới được phép thẩm định chứng chỉ.");
+  }
+  const verifierEmployeeId = req.user.employeeId;
+  if (!verifierEmployeeId) {
+    throw new AppError(403, "FORBIDDEN", "Tài khoản chưa được liên kết hồ sơ nhân sự để thực hiện thẩm định");
   }
 
   const id = String(req.params.id);
@@ -64,10 +72,17 @@ export async function verifyCertificate(req: Request, res: Response): Promise<vo
 }
 
 export async function getExpiringCertificates(req: Request, res: Response): Promise<void> {
-  const days = req.query.days ? Number(req.query.days) : 90;
-  const scopeUnitId = (req as any).user?.scopeUnitId;
+  if (!req.user) {
+    throw new AppError(401, "UNAUTHENTICATED", "Yêu cầu đăng nhập để tra cứu chứng chỉ sắp hết hạn.");
+  }
 
-  const certs = await TrainingService.getExpiringCertificates(days, scopeUnitId);
+  const rawDays = req.query.days;
+  const days = rawDays !== undefined && rawDays !== "" ? Number(rawDays) : 90;
+  if (!Number.isFinite(days) || days < 0 || days > 3650) {
+    throw new AppError(422, "VALIDATION_FAILED", "Tham số days phải nằm trong khoảng 0 đến 3650.");
+  }
+
+  const certs = await TrainingService.getExpiringCertificates(days, req.user);
   res.json({
     success: true,
     data: certs,

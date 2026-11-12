@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { ConvertWorkloadInputSchema } from "@bahau/contracts";
+import { tsImport } from "tsx/esm/api";
 import { httpRequest } from "./e2e/helpers/http.mjs";
 import { ProcessManager, waitForPort } from "./e2e/helpers/process-manager.mjs";
+
+async function loadWorkloadService() {
+  const distUrl = new URL("../apps/api/dist/services/workload.service.js", import.meta.url);
+  if (existsSync(distUrl)) {
+    return (await import(distUrl.href)).WorkloadService;
+  }
+  return (await tsImport("../apps/api/src/services/workload.service.ts", import.meta.url)).WorkloadService;
+}
 
 async function runBusinessUpgradesTests() {
   console.log("================================================================================");
@@ -28,6 +39,11 @@ async function runBusinessUpgradesTests() {
     const endpoints401 = [
       { method: "GET", path: "/api/v1/workload/my-quota" },
       { method: "GET", path: "/api/v1/workload/settlement" },
+      {
+        method: "POST",
+        path: "/api/v1/workload/convert",
+        body: { workloadType: "STUDIO_PROJECT", rawHours: 60, studentCount: 28 },
+      },
       { method: "GET", path: "/api/v1/payroll/my-payslip" },
       { method: "GET", path: "/api/v1/payroll/period-summary" },
       { method: "GET", path: "/api/v1/executive/salary-increments" },
@@ -35,52 +51,62 @@ async function runBusinessUpgradesTests() {
     ];
 
     for (const ep of endpoints401) {
-      const res = await httpRequest(`http://127.0.0.1:${testPort}${ep.path}`, ep.method);
+      const res = await httpRequest(`http://127.0.0.1:${testPort}${ep.path}`, ep.method, {}, ep.body);
       assert.strictEqual(res.status, 401, `${ep.path} must reject unauthenticated request with 401`);
       assert.strictEqual(res.bodyJson?.success, false);
       assert.strictEqual(res.bodyJson?.error?.code, "UNAUTHENTICATED");
     }
-    console.log("   ✓ Verified 6/6 upgraded endpoints correctly returned 401 UNAUTHENTICATED");
+    console.log("   ✓ Verified 7/7 upgraded endpoints correctly returned 401 UNAUTHENTICATED");
 
     // --------------------------------------------------------------------------
     // TEST 2: Academic Workload Conversion Algorithm (Architecture Studio Multipliers)
     // --------------------------------------------------------------------------
     console.log("\n-> TC-UP-02: Architecture Studio Workload Conversion Engine...");
-    
+    const WorkloadService = await loadWorkloadService();
+
     // Test Studio Project: 60 raw hours * 1.25 = 75.0
-    const studioRes = await httpRequest(
-      `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
-      "POST",
-      {},
-      { workloadType: "STUDIO_PROJECT", rawHours: 60, studentCount: 28 }
+    const studioInput = ConvertWorkloadInputSchema.parse({
+      workloadType: "STUDIO_PROJECT",
+      rawHours: 60,
+      studentCount: 28,
+    });
+    const studioRes = WorkloadService.convertHours(
+      studioInput.workloadType,
+      studioInput.rawHours,
+      studioInput.studentCount
     );
-    assert.strictEqual(studioRes.status, 200);
-    assert.strictEqual(studioRes.bodyJson.data.multiplier, 1.25);
-    assert.strictEqual(studioRes.bodyJson.data.convertedHours, 75.0);
+    assert.strictEqual(studioRes.multiplier, 1.25);
+    assert.strictEqual(studioRes.convertedHours, 75.0);
     console.log("   ✓ Studio Project conversion: 60 raw hrs x 1.25 = 75.0 converted hrs");
 
     // Test Graduation Thesis: 5 students * 18 hours = 90.0
-    const thesisRes = await httpRequest(
-      `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
-      "POST",
-      {},
-      { workloadType: "GRADUATION_THESIS", rawHours: 18, studentCount: 5 }
+    const thesisInput = ConvertWorkloadInputSchema.parse({
+      workloadType: "GRADUATION_THESIS",
+      rawHours: 18,
+      studentCount: 5,
+    });
+    const thesisRes = WorkloadService.convertHours(
+      thesisInput.workloadType,
+      thesisInput.rawHours,
+      thesisInput.studentCount
     );
-    assert.strictEqual(thesisRes.status, 200);
-    assert.strictEqual(thesisRes.bodyJson.data.multiplier, 18.0);
-    assert.strictEqual(thesisRes.bodyJson.data.convertedHours, 90.0);
+    assert.strictEqual(thesisRes.multiplier, 18.0);
+    assert.strictEqual(thesisRes.convertedHours, 90.0);
     console.log("   ✓ Graduation Thesis conversion: 5 students x 18.0 hrs = 90.0 converted hrs");
 
     // Test Review Thesis: 6 theses * 1.5 hours = 9.0
-    const reviewRes = await httpRequest(
-      `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
-      "POST",
-      {},
-      { workloadType: "REVIEW_THESIS", rawHours: 1.5, studentCount: 6 }
+    const reviewInput = ConvertWorkloadInputSchema.parse({
+      workloadType: "REVIEW_THESIS",
+      rawHours: 1.5,
+      studentCount: 6,
+    });
+    const reviewRes = WorkloadService.convertHours(
+      reviewInput.workloadType,
+      reviewInput.rawHours,
+      reviewInput.studentCount
     );
-    assert.strictEqual(reviewRes.status, 200);
-    assert.strictEqual(reviewRes.bodyJson.data.multiplier, 1.5);
-    assert.strictEqual(reviewRes.bodyJson.data.convertedHours, 9.0);
+    assert.strictEqual(reviewRes.multiplier, 1.5);
+    assert.strictEqual(reviewRes.convertedHours, 9.0);
     console.log("   ✓ Review Thesis conversion: 6 theses x 1.5 hrs = 9.0 converted hrs");
 
     // --------------------------------------------------------------------------

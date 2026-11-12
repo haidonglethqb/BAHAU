@@ -1,6 +1,7 @@
 import { prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
 import { LeaveLedgerService } from "./leave-ledger.service.js";
+import { UnitService } from "./unit.service.js";
 import type {
   AuthUser,
   PendingWorkflowTaskDto,
@@ -8,6 +9,150 @@ import type {
 } from "@bahau/contracts";
 
 export class WorkflowService {
+  /** Mở rộng danh sách đơn vị quản lý trực tiếp sang toàn bộ cây đơn vị con */
+  private static async getExpandedManagedUnitIds(unitsManaged?: string[]): Promise<Set<string>> {
+    const managedSet = new Set<string>();
+    if (!unitsManaged || unitsManaged.length === 0) return managedSet;
+
+    const unitTrees = await Promise.all(
+      Array.from(new Set(unitsManaged)).map((uid) => UnitService.getDescendantUnitIds(uid))
+    );
+    for (const tree of unitTrees) {
+      for (const id of tree) managedSet.add(id);
+    }
+    return managedSet;
+  }
+
+  /** Lấy danh sách đơn vị đang công tác (gồm cả kiêm nhiệm CONCURRENT và chính thức PRIMARY) */
+  private static async getEmployeeActiveUnitIds(employeeId: string): Promise<string[]> {
+    const assignments = await prisma.employmentAssignment.findMany({
+      where: {
+        employeeId,
+        assignmentType: { in: ["PRIMARY", "CONCURRENT"] },
+        status: "ACTIVE",
+      },
+      select: { unitId: true },
+    });
+    return Array.from(new Set(assignments.map((a) => a.unitId)));
+  }
+
+  /** Xác định luồng phê duyệt bước 0 dựa trên PRIMARY + CONCURRENT và leo thang cây parentId nếu thiếu trưởng đơn vị */
+  private static async resolveRequesterRouting(requesterEmployeeId: string): Promise<{
+    isHeadOfUnit: boolean;
+    unitName: string;
+    approverRoleCode: "ROLE_UNIT_HEAD" | "ROLE_RECTOR";
+    approverEmployeeId: string | null;
+  }> {
+    const activeAssignments = await prisma.employmentAssignment.findMany({
+      where: {
+        employeeId: requesterEmployeeId,
+        assignmentType: { in: ["PRIMARY", "CONCURRENT"] },
+        status: "ACTIVE",
+      },
+      include: {
+        unit: {
+          select: {
+            id: true,
+            name: true,
+            unitType: true,
+            parentId: true,
+            managerEmployeeId: true,
+          },
+        },
+      },
+    });
+
+    const isHeadOfUnit = activeAssignments.some(
+      (a) => a.isHeadOfUnit || a.unit?.managerEmployeeId === requesterEmployeeId
+    );
+    const baseAssignment =
+      activeAssignments.find((a) => a.assignmentType === "PRIMARY") || activeAssignments[0] || null;
+    const unitName = baseAssignment?.unit?.name || "Đơn vị";
+
+    if (isHeadOfUnit) {
+      return {
+        isHeadOfUnit: true,
+        unitName,
+        approverRoleCode: "ROLE_RECTOR",
+        approverEmployeeId: null,
+      };
+    }
+
+    // Duyệt lên cây parentId khi đơn vị hiện tại chưa bổ nhiệm trưởng đơn vị (managerEmployeeId = null)
+    let currentUnit: {
+      id: string;
+      name: string;
+      unitType: string;
+      parentId: string | null;
+      managerEmployeeId: string | null;
+    } | null = baseAssignment?.unit || null;
+    const visited = new Set<string>();
+    while (currentUnit && !visited.has(currentUnit.id)) {
+      visited.add(currentUnit.id);
+      if (currentUnit.managerEmployeeId && currentUnit.managerEmployeeId !== requesterEmployeeId) {
+        return {
+          isHeadOfUnit: false,
+          unitName,
+          approverRoleCode: currentUnit.unitType === "BOARD" ? "ROLE_RECTOR" : "ROLE_UNIT_HEAD",
+          approverEmployeeId: currentUnit.managerEmployeeId,
+        };
+      }
+      if (!currentUnit.parentId) break;
+      currentUnit = await prisma.organizationalUnit.findUnique({
+        where: { id: currentUnit.parentId },
+        select: {
+          id: true,
+          name: true,
+          unitType: true,
+          parentId: true,
+          managerEmployeeId: true,
+        },
+      });
+    }
+
+    return {
+      isHeadOfUnit: false,
+      unitName,
+      approverRoleCode: "ROLE_RECTOR",
+      approverEmployeeId: null,
+    };
+  }
+
+  /** Kiểm tra thẩm quyền phê duyệt / từ chối bước theo vai trò và cây đơn vị quản lý */
+  private static async assertCanActOnStep(
+    step: {
+      approverEmployeeId: string | null;
+      approverRoleCode: string | null;
+      instance: { requesterEmployeeId: string };
+    },
+    currentUser: AuthUser,
+    actionDeniedMessage: string
+  ): Promise<void> {
+    const isGlobalHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
+    );
+    const isDirectApprover = Boolean(
+      currentUser.employeeId && step.approverEmployeeId === currentUser.employeeId
+    );
+    const hasRole = Boolean(
+      step.approverRoleCode && currentUser.roles.includes(step.approverRoleCode)
+    );
+
+    if (!isDirectApprover && !hasRole) {
+      throw new AppError(403, "FORBIDDEN", actionDeniedMessage);
+    }
+
+    if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
+      const [managedUnitIds, requesterUnitIds] = await Promise.all([
+        this.getExpandedManagedUnitIds(currentUser.unitsManaged),
+        this.getEmployeeActiveUnitIds(step.instance.requesterEmployeeId),
+      ]);
+      const isManaged = requesterUnitIds.some((uid) => managedUnitIds.has(uid));
+      if (!isManaged) {
+        throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền quản lý đơn vị của cán bộ này.");
+      }
+    }
+  }
   /**
    * Khởi tạo quy trình phê duyệt Nghỉ phép theo chuỗi quản lý phân cấp
    * Tự động áp dụng Anti-Self-Approval: Nếu người nộp là Trưởng khoa/phòng -> leo thang lên Ban Giám hiệu
@@ -18,19 +163,8 @@ export class WorkflowService {
     totalDays: number
   ): Promise<string> {
     try {
-      // 1. Tìm đơn vị và chức vụ của người yêu cầu
-      const assignment = await prisma.employmentAssignment.findFirst({
-        where: { employeeId: requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-        include: {
-          unit: {
-            include: {
-              managerEmployee: true,
-            },
-          },
-        },
-      });
-
-      const isHeadOfUnit = assignment?.isHeadOfUnit || assignment?.unit?.managerEmployeeId === requesterEmployeeId;
+      // 1. Tìm đơn vị và chuỗi phê duyệt phân cấp của người yêu cầu
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
 
       // 2. Tạo WorkflowInstance
       const instance = await prisma.workflowInstance.create({
@@ -43,8 +177,8 @@ export class WorkflowService {
         },
       });
 
-      // 3. Khởi tạo các bước phê duyệt dựa trên cơ chế Anti-Self-Approval
-      if (isHeadOfUnit) {
+      // 3. Khởi tạo các bước phê duyệt dựa trên cơ chế Anti-Self-Approval & leo thang cây đơn vị
+      if (routing.isHeadOfUnit) {
         // Lãnh đạo đơn vị nộp -> Leo thang lên Ban Giám hiệu, sau đó Phòng TCHC
         await prisma.workflowStep.createMany({
           data: [
@@ -65,17 +199,19 @@ export class WorkflowService {
           ],
         });
       } else {
-        // Cán bộ, Giảng viên thông thường -> Trưởng đơn vị duyệt trước -> Phòng TCHC duyệt sau
-        const managerId = assignment?.unit?.managerEmployeeId || null;
+        const step0Name =
+          routing.approverRoleCode === "ROLE_RECTOR"
+            ? `Ban Giám hiệu phê duyệt (${routing.unitName})`
+            : `Trưởng đơn vị phê duyệt (${routing.unitName})`;
 
         await prisma.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
               stepIndex: 0,
-              stepName: `Trưởng đơn vị phê duyệt (${assignment?.unit?.name || "Đơn vị"})`,
-              approverRoleCode: "ROLE_UNIT_HEAD",
-              approverEmployeeId: managerId,
+              stepName: step0Name.slice(0, 100),
+              approverRoleCode: routing.approverRoleCode,
+              approverEmployeeId: routing.approverEmployeeId,
               status: "WAITING",
             },
             {
@@ -112,14 +248,7 @@ export class WorkflowService {
     tripRequestId: string
   ): Promise<string> {
     try {
-      const assignment = await prisma.employmentAssignment.findFirst({
-        where: { employeeId: requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-        include: {
-          unit: true,
-        },
-      });
-
-      const isHeadOfUnit = assignment?.isHeadOfUnit || assignment?.unit?.managerEmployeeId === requesterEmployeeId;
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
 
       const instance = await prisma.workflowInstance.create({
         data: {
@@ -131,7 +260,7 @@ export class WorkflowService {
         },
       });
 
-      if (isHeadOfUnit) {
+      if (routing.isHeadOfUnit) {
         // Trưởng đơn vị đi công tác -> Ban Giám hiệu phê duyệt trực tiếp
         await prisma.workflowStep.createMany({
           data: [
@@ -152,14 +281,20 @@ export class WorkflowService {
           ],
         });
       } else {
-        // Cán bộ thông thường -> Trưởng đơn vị xác nhận kế hoạch -> Ban Giám hiệu phê duyệt quyết định
+        // Cán bộ thông thường -> Trưởng đơn vị (hoặc cấp trên khi khuyết trưởng) -> Ban Giám hiệu phê duyệt quyết định
+        const step0Name =
+          routing.approverRoleCode === "ROLE_RECTOR"
+            ? "Ban Giám hiệu phê duyệt kế hoạch công tác"
+            : "Trưởng đơn vị phê duyệt kế hoạch công tác";
+
         await prisma.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
               stepIndex: 0,
-              stepName: "Trưởng đơn vị phê duyệt kế hoạch công tác",
-              approverRoleCode: "ROLE_UNIT_HEAD",
+              stepName: step0Name,
+              approverRoleCode: routing.approverRoleCode,
+              approverEmployeeId: routing.approverEmployeeId,
               status: "WAITING",
             },
             {
@@ -195,14 +330,7 @@ export class WorkflowService {
     adjustmentRequestId: string
   ): Promise<string> {
     try {
-      const assignment = await prisma.employmentAssignment.findFirst({
-        where: { employeeId: requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-        include: {
-          unit: true,
-        },
-      });
-
-      const isHeadOfUnit = assignment?.isHeadOfUnit || assignment?.unit?.managerEmployeeId === requesterEmployeeId;
+      const routing = await this.resolveRequesterRouting(requesterEmployeeId);
 
       const instance = await prisma.workflowInstance.create({
         data: {
@@ -214,7 +342,7 @@ export class WorkflowService {
         },
       });
 
-      if (isHeadOfUnit) {
+      if (routing.isHeadOfUnit) {
         // Lãnh đạo đơn vị giải trình -> Leo thang lên Ban Giám hiệu, sau đó Phòng TCHC
         await prisma.workflowStep.createMany({
           data: [
@@ -235,15 +363,19 @@ export class WorkflowService {
           ],
         });
       } else {
-        const managerId = assignment?.unit?.managerEmployeeId || null;
+        const step0Name =
+          routing.approverRoleCode === "ROLE_RECTOR"
+            ? `Ban Giám hiệu xác nhận giải trình (${routing.unitName})`
+            : `Trưởng đơn vị xác nhận giải trình (${routing.unitName})`;
+
         await prisma.workflowStep.createMany({
           data: [
             {
               instanceId: instance.id,
               stepIndex: 0,
-              stepName: `Trưởng đơn vị xác nhận giải trình (${assignment?.unit?.name || "Đơn vị"})`,
-              approverRoleCode: "ROLE_UNIT_HEAD",
-              approverEmployeeId: managerId,
+              stepName: step0Name.slice(0, 100),
+              approverRoleCode: routing.approverRoleCode,
+              approverEmployeeId: routing.approverEmployeeId,
               status: "WAITING",
             },
             {
@@ -298,9 +430,8 @@ export class WorkflowService {
                   fullName: true,
                   employeeCode: true,
                   assignments: {
-                    where: { assignmentType: "PRIMARY", status: "ACTIVE" },
+                    where: { assignmentType: { in: ["PRIMARY", "CONCURRENT"] }, status: "ACTIVE" },
                     select: { unitId: true },
-                    take: 1,
                   },
                 },
               },
@@ -321,14 +452,14 @@ export class WorkflowService {
           (!userEmployeeId || s.instance.requesterEmployeeId !== userEmployeeId)
       );
 
-      // Nếu người duyệt là Trưởng đơn vị (và không phải HR toàn trường), chỉ duyệt đơn của đơn vị mình
+      // Nếu người duyệt là Trưởng đơn vị (và không phải HR toàn trường), chỉ duyệt đơn của cây đơn vị mình quản lý
       if (!isGlobalHR && currentUser.roles.includes("ROLE_UNIT_HEAD")) {
-        const managedUnits = new Set(currentUser.unitsManaged || []);
+        const managedUnits = await this.getExpandedManagedUnitIds(currentUser.unitsManaged);
         validSteps = validSteps.filter((s) => {
           if (s.approverEmployeeId && s.approverEmployeeId === userEmployeeId) return true;
           if (s.approverRoleCode !== "ROLE_UNIT_HEAD") return true;
-          const reqUnitId = s.instance.requesterEmployee?.assignments?.[0]?.unitId;
-          return reqUnitId ? managedUnits.has(reqUnitId) : false;
+          const reqAssignments = s.instance.requesterEmployee?.assignments || [];
+          return reqAssignments.some((a) => managedUnits.has(a.unitId));
         });
       }
 
@@ -380,25 +511,33 @@ export class WorkflowService {
       }
 
       // Kiểm tra quyền hạn truy cập tiến trình phê duyệt (Chống IDOR)
-      const isRequester = currentUser.employeeId && currentUser.employeeId === instance.requesterEmployeeId;
+      const isRequester = Boolean(currentUser.employeeId && currentUser.employeeId === instance.requesterEmployeeId);
       const isGlobalHR = currentUser.roles.some((r) =>
         ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
-      );
-      const isStepApprover = instance.steps.some(
-        (s) =>
-          (s.approverEmployeeId && s.approverEmployeeId === currentUser.employeeId) ||
-          (s.approverRoleCode && currentUser.roles.includes(s.approverRoleCode))
       );
 
       let isRequesterUnitHead = false;
       if (currentUser.unitsManaged && currentUser.unitsManaged.length > 0) {
-        const requesterAssignment = await prisma.employmentAssignment.findFirst({
-          where: { employeeId: instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-        });
-        if (requesterAssignment?.unitId && currentUser.unitsManaged.includes(requesterAssignment.unitId)) {
-          isRequesterUnitHead = true;
-        }
+        const [managedUnitIds, requesterUnitIds] = await Promise.all([
+          this.getExpandedManagedUnitIds(currentUser.unitsManaged),
+          this.getEmployeeActiveUnitIds(instance.requesterEmployeeId),
+        ]);
+        isRequesterUnitHead = requesterUnitIds.some((uid) => managedUnitIds.has(uid));
       }
+
+      const isStepApprover = instance.steps.some((s) => {
+        if (s.approverEmployeeId && s.approverEmployeeId === currentUser.employeeId) {
+          return true;
+        }
+        if (s.approverRoleCode && currentUser.roles.includes(s.approverRoleCode)) {
+          // Trưởng đơn vị chỉ có quyền xem hồ sơ thuộc cây đơn vị mình quản lý (chống IDOR liên đơn vị)
+          if (s.approverRoleCode === "ROLE_UNIT_HEAD") {
+            return isRequesterUnitHead;
+          }
+          return true;
+        }
+        return false;
+      });
 
       if (!isRequester && !isGlobalHR && !isStepApprover && !isRequesterUnitHead) {
         throw new AppError(403, "FORBIDDEN", "Bạn không có quyền xem thông tin quy trình phê duyệt này.");
@@ -475,27 +614,8 @@ export class WorkflowService {
       );
     }
 
-    // 3. Kiểm tra quyền duyệt và Scope đơn vị
-    const isGlobalHR = currentUser.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
-    );
-    const isDirectApprover = currentUser.employeeId && step.approverEmployeeId === currentUser.employeeId;
-    const hasRole = step.approverRoleCode && currentUser.roles.includes(step.approverRoleCode);
-
-    if (!isDirectApprover && !hasRole) {
-      throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền phê duyệt bước này.");
-    }
-
-    if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
-      const requesterAssignment = await prisma.employmentAssignment.findFirst({
-        where: { employeeId: step.instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-      });
-      const requesterUnitId = requesterAssignment?.unitId;
-      const isManaged = requesterUnitId && currentUser.unitsManaged?.includes(requesterUnitId);
-      if (!isManaged) {
-        throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền quản lý đơn vị của cán bộ này.");
-      }
-    }
+    // 3. Kiểm tra quyền duyệt và Scope cây đơn vị
+    await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền phê duyệt bước này.");
 
     // 1. Cập nhật bước hiện tại thành APPROVED
     await prisma.workflowStep.update({
@@ -650,27 +770,8 @@ export class WorkflowService {
       );
     }
 
-    // 3. Kiểm tra quyền từ chối và Scope đơn vị
-    const isGlobalHR = currentUser.roles.some((r) =>
-      ["ROLE_HR_OFFICER", "ROLE_RECTOR", "ROLE_SYSADMIN"].includes(r)
-    );
-    const isDirectApprover = currentUser.employeeId && step.approverEmployeeId === currentUser.employeeId;
-    const hasRole = step.approverRoleCode && currentUser.roles.includes(step.approverRoleCode);
-
-    if (!isDirectApprover && !hasRole) {
-      throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền từ chối bước này.");
-    }
-
-    if (step.approverRoleCode === "ROLE_UNIT_HEAD" && !isDirectApprover && !isGlobalHR) {
-      const requesterAssignment = await prisma.employmentAssignment.findFirst({
-        where: { employeeId: step.instance.requesterEmployeeId, assignmentType: "PRIMARY", status: "ACTIVE" },
-      });
-      const requesterUnitId = requesterAssignment?.unitId;
-      const isManaged = requesterUnitId && currentUser.unitsManaged?.includes(requesterUnitId);
-      if (!isManaged) {
-        throw new AppError(403, "FORBIDDEN", "Bạn không có thẩm quyền quản lý đơn vị của cán bộ này.");
-      }
-    }
+    // 3. Kiểm tra quyền từ chối và Scope cây đơn vị
+    await this.assertCanActOnStep(step, currentUser, "Bạn không có thẩm quyền từ chối bước này.");
 
     // 1. Cập nhật bước thành REJECTED
     await prisma.workflowStep.update({

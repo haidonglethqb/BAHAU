@@ -1,5 +1,6 @@
 import { prisma } from "@bahau/database";
 import {
+  AuthUser,
   CreateCertificateInput,
   VerifyCertificateInput,
   CreateTrainingCourseInput,
@@ -12,6 +13,7 @@ import {
   CertificateExpiryAlertStatus,
 } from "@bahau/contracts";
 import { AppError } from "../middlewares/error.middleware.js";
+import { UnitService } from "./unit.service.js";
 
 export class TrainingService {
   /**
@@ -186,24 +188,92 @@ export class TrainingService {
   }
 
   /**
+   * Xác định tập unitId hợp lệ khi tra cứu chứng chỉ theo vai trò và cây đơn vị quản lý
+   */
+  private static async resolveAllowedCertificateUnitIds(
+    requestedUnitId?: string,
+    currentUser?: AuthUser
+  ): Promise<string[] | null> {
+    if (!currentUser) {
+      throw new AppError(401, "UNAUTHENTICATED", "Yêu cầu đăng nhập để tra cứu chứng chỉ.");
+    }
+
+    const isGlobalHR = currentUser.roles.some((r) =>
+      ["ROLE_HR_OFFICER", "ROLE_RECTOR"].includes(r)
+    );
+    const isUnitHead = currentUser.roles.includes("ROLE_UNIT_HEAD");
+
+    if (!isGlobalHR) {
+      if (!isUnitHead) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Bạn không có quyền tra cứu danh sách chứng chỉ của đơn vị hoặc toàn trường."
+        );
+      }
+
+      const managedRoots = currentUser.unitsManaged || [];
+      if (managedRoots.length === 0) {
+        return [];
+      }
+
+      const trees = await Promise.all(
+        Array.from(new Set(managedRoots)).map((uid) => UnitService.getDescendantUnitIds(uid))
+      );
+      const allowedSet = new Set<string>();
+      for (const tree of trees) {
+        for (const id of tree) allowedSet.add(id);
+      }
+
+      if (allowedSet.size === 0) {
+        return [];
+      }
+
+      if (requestedUnitId) {
+        if (!allowedSet.has(requestedUnitId)) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "Bạn không có quyền xem chứng chỉ thuộc đơn vị ngoài phạm vi quản lý."
+          );
+        }
+        const requestedTree = await UnitService.getDescendantUnitIds(requestedUnitId);
+        return requestedTree.filter((id) => allowedSet.has(id));
+      }
+
+      return Array.from(allowedSet);
+    }
+
+    if (requestedUnitId) {
+      return UnitService.getDescendantUnitIds(requestedUnitId);
+    }
+
+    return null;
+  }
+
+  /**
    * 3. Tra cứu danh sách chứng chỉ toàn trường / theo đơn vị (Phòng TCHC & Quản lý)
    */
   static async getAllCertificates(
     query: CertificateFilterQuery,
-    scopeUnitId?: string | null
+    currentUser?: AuthUser
   ): Promise<CertificateDto[]> {
+    const targetUnitIds = await this.resolveAllowedCertificateUnitIds(query.unitId, currentUser);
+    if (targetUnitIds !== null && targetUnitIds.length === 0) {
+      return [];
+    }
+
     const where: any = {};
 
     if (query.certificateType) where.certificateType = query.certificateType;
     if (query.status) where.status = query.status;
     if (query.employeeId) where.employeeId = query.employeeId;
 
-    if (query.unitId || scopeUnitId) {
-      const targetUnitId = query.unitId || scopeUnitId;
+    if (targetUnitIds !== null) {
       where.employee = {
         assignments: {
           some: {
-            unitId: targetUnitId,
+            unitId: { in: targetUnitIds },
             status: "ACTIVE",
           },
         },
@@ -358,9 +428,9 @@ export class TrainingService {
    */
   static async getExpiringCertificates(
     days: number = 90,
-    scopeUnitId?: string | null
+    currentUser?: AuthUser
   ): Promise<CertificateDto[]> {
-    const certs = await this.getAllCertificates({}, scopeUnitId);
+    const certs = await this.getAllCertificates({}, currentUser);
     return certs.filter(
       (c) =>
         c.daysUntilExpiry !== null &&

@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { ConvertWorkloadInputSchema } from "@bahau/contracts";
+import { tsImport } from "tsx/esm/api";
 import { httpRequest } from "./e2e/helpers/http.mjs";
 import { ProcessManager, waitForPort } from "./e2e/helpers/process-manager.mjs";
+
+async function loadApiModule(distRelPath, srcRelPath) {
+  const distUrl = new URL(distRelPath, import.meta.url);
+  if (existsSync(distUrl)) {
+    return import(distUrl.href);
+  }
+  return tsImport(srcRelPath, import.meta.url);
+}
 
 async function runSecurityVerificationTests() {
   console.log("================================================================================");
@@ -58,40 +69,88 @@ async function runSecurityVerificationTests() {
     console.log("   ✓ Trusted origin correctly allowed with credentials");
 
     // --------------------------------------------------------------------------
-    // TEST 2: Input Validation on Upgraded Business Endpoints
+    // TEST 2: Input Validation & Auth Guards on Upgraded Business Endpoints
     // --------------------------------------------------------------------------
-    console.log("\n-> TC-SEC-02: Input Validation Guards on Upgraded Endpoints...");
+    console.log("\n-> TC-SEC-02: Auth & Input Validation Guards on Upgraded Endpoints...");
 
-    // 2.1 Malformed /workload/convert payload (negative rawHours)
-    const invalidWorkloadRes = await httpRequest(
-      `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
-      "POST",
-      {},
-      { workloadType: "STUDIO_PROJECT", rawHours: -50 }
-    );
-    assert.strictEqual(invalidWorkloadRes.status, 422, "Negative rawHours must be rejected with 422");
-    assert.strictEqual(invalidWorkloadRes.bodyJson?.error?.code, "VALIDATION_FAILED");
-    console.log("   ✓ Negative rawHours rejected with 422 VALIDATION_FAILED");
-
-    // 2.2 Invalid workloadType enum
-    const invalidTypeRes = await httpRequest(
-      `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
-      "POST",
-      {},
-      { workloadType: "HACK_TYPE_123", rawHours: 30 }
-    );
-    assert.strictEqual(invalidTypeRes.status, 422, "Invalid workloadType must be rejected with 422");
-    console.log("   ✓ Invalid workloadType enum rejected with 422 VALIDATION_FAILED");
-
-    // 2.3 Valid conversion calculation
-    const validWorkloadRes = await httpRequest(
+    // 2.0 Unauthenticated POST /workload/convert must be rejected with 401
+    const unauthWorkloadRes = await httpRequest(
       `http://127.0.0.1:${testPort}/api/v1/workload/convert`,
       "POST",
       {},
       { workloadType: "STUDIO_PROJECT", rawHours: 40, studentCount: 30 }
     );
-    assert.strictEqual(validWorkloadRes.status, 200);
-    assert.strictEqual(validWorkloadRes.bodyJson?.data?.convertedHours, 50.0);
+    assert.strictEqual(unauthWorkloadRes.status, 401, "Unauthenticated /workload/convert must return 401");
+    assert.strictEqual(unauthWorkloadRes.bodyJson?.error?.code, "UNAUTHENTICATED");
+    console.log("   ✓ Unauthenticated POST /workload/convert rejected with 401 UNAUTHENTICATED");
+
+    const { WorkloadService } = await loadApiModule(
+      "../apps/api/dist/services/workload.service.js",
+      "../apps/api/src/services/workload.service.ts"
+    );
+    const { validateBody } = await loadApiModule(
+      "../apps/api/dist/middlewares/validate.middleware.js",
+      "../apps/api/src/middlewares/validate.middleware.ts"
+    );
+    const { errorHandler } = await loadApiModule(
+      "../apps/api/dist/middlewares/error.middleware.js",
+      "../apps/api/src/middlewares/error.middleware.ts"
+    );
+
+    const runValidationCheck = async (body) => {
+      const req = { body, id: "tc-sec-02" };
+      const captured = { status: 200, jsonBody: null };
+      const res = {
+        status(code) {
+          captured.status = code;
+          return this;
+        },
+        json(payload) {
+          captured.jsonBody = payload;
+          return this;
+        },
+      };
+      let forwardedErr = null;
+      await validateBody(ConvertWorkloadInputSchema)(req, res, (err) => {
+        forwardedErr = err ?? null;
+      });
+      if (forwardedErr) {
+        errorHandler(forwardedErr, req, res, () => {});
+      }
+      return { ...captured, parsedBody: req.body };
+    };
+
+    // 2.1 Malformed /workload/convert payload (negative rawHours)
+    const invalidWorkloadRes = await runValidationCheck({
+      workloadType: "STUDIO_PROJECT",
+      rawHours: -50,
+    });
+    assert.strictEqual(invalidWorkloadRes.status, 422, "Negative rawHours must be rejected with 422");
+    assert.strictEqual(invalidWorkloadRes.jsonBody?.error?.code, "VALIDATION_FAILED");
+    console.log("   ✓ Negative rawHours rejected with 422 VALIDATION_FAILED");
+
+    // 2.2 Invalid workloadType enum
+    const invalidTypeRes = await runValidationCheck({
+      workloadType: "HACK_TYPE_123",
+      rawHours: 30,
+    });
+    assert.strictEqual(invalidTypeRes.status, 422, "Invalid workloadType must be rejected with 422");
+    assert.strictEqual(invalidTypeRes.jsonBody?.error?.code, "VALIDATION_FAILED");
+    console.log("   ✓ Invalid workloadType enum rejected with 422 VALIDATION_FAILED");
+
+    // 2.3 Valid conversion calculation
+    const validCheck = await runValidationCheck({
+      workloadType: "STUDIO_PROJECT",
+      rawHours: 40,
+      studentCount: 30,
+    });
+    assert.strictEqual(validCheck.status, 200);
+    const conversion = WorkloadService.convertHours(
+      validCheck.parsedBody.workloadType,
+      validCheck.parsedBody.rawHours,
+      validCheck.parsedBody.studentCount
+    );
+    assert.strictEqual(conversion.convertedHours, 50.0);
     console.log("   ✓ Valid workload payload accepted: 40h x 1.25 = 50.0h converted");
 
     // --------------------------------------------------------------------------

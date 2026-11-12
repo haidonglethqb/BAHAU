@@ -15,6 +15,7 @@ router.get("/workload/my-quota", requireAuth, asyncHandler(getMyQuota));
 router.get("/workload/settlement", requireAuth, asyncHandler(getSettlement));
 router.post(
   "/workload/convert",
+  requireAuth,
   validateBody(ConvertWorkloadInputSchema),
   asyncHandler(convertWorkload)
 );

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import {
   getMyCertificates,
   submitCertificate,
@@ -10,8 +10,9 @@ import {
   registerCourse,
 } from "../../controllers/training.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
-import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
+import { requireAuth, requirePermission, requireRole } from "../../middlewares/auth.middleware.js";
 import { asyncHandler } from "../../middlewares/async.middleware.js";
+import { AppError } from "../../middlewares/error.middleware.js";
 import {
   CreateCertificateSchema,
   VerifyCertificateSchema,
@@ -21,6 +22,21 @@ import {
 } from "@bahau/contracts";
 
 const router = Router();
+
+/** Cho phép quyền xem chứng chỉ toàn trường (TCHC/BGH) hoặc theo đơn vị (Trưởng đơn vị) */
+const requireCertificateViewScope: RequestHandler = (req, _res, next) => {
+  if (!req.user) {
+    throw new AppError(401, "UNAUTHENTICATED", "Vui lòng đăng nhập để thực hiện thao tác này.");
+  }
+  const perms = req.user.permissions || [];
+  if (
+    !perms.includes("training:view_all_certificates") &&
+    !perms.includes("training:view_unit_certificates")
+  ) {
+    throw new AppError(403, "FORBIDDEN", "Bạn không có quyền tra cứu danh sách chứng chỉ.");
+  }
+  next();
+};
 
 // ============================================================================
 // CHỨNG CHỈ (CERTIFICATES)
@@ -47,7 +63,8 @@ router.post(
 router.get(
   "/training/certificates/expiring",
   requireAuth,
-  requirePermission("training:view_all_certificates"),
+  requireCertificateViewScope,
+  requireRole(["ROLE_UNIT_HEAD", "ROLE_HR_OFFICER", "ROLE_RECTOR"]),
   asyncHandler(getExpiringCertificates)
 );
 
@@ -55,7 +72,8 @@ router.get(
 router.get(
   "/training/certificates",
   requireAuth,
-  requirePermission("training:view_all_certificates"),
+  requireCertificateViewScope,
+  requireRole(["ROLE_UNIT_HEAD", "ROLE_HR_OFFICER", "ROLE_RECTOR"]),
   validateQuery(CertificateFilterQuerySchema),
   asyncHandler(getAllCertificates)
 );
@@ -65,6 +83,7 @@ router.put(
   "/training/certificates/:id/verify",
   requireAuth,
   requirePermission("training:verify_certificate"),
+  requireRole(["ROLE_HR_OFFICER"]),
   validateBody(VerifyCertificateSchema),
   asyncHandler(verifyCertificate)
 );

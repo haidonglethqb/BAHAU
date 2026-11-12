@@ -1,5 +1,22 @@
 import { Request, Response } from "express";
+import { z } from "zod";
 import { AttendanceService } from "../services/attendance.service.js";
+import { AppError } from "../middlewares/error.middleware.js";
+
+/** Schema kiểm tra dữ liệu đầu vào hợp lệ cho điểm danh khuôn mặt (bỏ qua employeeId/timestamp từ client). */
+export const FaceAttendanceSchema = z.preprocess(
+  (val) => (val == null ? {} : val),
+  z.object({
+    snapshot: z.string().max(5_000_000, "Ảnh khuôn mặt vượt quá kích thước cho phép").optional(),
+    deviceSource: z.string().trim().min(1).max(100).optional(),
+    deviceInfo: z
+      .union([
+        z.string().trim().max(500),
+        z.record(z.string().max(100), z.union([z.string().max(200), z.number(), z.boolean()])),
+      ])
+      .optional(),
+  })
+);
 
 export async function getMyAttendance(req: Request, res: Response): Promise<void> {
   const now = new Date();
@@ -80,16 +97,41 @@ export async function lockPeriod(req: Request, res: Response): Promise<void> {
   });
 }
 
-export async function faceCheckIn(req: Request, res: Response): Promise<void> {
-  const employeeId =
-    req.user?.employeeId ||
-    req.body?.employeeId ||
-    (req.body?.employeeCode ? `${req.body.employeeCode}-ID` : "DAU260003-ID");
-  const result = await AttendanceService.faceCheckIn(employeeId, {
-    snapshot: req.body?.snapshot,
-    deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",
-    timestamp: req.body?.timestamp ? new Date(req.body.timestamp) : new Date(),
-  });
+async function handleFaceAttendance(
+  req: Request,
+  res: Response,
+  mode: "checkin" | "checkout"
+): Promise<void> {
+  if (!req.user) {
+    throw new AppError(401, "UNAUTHENTICATED", "Yêu cầu đăng nhập để thực hiện điểm danh.");
+  }
+  const employeeId = req.user.employeeId;
+  if (!employeeId) {
+    throw new AppError(403, "FORBIDDEN", "Tài khoản chưa được liên kết hồ sơ nhân sự để điểm danh.");
+  }
+
+  const body = (req.body ?? {}) as {
+    snapshot?: string;
+    deviceSource?: string;
+    deviceInfo?: string | Record<string, string | number | boolean>;
+  };
+
+  const deviceSourceFromInfo =
+    typeof body.deviceInfo === "string" && body.deviceInfo.trim()
+      ? body.deviceInfo.trim().slice(0, 100)
+      : undefined;
+
+  // Luôn lấy thời gian máy chủ; tuyệt đối không tin employeeId/timestamp từ client
+  const payload = {
+    snapshot: body.snapshot,
+    deviceSource: body.deviceSource || deviceSourceFromInfo || "BIOMETRIC_FACE_RECOGNITION",
+    timestamp: new Date(),
+  };
+
+  const result =
+    mode === "checkin"
+      ? await AttendanceService.faceCheckIn(employeeId, payload)
+      : await AttendanceService.faceCheckOut(employeeId, payload);
   const requestId = req.id || "00000000-0000-0000-0000-000000000000";
 
   res.status(200).json({
@@ -102,24 +144,10 @@ export async function faceCheckIn(req: Request, res: Response): Promise<void> {
   });
 }
 
-export async function faceCheckOut(req: Request, res: Response): Promise<void> {
-  const employeeId =
-    req.user?.employeeId ||
-    req.body?.employeeId ||
-    (req.body?.employeeCode ? `${req.body.employeeCode}-ID` : "DAU260003-ID");
-  const result = await AttendanceService.faceCheckOut(employeeId, {
-    snapshot: req.body?.snapshot,
-    deviceSource: req.body?.deviceSource || "BIOMETRIC_FACE_RECOGNITION",
-    timestamp: req.body?.timestamp ? new Date(req.body.timestamp) : new Date(),
-  });
-  const requestId = req.id || "00000000-0000-0000-0000-000000000000";
+export async function faceCheckIn(req: Request, res: Response): Promise<void> {
+  await handleFaceAttendance(req, res, "checkin");
+}
 
-  res.status(200).json({
-    success: true,
-    data: result,
-    meta: {
-      timestamp: new Date().toISOString(),
-      requestId,
-    },
-  });
+export async function faceCheckOut(req: Request, res: Response): Promise<void> {
+  await handleFaceAttendance(req, res, "checkout");
 }
