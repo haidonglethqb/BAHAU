@@ -1090,11 +1090,13 @@ export class KpiService {
 
     try {
       const settlement = await WorkloadService.calculateSettlement(employeeId);
-      workloadHours = {
-        actualHours: settlement.totalActualConvertedHours,
-        quotaHours: settlement.effectiveQuota,
-        overtimeHours: settlement.overtimeHours,
-      };
+      if (settlement.employeeName !== "Cán bộ giảng viên (Offline Fallback)") {
+        workloadHours = {
+          actualHours: settlement.totalActualConvertedHours,
+          quotaHours: settlement.effectiveQuota,
+          overtimeHours: settlement.overtimeHours,
+        };
+      }
     } catch {
       // Keep sensible default for architecture faculty
     }
