@@ -374,7 +374,10 @@ export default function TenurePage() {
       notes: "Kê khai bổ sung e-Portfolio",
     };
 
-    const worksToSubmit = currentApp ? [newWork, ...currentApp.works] : [newWork];
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const worksToSubmit = (currentApp ? [newWork, ...currentApp.works] : [newWork]).map(
+      ({ id, ...workFields }) => (id && uuidRe.test(id) ? { id, ...workFields } : workFields)
+    );
     const targetCareerClass = currentApp?.targetCareerClass || "PRINCIPAL_LECTURER";
     const targetAcademicRank = currentApp?.targetAcademicRank || "NONE";
     const teachingYears = currentApp?.teachingYears ?? 5;
