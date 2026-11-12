@@ -26,7 +26,7 @@ import {
 } from "@prisma/client";
 
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/bahau_dev?schema=public";
+  process.env.DATABASE_URL = "postgresql://bahau_admin:bahau_secret_password_2026@localhost:5433/bahau_hrms?schema=public";
 }
 
 const prisma = new PrismaClient();

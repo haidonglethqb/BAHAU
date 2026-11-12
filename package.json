@@ -9,14 +9,16 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=@bahau/web",
-    "start": "npm run start --workspace=@bahau/web",
-    "build": "npm run build --workspaces --if-present",
+    "dev:all": "concurrently -k -n \"API,WEB\" -c \"cyan,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev --workspace=@bahau/api",
     "dev:web": "npm run dev --workspace=@bahau/web",
+    "start": "npm run start --workspace=@bahau/web",
+    "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "db:generate": "npm run generate --workspace=@bahau/database",
     "db:migrate": "npm run migrate:dev --workspace=@bahau/database",
+    "db:push": "npm run push --workspace=@bahau/database",
     "db:seed": "npm run seed --workspace=@bahau/database",
     "db:studio": "npm run studio --workspace=@bahau/database",
     "docker:up": "docker compose up -d",
@@ -36,11 +38,10 @@
     "test:jobs": "node tests/system-worker-queue.test.mjs",
     "test:observability": "node tests/system-observability-metrics.test.mjs",
     "test:admin-system": "node tests/frontend-admin-system.test.mjs",
-    "test:phases": "node tests/leave-workflow-endpoints.test.mjs && node tests/contract-events-endpoints.test.mjs && node tests/attendance-endpoints.test.mjs && node tests/kpi-endpoints.test.mjs && node tests/training-endpoints.test.mjs && node tests/dashboard-ai-endpoints.test.mjs && node tests/business-upgrades-endpoints.test.mjs && node tests/security-verification.test.mjs && node tests/digital-signature-pdf.test.mjs && node tests/payroll-engine.test.mjs && node tests/kpi-council-academic.test.mjs && node tests/tenure-academic-council.test.mjs && node tests/recruitment-academic-audition.test.mjs && node tests/rd-design-royalty.test.mjs && node tests/postgraduate-academic-defense.test.mjs && node tests/system-event-bus.test.mjs && node tests/system-persistent-outbox.test.mjs && node tests/system-worker-queue.test.mjs && node tests/system-observability-metrics.test.mjs && node tests/frontend-admin-system.test.mjs",
-    "dev:all": "npx concurrently -k -n \"API,WEB\" -c \"blue,green\" \"npm run dev:api\" \"npm run dev:web\"",
-    "sys:up": "docker compose up -d && npx concurrently -k -n \"API,WEB\" -c \"blue,green\" \"npm run dev:api\" \"npm run dev:web\""
+    "test:phases": "node tests/leave-workflow-endpoints.test.mjs && node tests/contract-events-endpoints.test.mjs && node tests/attendance-endpoints.test.mjs && node tests/kpi-endpoints.test.mjs && node tests/training-endpoints.test.mjs && node tests/dashboard-ai-endpoints.test.mjs && node tests/business-upgrades-endpoints.test.mjs && node tests/security-verification.test.mjs && node tests/digital-signature-pdf.test.mjs && node tests/payroll-engine.test.mjs && node tests/kpi-council-academic.test.mjs && node tests/tenure-academic-council.test.mjs && node tests/recruitment-academic-audition.test.mjs && node tests/rd-design-royalty.test.mjs && node tests/postgraduate-academic-defense.test.mjs && node tests/system-event-bus.test.mjs && node tests/system-persistent-outbox.test.mjs && node tests/system-worker-queue.test.mjs && node tests/system-observability-metrics.test.mjs && node tests/frontend-admin-system.test.mjs"
   },
   "devDependencies": {
+    "concurrently": "^10.0.6",
     "typescript": "^5.7.3"
   }
 }
