@@ -65,7 +65,7 @@ export const ScientificWorkItemSchema = z.object({
   title: z.string().min(5, "Tên công trình / bài báo tối thiểu 5 ký tự"),
   publishedYear: z.number().int().min(1980).max(2030),
   role: z.enum(["MAIN_AUTHOR", "CO_AUTHOR", "PRINCIPAL_DESIGNER", "COLLABORATOR"]),
-  convertedScore: z.number().min(0),
+  convertedScore: z.number().min(0).default(0),
   evidenceUrl: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
@@ -133,7 +133,7 @@ export type CreateTenureApplicationInput = z.infer<typeof CreateTenureApplicatio
 
 export const TenureCouncilVoteInputSchema = z.object({
   votesYes: z.coerce.number().int().min(0, "Số phiếu tán thành không được âm"),
-  totalVoters: z.coerce.number().int().min(1, "Tổng số thành viên hội đồng tối thiểu là 1"),
+  totalVoters: z.coerce.number().int().min(5, "Tổng số thành viên hội đồng tối thiểu là 5"),
   foreignLanguagePass: z.boolean().default(true),
   councilNotes: z.string().optional().nullable(),
 });
@@ -144,7 +144,11 @@ export const AppointTenureWithPkiInputSchema = z.object({
   signerName: z.string().default("GS.TS. Nguyễn Hiệu Trưởng"),
   resolutionNumber: z.string().optional(),
   effectiveDate: z.string().optional(),
-  newSalaryCoeff: z.coerce.number().optional(),
+  newSalaryCoeff: z.coerce
+    .number()
+    .min(1.0, "Hệ số lương tối thiểu là 1.0")
+    .max(15.0, "Hệ số lương tối đa là 15.0")
+    .optional(),
 });
 
 export type AppointTenureWithPkiInput = z.infer<typeof AppointTenureWithPkiInputSchema>;

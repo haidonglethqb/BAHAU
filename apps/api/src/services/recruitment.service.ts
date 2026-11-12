@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
 import { PkiService } from "./pki.service.js";
 import { PayrollService } from "./payroll.service.js";
@@ -256,6 +257,17 @@ export class RecruitmentService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
     }
 
+    if (candidate.status === "APPOINTED_PROBATION") {
+      throw new AppError(409, "CONFLICT_STATE", "Ứng viên đã được bổ nhiệm tập sự, không thể chấm lại Vòng 1.");
+    }
+    if (candidate.status !== "SUBMITTED" && candidate.status !== "ROUND_1_REVIEW") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        `Không thể chấm điểm Vòng 1 khi hồ sơ đang ở trạng thái ${candidate.status}.`
+      );
+    }
+
     const totalScore = Math.round(
       (input.academicRecordScore +
         input.architecturalProjectsScore +
@@ -308,8 +320,20 @@ export class RecruitmentService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
     }
 
+    if (candidate.status === "APPOINTED_PROBATION") {
+      throw new AppError(409, "CONFLICT_STATE", "Ứng viên đã được bổ nhiệm tập sự, không thể chấm lại Vòng 2.");
+    }
+
     if (!candidate.portfolioScore || !candidate.portfolioScore.isPassed) {
       throw new AppError(400, "ROUND_1_NOT_PASSED", "Ứng viên chưa vượt qua Vòng 1 (thẩm định Portfolio).");
+    }
+
+    if (candidate.status !== "ROUND_1_PASSED" && candidate.status !== "ROUND_2_AUDITION") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        `Không thể chấm điểm Vòng 2 khi hồ sơ đang ở trạng thái ${candidate.status}.`
+      );
     }
 
     const totalScore = Math.round(
@@ -362,6 +386,14 @@ export class RecruitmentService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ ứng viên tuyển dụng.");
     }
 
+    if (candidate.status === "APPOINTED_PROBATION") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Ứng viên đã được ban hành Quyết định tuyển dụng tập sự trước đó."
+      );
+    }
+
     if (candidate.status !== "PASSED" || !candidate.auditionScore || !candidate.auditionScore.isPassed) {
       throw new AppError(
         400,
@@ -372,6 +404,16 @@ export class RecruitmentService {
 
     const resolutionNumber = input.resolutionNumber || `${Math.floor(200 + Math.random() * 800)}/QĐ-ĐHKTĐN`;
     const appointedEmployeeCode = input.appointedEmployeeCode || `DAU26${Math.floor(1000 + Math.random() * 9000)}`;
+
+    for (const existing of this.candidates.values()) {
+      if (existing.id !== candidate.id && existing.appointedEmployeeCode === appointedEmployeeCode) {
+        throw new AppError(
+          409,
+          "CONFLICT_STATE",
+          `Mã nhân sự '${appointedEmployeeCode}' đã được cấp cho ứng viên khác.`
+        );
+      }
+    }
 
     // Hệ số lương tập sự theo Điều 23 Nghị định 115/2020/NĐ-CP:
     // Thạc sĩ: Hưởng 85% bậc 1 (2.34 x 85% = 1.989 ~ 1.99)
@@ -395,6 +437,75 @@ export class RecruitmentService {
     ].join("##");
 
     const signatureResult = PkiService.signData(payloadToSign);
+
+    const effectiveDate = input.effectiveDate ? new Date(input.effectiveDate) : new Date();
+    const hireDate = Number.isNaN(effectiveDate.getTime()) ? new Date() : effectiveDate;
+    const probationExpiry = new Date(hireDate);
+    probationExpiry.setFullYear(probationExpiry.getFullYear() + 1);
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const existingDbEmployee = await tx.employee.findUnique({
+          where: { employeeCode: appointedEmployeeCode },
+          select: { id: true },
+        });
+        if (existingDbEmployee) {
+          throw new AppError(
+            409,
+            "CONFLICT_STATE",
+            `Mã nhân sự '${appointedEmployeeCode}' đã tồn tại trong hồ sơ nhân sự.`
+          );
+        }
+
+        const createdEmployee = await tx.employee.create({
+          data: {
+            employeeCode: appointedEmployeeCode,
+            fullName: candidate.fullName,
+            gender: "OTHER",
+            dateOfBirth: new Date(`${candidate.birthYear}-01-01`),
+            idCardNumber: `REC-${appointedEmployeeCode}`.slice(0, 20),
+            workEmail: candidate.email,
+            phoneNumber: candidate.phone,
+            academicTitle: "NONE",
+            academicDegree: candidate.degree === "DOCTOR" ? "DOCTOR" : "MASTER",
+            employmentStatus: "PROBATION",
+            hireDate,
+          },
+        });
+
+        await tx.employmentContract.create({
+          data: {
+            employeeId: createdEmployee.id,
+            contractNumber: `HDTS-${appointedEmployeeCode}-${resolutionNumber}`.slice(0, 100),
+            contractType: "PROBATION",
+            signedDate: new Date(),
+            effectiveDate: hireDate,
+            expiryDate: probationExpiry,
+            salaryCoefficient: probationSalaryCoeff,
+            status: "ACTIVE",
+          },
+        });
+
+        await tx.employmentEvent.create({
+          data: {
+            employeeId: createdEmployee.id,
+            eventType: "HIRED",
+            decisionNumber: resolutionNumber,
+            decisionDate: new Date(),
+            effectiveDate: hireDate,
+            note: `Tuyển dụng tập sự tại ${candidate.targetDepartment} theo QĐ ${resolutionNumber}`,
+          },
+        });
+      });
+    } catch (err) {
+      if (err instanceof AppError) {
+        throw err;
+      }
+      console.warn(
+        "[RecruitmentService] Prisma sync skipped (DB unreachable or offline):",
+        (err as Error)?.message
+      );
+    }
 
     candidate.status = "APPOINTED_PROBATION";
     candidate.appointmentResolutionNumber = resolutionNumber;
@@ -424,7 +535,7 @@ export class RecruitmentService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0],
           source: "BAHAU_RECRUITMENT_SERVICE",
         }
       )

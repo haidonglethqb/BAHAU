@@ -149,7 +149,7 @@ export const ApproveRecruitmentWithPkiInputSchema = z.object({
   signerName: z.string().default("GS.TS. Nguyễn Hiệu Trưởng"),
   resolutionNumber: z.string().optional(),
   effectiveDate: z.string().optional(),
-  appointedEmployeeCode: z.string().optional(),
+  appointedEmployeeCode: z.string().trim().min(3, "Mã nhân sự tối thiểu 3 ký tự").max(50).optional(),
 });
 
 export type ApproveRecruitmentWithPkiInput = z.infer<typeof ApproveRecruitmentWithPkiInputSchema>;

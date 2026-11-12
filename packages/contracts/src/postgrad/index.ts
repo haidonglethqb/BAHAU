@@ -118,51 +118,119 @@ export type PostgradStudentDto = z.infer<typeof PostgradStudentDtoSchema>;
 // INPUT VALIDATION SCHEMAS
 // =============================================================================
 
-export const CreatePostgradStudentInputSchema = z.object({
-  studentCode: z.string().min(3),
-  fullName: z.string().min(3),
-  degreeLevel: PostgradDegreeLevelEnum,
-  specialization: PostgradSpecializationEnum,
-  thesisTitle: z.string().min(10, "Tên đề tài luận văn/luận án tối thiểu 10 ký tự"),
-  cohortYear: z.coerce.number().min(2020),
-  departmentName: z.string().default("Khoa Kiến trúc"),
-  supervisors: z.array(
-    z.object({
-      employeeId: z.string(),
-      employeeCode: z.string(),
-      fullName: z.string(),
-      academicTitle: z.string().default("TS"),
-      role: SupervisionRoleEnum,
-    })
-  ).min(1, "Phải có ít nhất 1 người hướng dẫn khoa học"),
-});
+export const CreatePostgradStudentInputSchema = z
+  .object({
+    studentCode: z.string().min(3),
+    fullName: z.string().min(3),
+    degreeLevel: PostgradDegreeLevelEnum,
+    specialization: PostgradSpecializationEnum,
+    thesisTitle: z.string().min(10, "Tên đề tài luận văn/luận án tối thiểu 10 ký tự"),
+    cohortYear: z.coerce.number().min(2020),
+    departmentName: z.string().default("Khoa Kiến trúc"),
+    supervisors: z
+      .array(
+        z.object({
+          employeeId: z.string().min(1),
+          employeeCode: z.string().min(1),
+          fullName: z.string().min(1),
+          academicTitle: z.string().default("TS"),
+          role: SupervisionRoleEnum,
+        })
+      )
+      .min(1, "Phải có ít nhất 1 người hướng dẫn khoa học"),
+  })
+  .superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    let hasPrimary = false;
+    for (const s of data.supervisors) {
+      if (seen.has(s.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["supervisors"],
+          message: `Cán bộ hướng dẫn ${s.employeeId} bị trùng lặp`,
+        });
+      }
+      seen.add(s.employeeId);
+      if (s.role === "PRIMARY_SUPERVISOR") {
+        hasPrimary = true;
+      }
+    }
+    if (!hasPrimary) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["supervisors"],
+        message: "Phải có ít nhất 1 người hướng dẫn chính (PRIMARY_SUPERVISOR)",
+      });
+    }
+  });
 
 export type CreatePostgradStudentInput = z.infer<typeof CreatePostgradStudentInputSchema>;
 
-export const ScheduleDefenseCouncilInputSchema = z.object({
-  defenseDate: z.string(),
-  councilMembers: z.array(
-    z.object({
-      employeeId: z.string(),
-      employeeCode: z.string(),
-      fullName: z.string(),
-      role: DefenseCouncilRoleEnum,
-    })
-  ).length(5, "Hội đồng đánh giá luận văn/luận án phải gồm đúng 5 thành viên"),
-});
+export const ScheduleDefenseCouncilInputSchema = z
+  .object({
+    defenseDate: z.string(),
+    councilMembers: z
+      .array(
+        z.object({
+          employeeId: z.string().min(1),
+          employeeCode: z.string().min(1),
+          fullName: z.string().min(1),
+          role: DefenseCouncilRoleEnum,
+        })
+      )
+      .length(5, "Hội đồng đánh giá luận văn/luận án phải gồm đúng 5 thành viên"),
+  })
+  .superRefine((data, ctx) => {
+    const memberIds = new Set<string>();
+    const roles = new Set<string>();
+    for (const m of data.councilMembers) {
+      if (memberIds.has(m.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["councilMembers"],
+          message: `Thành viên hội đồng ${m.employeeId} bị trùng lặp`,
+        });
+      }
+      memberIds.add(m.employeeId);
+      roles.add(m.role);
+    }
+    if (roles.size !== 5) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["councilMembers"],
+        message: "Hội đồng phải có đủ 5 vai trò riêng biệt (PRESIDENT, REVIEWER_1, REVIEWER_2, COMMISSIONER, SECRETARY)",
+      });
+    }
+  });
 
 export type ScheduleDefenseCouncilInput = z.infer<typeof ScheduleDefenseCouncilInputSchema>;
 
-export const ScoreThesisDefenseInputSchema = z.object({
-  memberScores: z.array(
-    z.object({
-      employeeId: z.string(),
-      score: z.coerce.number().min(0).max(100),
-      isApproved: z.boolean(),
-    })
-  ).length(5, "Phải chấm đủ điểm của 5 thành viên Hội đồng"),
-  councilNotes: z.string().optional().nullable(),
-});
+export const ScoreThesisDefenseInputSchema = z
+  .object({
+    memberScores: z
+      .array(
+        z.object({
+          employeeId: z.string().min(1),
+          score: z.coerce.number().min(0).max(100),
+          isApproved: z.boolean(),
+        })
+      )
+      .length(5, "Phải chấm đủ điểm của 5 thành viên Hội đồng"),
+    councilNotes: z.string().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    for (const item of data.memberScores) {
+      if (seen.has(item.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["memberScores"],
+          message: `Trùng lặp điểm chấm cho thành viên ${item.employeeId}`,
+        });
+      }
+      seen.add(item.employeeId);
+    }
+  });
 
 export type ScoreThesisDefenseInput = z.infer<typeof ScoreThesisDefenseInputSchema>;
 

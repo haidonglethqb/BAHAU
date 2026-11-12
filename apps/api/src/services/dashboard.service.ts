@@ -15,6 +15,28 @@ export interface DashboardScope {
 }
 
 export class DashboardService {
+  private static readonly ACTIVE_EMPLOYMENT_STATUSES = [
+    "ACTIVE",
+    "PROBATION",
+    "ON_LEAVE",
+  ] as const;
+
+  private static buildWhereActiveEmployee(allowedUnitIds: string[] | null) {
+    return {
+      employmentStatus: { in: [...this.ACTIVE_EMPLOYMENT_STATUSES] },
+      ...(allowedUnitIds
+        ? {
+            assignments: {
+              some: {
+                unitId: { in: allowedUnitIds },
+                status: "ACTIVE" as const,
+              },
+            },
+          }
+        : {}),
+    };
+  }
+
   /**
    * Mở rộng phạm vi cây đơn vị cho ROLE_UNIT_HEAD; trả về isEmptyScope=true nếu không có quyền xem đơn vị nào.
    */
@@ -83,20 +105,8 @@ export class DashboardService {
       };
     }
 
-    const whereEmployee = allowedUnitIds
-      ? {
-          assignments: {
-            some: {
-              unitId: { in: allowedUnitIds },
-              status: "ACTIVE" as const,
-            },
-          },
-        }
-      : {};
-
-    const whereEmployeeRelation = allowedUnitIds
-      ? { employee: whereEmployee }
-      : {};
+    const whereEmployee = this.buildWhereActiveEmployee(allowedUnitIds);
+    const whereEmployeeRelation = { employee: whereEmployee };
 
     const [
       totalEmployees,
@@ -141,6 +151,7 @@ export class DashboardService {
     ]);
 
     const now = new Date();
+    now.setHours(0, 0, 0, 0);
     const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
     const in60Days = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
 
@@ -150,7 +161,6 @@ export class DashboardService {
           where: {
             status: "VERIFIED",
             expiryDate: {
-              gte: now,
               lte: in90Days,
             },
             ...whereEmployeeRelation,
@@ -248,104 +258,130 @@ export class DashboardService {
       };
     }
 
-    const whereEmployee = allowedUnitIds
+    const whereEmployee = this.buildWhereActiveEmployee(allowedUnitIds);
+    const whereEmployeeRelation = { employee: whereEmployee };
+    const whereTurnoverRelation = allowedUnitIds
       ? {
-          assignments: {
-            some: {
-              unitId: { in: allowedUnitIds },
-              status: "ACTIVE" as const,
+          employee: {
+            assignments: {
+              some: {
+                unitId: { in: allowedUnitIds },
+                status: "ACTIVE" as const,
+              },
             },
           },
         }
       : {};
-    const whereEmployeeRelation = allowedUnitIds
-      ? { employee: whereEmployee }
-      : {};
 
-    const total = await prisma.employee.count({ where: whereEmployee });
+    const [
+      total,
+      degreeGroups,
+      titleGroups,
+      positions,
+      activeAssignmentGroups,
+      contractGroups,
+      recentEvents,
+    ] = await Promise.all([
+      prisma.employee.count({ where: whereEmployee }),
+      prisma.employee.groupBy({
+        by: ["academicDegree"],
+        where: whereEmployee,
+        _count: { _all: true },
+      }),
+      prisma.employee.groupBy({
+        by: ["academicTitle"],
+        where: whereEmployee,
+        _count: { _all: true },
+      }),
+      prisma.position.findMany({
+        select: { id: true, positionType: true },
+      }),
+      prisma.employmentAssignment.groupBy({
+        by: ["positionId", "employeeId"],
+        where: {
+          status: "ACTIVE",
+          ...(allowedUnitIds ? { unitId: { in: allowedUnitIds } } : {}),
+          employee: whereEmployee,
+        },
+      }),
+      prisma.employmentContract.groupBy({
+        by: ["contractType"],
+        where: { status: "ACTIVE", ...whereEmployeeRelation },
+        _count: { _all: true },
+      }),
+      prisma.employmentEvent.findMany({
+        where: whereTurnoverRelation,
+        take: 6,
+        orderBy: { effectiveDate: "desc" },
+        include: {
+          employee: true,
+        },
+      }),
+    ]);
+
     const safeTotal = total > 0 ? total : 1;
 
     // 1. Phân bố theo Trình độ học vị (Academic Degree)
-    const byDegree = await Promise.all(
-      degrees.map(async (deg) => {
-        const count = await prisma.employee.count({
-          where: { ...whereEmployee, academicDegree: deg as any },
-        });
-        return {
-          key: deg,
-          label: degreeLabels[deg] || deg,
-          count,
-          percentage: Number(((count / safeTotal) * 100).toFixed(1)),
-        };
-      })
-    );
+    const degreeCountMap = new Map(degreeGroups.map((g) => [g.academicDegree, g._count._all]));
+    const byDegree = degrees.map((deg) => {
+      const count = degreeCountMap.get(deg as any) ?? 0;
+      return {
+        key: deg,
+        label: degreeLabels[deg] || deg,
+        count,
+        percentage: Number(((count / safeTotal) * 100).toFixed(1)),
+      };
+    });
 
     // 2. Phân bố theo Chức danh học thuật (Academic Title)
-    const byTitle = await Promise.all(
-      titles.map(async (t) => {
-        const count = await prisma.employee.count({
-          where: { ...whereEmployee, academicTitle: t as any },
-        });
-        return {
-          key: t,
-          label: titleLabels[t] || t,
-          count,
-          percentage: Number(((count / safeTotal) * 100).toFixed(1)),
-        };
-      })
-    );
+    const titleCountMap = new Map(titleGroups.map((g) => [g.academicTitle, g._count._all]));
+    const byTitle = titles.map((t) => {
+      const count = titleCountMap.get(t as any) ?? 0;
+      return {
+        key: t,
+        label: titleLabels[t] || t,
+        count,
+        percentage: Number(((count / safeTotal) * 100).toFixed(1)),
+      };
+    });
 
-    // 3. Phân bố theo Vị trí việc làm (Position Type)
-    const byPositionType = await Promise.all(
-      positionTypes.map(async (pt) => {
-        const count = await prisma.employee.count({
-          where: {
-            assignments: {
-              some: {
-                ...(allowedUnitIds ? { unitId: { in: allowedUnitIds } } : {}),
-                position: { positionType: pt as any },
-                status: "ACTIVE",
-              },
-            },
-          },
-        });
-        return {
-          key: pt,
-          label: posLabels[pt] || pt,
-          count,
-          percentage: Number(((count / safeTotal) * 100).toFixed(1)),
-        };
-      })
-    );
+    // 3. Phân bố theo Vị trí việc làm (Position Type) - tối ưu với groupBy thay cho N+1 count()
+    const positionTypeById = new Map(positions.map((p) => [p.id, p.positionType]));
+    const employeesByPositionType = new Map<string, Set<string>>();
+    for (const pt of positionTypes) {
+      employeesByPositionType.set(pt, new Set());
+    }
+    for (const row of activeAssignmentGroups) {
+      const pt = positionTypeById.get(row.positionId);
+      if (pt && employeesByPositionType.has(pt)) {
+        employeesByPositionType.get(pt)!.add(row.employeeId);
+      }
+    }
+    const byPositionType = positionTypes.map((pt) => {
+      const count = employeesByPositionType.get(pt)?.size ?? 0;
+      return {
+        key: pt,
+        label: posLabels[pt] || pt,
+        count,
+        percentage: Number(((count / safeTotal) * 100).toFixed(1)),
+      };
+    });
 
     // 4. Phân bố theo Loại Hợp đồng (Contract Type)
-    const totalContracts = await prisma.employmentContract.count({
-      where: { status: "ACTIVE", ...whereEmployeeRelation },
-    });
+    const contractCountMap = new Map(contractGroups.map((g) => [g.contractType, g._count._all]));
+    const totalContracts = contractGroups.reduce((sum, g) => sum + g._count._all, 0);
     const safeContractTotal = totalContracts > 0 ? totalContracts : 1;
-    const byContractType = await Promise.all(
-      contractTypes.map(async (ct) => {
-        const count = await prisma.employmentContract.count({
-          where: { contractType: ct as any, status: "ACTIVE", ...whereEmployeeRelation },
-        });
-        return {
-          key: ct,
-          label: contractLabels[ct] || ct,
-          count,
-          percentage: Number(((count / safeContractTotal) * 100).toFixed(1)),
-        };
-      })
-    );
+    const byContractType = contractTypes.map((ct) => {
+      const count = contractCountMap.get(ct as any) ?? 0;
+      return {
+        key: ct,
+        label: contractLabels[ct] || ct,
+        count,
+        percentage: Number(((count / safeContractTotal) * 100).toFixed(1)),
+      };
+    });
 
     // 5. Nhật ký Biến động nhân sự gần nhất (Recent Turnover Events)
-    const recentEvents = await prisma.employmentEvent.findMany({
-      where: whereEmployeeRelation,
-      take: 6,
-      orderBy: { effectiveDate: "desc" },
-      include: {
-        employee: true,
-      },
-    });
 
     const recentTurnover = recentEvents.map((ev) => ({
       id: ev.id,
@@ -379,18 +415,9 @@ export class DashboardService {
       };
     }
 
-    const whereEmployeeRelation = allowedUnitIds
-      ? {
-          employee: {
-            assignments: {
-              some: {
-                unitId: { in: allowedUnitIds },
-                status: "ACTIVE" as const,
-              },
-            },
-          },
-        }
-      : {};
+    const whereEmployeeRelation = {
+      employee: this.buildWhereActiveEmployee(allowedUnitIds),
+    };
 
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -497,7 +524,8 @@ export class DashboardService {
       };
     });
 
-    // 3. Hồ sơ chờ phê duyệt (Leave, KPI, Certificate)
+    // 3. Hồ sơ chờ phê duyệt (Leave, KPI, Certificate) - lấy đủ bản ghi gần nhất mỗi loại trước khi gộp/sắp xếp
+    const MAX_PENDING_ALERTS = 15;
     const [pendingLeaves, pendingKpis, pendingCerts] = await Promise.all([
       prisma.leaveRequest.findMany({
         where: { status: "PENDING", ...whereEmployeeRelation },
@@ -508,7 +536,7 @@ export class DashboardService {
             },
           },
         },
-        take: 5,
+        take: MAX_PENDING_ALERTS,
         orderBy: { createdAt: "desc" },
       }),
       prisma.kpiEvaluation.findMany({
@@ -524,7 +552,7 @@ export class DashboardService {
           },
           period: true,
         },
-        take: 5,
+        take: MAX_PENDING_ALERTS,
         orderBy: { updatedAt: "desc" },
       }),
       prisma.certificate.findMany({
@@ -536,7 +564,7 @@ export class DashboardService {
             },
           },
         },
-        take: 5,
+        take: MAX_PENDING_ALERTS,
         orderBy: { createdAt: "desc" },
       }),
     ]);
@@ -566,7 +594,9 @@ export class DashboardService {
         unitName: c.employee.assignments[0]?.unit?.name,
         submittedAt: c.createdAt.toISOString(),
       })),
-    ].sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+    ]
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+      .slice(0, MAX_PENDING_ALERTS);
 
     return {
       expiringContracts,

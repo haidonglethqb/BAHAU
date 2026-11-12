@@ -272,6 +272,29 @@ export class RdService {
    * Đăng ký đề cương đề tài NCKH hoặc Hợp đồng tư vấn thiết kế mới
    */
   public static createProject(input: CreateRdProjectInput, currentUser?: any): RdProjectDto {
+    const start = new Date(input.startDate);
+    const end = new Date(input.endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() < start.getTime()) {
+      throw new AppError(400, "INVALID_DATE_RANGE", "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+    }
+
+    const seenMemberIds = new Set<string>();
+    let totalPct = 0;
+    for (const m of input.members) {
+      if (seenMemberIds.has(m.employeeId)) {
+        throw new AppError(400, "DUPLICATE_MEMBER", `Thành viên ${m.employeeId} bị trùng lặp trong danh sách đề tài.`);
+      }
+      seenMemberIds.add(m.employeeId);
+      totalPct += m.royaltyPercentage || 0;
+    }
+    if (totalPct > 100) {
+      throw new AppError(
+        400,
+        "INVALID_ALLOCATION",
+        `Tổng tỷ lệ phân bổ nhuận bút (${totalPct}%) không được vượt quá 100%.`
+      );
+    }
+
     // Xác định Chủ nhiệm / Chủ trì từ danh sách thành viên
     const leadMember =
       input.members.find(
@@ -376,6 +399,18 @@ export class RdService {
 
     const project = this.getProjectById(id);
 
+    if (
+      project.status === "COMPLETED" ||
+      project.status === "TERMINATED" ||
+      project.payoutStatus === "PAID_VIA_PAYROLL"
+    ) {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        `Không thể đánh giá nghiệm thu đề tài ở trạng thái ${project.status} (${project.payoutStatus}).`
+      );
+    }
+
     const isPassed = input.score >= 70;
     const councilReview = {
       reviewDate: new Date().toISOString(),
@@ -416,17 +451,36 @@ export class RdService {
 
     const project = this.getProjectById(id);
 
-    const totalPercentage = input.memberAllocations.reduce(
-      (sum, item) => sum + item.royaltyPercentage,
-      0
-    );
-
-    if (totalPercentage > 100) {
+    if (
+      project.status === "COMPLETED" ||
+      project.status === "TERMINATED" ||
+      project.payoutStatus === "PAID_VIA_PAYROLL"
+    ) {
       throw new AppError(
-        400,
-        "INVALID_ALLOCATION",
-        `Tổng tỷ lệ phân bổ nhuận bút (${totalPercentage}%) vượt quá quỹ 100%.`
+        409,
+        "CONFLICT_STATE",
+        `Không thể phân bổ nhuận bút khi đề tài đang ở trạng thái ${project.status} (${project.payoutStatus}).`
       );
+    }
+
+    const knownMemberIds = new Set(project.members.map((m) => m.employeeId));
+    const seenAllocIds = new Set<string>();
+    for (const item of input.memberAllocations) {
+      if (seenAllocIds.has(item.employeeId)) {
+        throw new AppError(
+          400,
+          "INVALID_ALLOCATION",
+          `Trùng lặp phân bổ nhuận bút cho thành viên ${item.employeeId}.`
+        );
+      }
+      if (!knownMemberIds.has(item.employeeId)) {
+        throw new AppError(
+          400,
+          "INVALID_ALLOCATION",
+          `Thành viên ${item.employeeId} không thuộc danh sách thực hiện đề tài.`
+        );
+      }
+      seenAllocIds.add(item.employeeId);
     }
 
     const allocMap = new Map(input.memberAllocations.map((a) => [a.employeeId, a.royaltyPercentage]));
@@ -442,6 +496,24 @@ export class RdService {
         convertedResearchHours,
       };
     });
+
+    const resultingTotalPercentage = updatedMembers.reduce((sum, m) => sum + m.royaltyPercentage, 0);
+
+    if (resultingTotalPercentage > 100) {
+      throw new AppError(
+        400,
+        "INVALID_ALLOCATION",
+        `Tổng tỷ lệ phân bổ nhuận bút (${resultingTotalPercentage}%) vượt quá quỹ 100%.`
+      );
+    }
+
+    if (Math.abs(resultingTotalPercentage - 100) > 0.001) {
+      throw new AppError(
+        400,
+        "INVALID_ALLOCATION",
+        `Tổng tỷ lệ phân bổ nhuận bút toàn nhóm phải bằng 100% để phê duyệt chi trả (hiện tại: ${resultingTotalPercentage}%).`
+      );
+    }
 
     const updated: RdProjectDto = {
       ...project,
@@ -474,6 +546,26 @@ export class RdService {
         400,
         "COUNCIL_NOT_PASSED",
         "Đề tài / Dự án chưa được Hội đồng nghiệm thu ĐẠT (yêu cầu điểm đánh giá >= 70 điểm)."
+      );
+    }
+
+    if (project.status === "COMPLETED" || project.payoutStatus === "PAID_VIA_PAYROLL") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Đề tài / Dự án đã được phê duyệt ký số PKI và chi trả nhuận bút trước đó."
+      );
+    }
+
+    if (project.status === "TERMINATED") {
+      throw new AppError(409, "CONFLICT_STATE", "Đề tài / Dự án đã bị chấm dứt, không thể phê duyệt chi trả.");
+    }
+
+    if (project.payoutStatus !== "APPROVED") {
+      throw new AppError(
+        400,
+        "PAYOUT_NOT_APPROVED",
+        "Phương án phân bổ nhuận bút (100%) chưa được phê duyệt trước khi ký số chi trả."
       );
     }
 
@@ -537,7 +629,7 @@ export class RdService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0],
           source: "BAHAU_RD_SERVICE",
         }
       )

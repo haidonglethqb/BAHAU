@@ -60,28 +60,19 @@ export class PostgradService {
         ],
         defenseMembers: [
           {
-            employeeId: "DAU260001-ID",
-            employeeCode: "DAU260001",
-            fullName: "GS.TS. Nguyễn Hiệu Trưởng",
+            employeeId: "DAU260006-ID",
+            employeeCode: "DAU260006",
+            fullName: "PGS.TS. Hoàng Minh Tuấn",
             role: "PRESIDENT",
             score: 0,
             isApproved: false,
             honorariumAmount: 2000000,
           },
           {
-            employeeId: "DAU260002-ID",
-            employeeCode: "DAU260002",
-            fullName: "TS. Lê Hoàng Nam",
-            role: "REVIEWER_1",
-            score: 0,
-            isApproved: false,
-            honorariumAmount: 1500000,
-          },
-          {
             employeeId: "DAU260003-ID",
             employeeCode: "DAU260003",
             fullName: "ThS. Nguyễn Văn An",
-            role: "REVIEWER_2",
+            role: "REVIEWER_1",
             score: 0,
             isApproved: false,
             honorariumAmount: 1500000,
@@ -90,6 +81,15 @@ export class PostgradService {
             employeeId: "DAU260004-ID",
             employeeCode: "DAU260004",
             fullName: "ThS. Phạm Thị Mai",
+            role: "REVIEWER_2",
+            score: 0,
+            isApproved: false,
+            honorariumAmount: 1500000,
+          },
+          {
+            employeeId: "DAU260007-ID",
+            employeeCode: "DAU260007",
+            fullName: "TS. Võ Quốc Hùng",
             role: "COMMISSIONER",
             score: 0,
             isApproved: false,
@@ -257,6 +257,8 @@ export class PostgradService {
     return student;
   }
 
+  private static readonly MAX_ACTIVE_SUPERVISEES = 7;
+
   /**
    * Đăng ký đề tài luận văn/luận án và phân công cán bộ hướng dẫn khoa học
    */
@@ -268,6 +270,47 @@ export class PostgradService {
       )
     ) {
       throw new AppError(403, "FORBIDDEN", "Bạn không có quyền đăng ký hồ sơ học viên Sau đại học.");
+    }
+
+    for (const existing of this.students.values()) {
+      if (existing.studentCode.toLowerCase() === input.studentCode.toLowerCase()) {
+        throw new AppError(409, "CONFLICT_STATE", `Mã học viên '${input.studentCode}' đã tồn tại trong hệ thống.`);
+      }
+    }
+
+    const seenSupervisorIds = new Set<string>();
+    let hasPrimarySupervisor = false;
+    for (const s of input.supervisors) {
+      if (seenSupervisorIds.has(s.employeeId)) {
+        throw new AppError(400, "DUPLICATE_SUPERVISOR", `Cán bộ hướng dẫn ${s.employeeId} bị trùng lặp.`);
+      }
+      seenSupervisorIds.add(s.employeeId);
+      if (s.role === "PRIMARY_SUPERVISOR") {
+        hasPrimarySupervisor = true;
+      }
+
+      const activeSuperviseeCount = Array.from(this.students.values()).filter(
+        (st) =>
+          st.status !== "DEGREE_AWARDED" &&
+          st.status !== "REJECTED" &&
+          st.supervisors.some((sup) => sup.employeeId === s.employeeId)
+      ).length;
+
+      if (activeSuperviseeCount >= this.MAX_ACTIVE_SUPERVISEES) {
+        throw new AppError(
+          400,
+          "SUPERVISOR_QUOTA_EXCEEDED",
+          `Cán bộ hướng dẫn ${s.fullName} đã đạt giới hạn tối đa ${this.MAX_ACTIVE_SUPERVISEES} học viên đang hướng dẫn.`
+        );
+      }
+    }
+
+    if (!hasPrimarySupervisor) {
+      throw new AppError(
+        400,
+        "PRIMARY_SUPERVISOR_REQUIRED",
+        "Học viên Sau đại học phải có ít nhất 1 Người hướng dẫn chính (PRIMARY_SUPERVISOR)."
+      );
     }
 
     const id = `pg-dau-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
@@ -336,11 +379,53 @@ export class PostgradService {
 
     const student = this.getStudentById(id);
 
+    if (student.status === "PASSED" || student.status === "REJECTED" || student.status === "DEGREE_AWARDED") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        `Không thể thành lập lại Hội đồng khi học viên đang ở trạng thái ${student.status}.`
+      );
+    }
+
     if (input.councilMembers.length !== 5) {
       throw new AppError(
         400,
         "INVALID_COUNCIL_SIZE",
         "Hội đồng đánh giá luận văn/luận án phải gồm đúng 5 thành viên theo quy chế của Bộ GD&ĐT."
+      );
+    }
+
+    const supervisorIds = new Set(student.supervisors.map((s) => s.employeeId));
+    const supervisorCodes = new Set(student.supervisors.map((s) => s.employeeCode));
+    const memberIds = new Set<string>();
+    const roles = new Set<string>();
+    const requiredRoles = new Set(["PRESIDENT", "REVIEWER_1", "REVIEWER_2", "COMMISSIONER", "SECRETARY"]);
+
+    for (const m of input.councilMembers) {
+      if (memberIds.has(m.employeeId)) {
+        throw new AppError(
+          400,
+          "DUPLICATE_COUNCIL_MEMBER",
+          `Thành viên Hội đồng ${m.employeeId} bị trùng lặp.`
+        );
+      }
+      memberIds.add(m.employeeId);
+      roles.add(m.role);
+
+      if (supervisorIds.has(m.employeeId) || supervisorCodes.has(m.employeeCode)) {
+        throw new AppError(
+          400,
+          "CONFLICT_OF_INTEREST",
+          `Cán bộ hướng dẫn (${m.fullName}) không được phép tham gia Hội đồng đánh giá của chính học viên mình hướng dẫn.`
+        );
+      }
+    }
+
+    if (roles.size !== requiredRoles.size || ![...requiredRoles].every((r) => roles.has(r))) {
+      throw new AppError(
+        400,
+        "INVALID_COUNCIL_ROLES",
+        "Hội đồng đánh giá phải gồm đủ 5 vai trò riêng biệt: PRESIDENT, REVIEWER_1, REVIEWER_2, COMMISSIONER, SECRETARY."
       );
     }
 
@@ -391,12 +476,35 @@ export class PostgradService {
 
     const student = this.getStudentById(id);
 
+    if (student.status === "DEGREE_AWARDED" || student.status === "PASSED" || student.status === "REJECTED") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        `Hội đồng đã kết thúc chấm bảo vệ ở trạng thái ${student.status}, không thể chấm điểm lại.`
+      );
+    }
+
     if (!student.defenseMembers || student.defenseMembers.length !== 5) {
       throw new AppError(
         400,
         "COUNCIL_NOT_SCHEDULED",
         "Hồ sơ chưa được thành lập Hội đồng đánh giá luận văn/luận án."
       );
+    }
+
+    if (input.memberScores.length !== 5) {
+      throw new AppError(400, "INVALID_SCORE_COUNT", "Phải chấm đủ điểm của 5 thành viên Hội đồng.");
+    }
+
+    const seenScoreIds = new Set<string>();
+    for (const s of input.memberScores) {
+      if (seenScoreIds.has(s.employeeId)) {
+        throw new AppError(400, "DUPLICATE_SCORE", `Trùng lặp điểm chấm cho thành viên ${s.employeeId}.`);
+      }
+      seenScoreIds.add(s.employeeId);
+      if (!Number.isFinite(s.score) || s.score < 0 || s.score > 100) {
+        throw new AppError(400, "INVALID_SCORE", "Điểm chấm của mỗi thành viên Hội đồng phải từ 0 đến 100.");
+      }
     }
 
     const scoreMap = new Map(input.memberScores.map((s) => [s.employeeId, s]));
@@ -477,6 +585,14 @@ export class PostgradService {
       );
     }
 
+    if (student.status === "DEGREE_AWARDED") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Học viên đã được ký số PKI công nhận học vị và chi trả thù lao Hội đồng trước đó."
+      );
+    }
+
     const resolutionNumber = input.resolutionNumber || `220/QĐ-ĐHKTĐN`;
 
     // Chuỗi dữ liệu chuẩn hóa ký số RSA-2048
@@ -536,7 +652,7 @@ export class PostgradService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0],
           source: "BAHAU_POSTGRAD_SERVICE",
         }
       )

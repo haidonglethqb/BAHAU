@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { prisma } from "@bahau/database";
 import { AppError } from "../middlewares/error.middleware.js";
 import { PkiService } from "./pki.service.js";
 import { PayrollService, DEFAULT_FACULTY_MEMBERS } from "./payroll.service.js";
@@ -465,19 +466,22 @@ export class TenureService {
       currentUser?.employeeId ||
       currentUser?.id ||
       "DAU260003-ID";
-    const employeeCode = currentUser?.employeeCode || "DAU260003";
-    const employeeName = currentUser?.fullName || currentUser?.name || "Cán bộ Giảng viên";
-    const unitName = currentUser?.unitName || "Khoa Kiến trúc";
 
     // Tìm thông tin cán bộ trong kho dữ liệu lương để lấy ngạch bậc hiện tại
     const faculty = DEFAULT_FACULTY_MEMBERS.find(
-      (f) => f.employeeId === employeeId || f.employeeCode === employeeCode
+      (f) =>
+        f.employeeId === employeeId ||
+        (currentUser?.employeeCode && f.employeeCode === currentUser.employeeCode)
     );
+
+    const employeeCode = faculty?.employeeCode || currentUser?.employeeCode || "DAU260003";
+    const employeeName = faculty?.fullName || currentUser?.fullName || "Cán bộ Giảng viên";
+    const unitName = faculty?.departmentName || "Khoa Kiến trúc";
 
     const currentCareerClass: CareerClassTitle =
       faculty?.positionCode === "GIANG_VIEN_CHINH"
         ? "PRINCIPAL_LECTURER"
-        : faculty?.positionCode === "TRUONG_KHOA" || faculty?.salaryCoefficient && faculty.salaryCoefficient >= 6.2
+        : faculty?.positionCode === "TRUONG_KHOA" || (faculty?.salaryCoefficient && faculty.salaryCoefficient >= 6.2)
         ? "SENIOR_LECTURER"
         : "LECTURER";
 
@@ -491,11 +495,11 @@ export class TenureService {
     const currentSalaryCoeff = faculty?.salaryCoefficient || 2.34;
     const currentDegree = faculty?.fullName.includes("TS.") ? "DOCTOR" : "MASTER";
 
-    // Tính toán lại điểm từng công trình nếu chưa có convertedScore
+    // Luôn tính lại điểm quy đổi công trình ở server, không tin tưởng convertedScore từ client
     const normalizedWorks: ScientificWorkItem[] = (input.works || []).map((w, idx) => ({
       ...w,
       id: w.id || `work-gen-${Date.now()}-${idx}`,
-      convertedScore: w.convertedScore || this.calculateWorkScore(w),
+      convertedScore: this.calculateWorkScore(w),
     }));
 
     const totalScientificScore = normalizedWorks.reduce((sum, w) => sum + (w.convertedScore || 0), 0);
@@ -554,12 +558,73 @@ export class TenureService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
     }
 
-    if (_currentUser?.employeeId && _currentUser.employeeId === app.employeeId) {
+    if (
+      (_currentUser?.employeeId && _currentUser.employeeId === app.employeeId) ||
+      (_currentUser?.employeeCode && _currentUser.employeeCode === app.employeeCode)
+    ) {
       throw new AppError(403, "FORBIDDEN", "Không được phép tự biểu quyết cho hồ sơ xét chức danh của chính mình.");
     }
 
-    if (input.totalVoters <= 0) {
-      throw new AppError(400, "INVALID_VOTERS", "Tổng số thành viên hội đồng phải lớn hơn 0.");
+    if (app.status === "APPOINTED") {
+      throw new AppError(409, "CONFLICT_STATE", "Hồ sơ đã được bổ nhiệm, không thể bỏ phiếu lại.");
+    }
+    if (app.status !== "SUBMITTED" && app.status !== "IN_REVIEW") {
+      throw new AppError(409, "CONFLICT_STATE", `Không thể biểu quyết cho hồ sơ ở trạng thái ${app.status}.`);
+    }
+
+    // Kiểm tra điều kiện pháp lý theo QĐ 37/2018/QĐ-TTg & TT 40/2020/TT-BGDĐT
+    if (app.totalScientificScore < app.requiredScientificScore) {
+      throw new AppError(
+        400,
+        "ELIGIBILITY_NOT_MET",
+        `Điểm công trình khoa học (${app.totalScientificScore}) chưa đạt ngưỡng tối thiểu (${app.requiredScientificScore}).`
+      );
+    }
+
+    if (
+      (app.targetAcademicRank === "PROFESSOR" ||
+        app.targetAcademicRank === "ASSOCIATE_PROFESSOR" ||
+        app.targetCareerClass === "SENIOR_LECTURER") &&
+      app.currentDegree !== "DOCTOR"
+    ) {
+      throw new AppError(
+        400,
+        "ELIGIBILITY_NOT_MET",
+        "Ứng viên xét chức danh Giáo sư, Phó Giáo sư hoặc Giảng viên cao cấp phải có bằng Tiến sĩ."
+      );
+    }
+
+    if (
+      app.targetCareerClass === "PRINCIPAL_LECTURER" &&
+      app.currentDegree !== "DOCTOR" &&
+      app.currentDegree !== "MASTER"
+    ) {
+      throw new AppError(
+        400,
+        "ELIGIBILITY_NOT_MET",
+        "Ứng viên xét thăng hạng Giảng viên chính phải có bằng Thạc sĩ trở lên."
+      );
+    }
+
+    const minTeachingYears =
+      app.targetAcademicRank === "PROFESSOR"
+        ? 9
+        : app.targetAcademicRank === "ASSOCIATE_PROFESSOR" ||
+          app.targetCareerClass === "SENIOR_LECTURER" ||
+          app.targetCareerClass === "PRINCIPAL_LECTURER"
+        ? 6
+        : 0;
+
+    if (app.teachingYears < minTeachingYears) {
+      throw new AppError(
+        400,
+        "ELIGIBILITY_NOT_MET",
+        `Thâm niên giảng dạy (${app.teachingYears} năm) chưa đạt tối thiểu ${minTeachingYears} năm theo quy định.`
+      );
+    }
+
+    if (input.totalVoters < 5) {
+      throw new AppError(400, "INSUFFICIENT_QUORUM", "Hội đồng xét chức danh phải có tối thiểu 5 thành viên bỏ phiếu.");
     }
 
     if (input.votesYes > input.totalVoters) {
@@ -611,12 +676,24 @@ export class TenureService {
       throw new AppError(404, "NOT_FOUND", "Không tìm thấy hồ sơ xét chức danh.");
     }
 
+    if (app.status === "APPOINTED") {
+      throw new AppError(
+        409,
+        "CONFLICT_STATE",
+        "Hồ sơ này đã được Hiệu trưởng phê duyệt bổ nhiệm và ký số PKI trước đó."
+      );
+    }
+
     if (app.status !== "VOTED" || !app.councilVote || !app.councilVote.isPassed) {
       throw new AppError(
         400,
         "COUNCIL_NOT_PASSED",
         "Hồ sơ chưa được Hội đồng cơ sở biểu quyết thông qua (yêu cầu tỷ lệ tán thành >= 2/3)."
       );
+    }
+
+    if (input.newSalaryCoeff !== undefined && (input.newSalaryCoeff < 1.0 || input.newSalaryCoeff > 15.0)) {
+      throw new AppError(400, "INVALID_SALARY_COEFF", "Hệ số lương mới phải nằm trong khoảng 1.0 đến 15.0.");
     }
 
     // Xác định hệ số lương mới theo Thông tư 40/2020/TT-BGDĐT
@@ -650,6 +727,34 @@ export class TenureService {
 
     const signatureResult = PkiService.signData(payloadToSign);
 
+    // Đồng bộ Employee.academicTitle & EmploymentContract.salaryCoefficient vào Prisma khi DB khả dụng
+    try {
+      await prisma.$transaction(async (tx) => {
+        const dbEmployee = await tx.employee.findUnique({
+          where: { employeeCode: app.employeeCode },
+          select: { id: true },
+        });
+        if (!dbEmployee) return;
+
+        if (app.targetAcademicRank !== "NONE") {
+          await tx.employee.update({
+            where: { id: dbEmployee.id },
+            data: { academicTitle: app.targetAcademicRank },
+          });
+        }
+
+        await tx.employmentContract.updateMany({
+          where: { employeeId: dbEmployee.id, status: "ACTIVE" },
+          data: { salaryCoefficient: newSalaryCoeff },
+        });
+      });
+    } catch (err) {
+      console.warn(
+        "[TenureService] Prisma sync skipped (DB unreachable or offline):",
+        (err as Error)?.message
+      );
+    }
+
     app.status = "APPOINTED";
     app.appointmentResolutionNumber = resolutionNumber;
     app.appointedSalaryCoeff = newSalaryCoeff;
@@ -676,7 +781,7 @@ export class TenureService {
         },
         {
           actorId: _currentUser?.id,
-          actorRole: _currentUser?.roles?.[0] || _currentUser?.role,
+          actorRole: _currentUser?.roles?.[0],
           source: "BAHAU_TENURE_SERVICE",
         }
       )

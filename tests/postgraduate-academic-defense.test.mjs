@@ -134,12 +134,35 @@ async function runPostgraduateAcademicDefenseTests() {
     );
     console.log("   ✓ Guardrail enforced: Council must consist of exactly 5 members");
 
-    // 3B: Valid 5 members schedule
+    // 3B: Conflict of interest guardrail (supervisors barred from defense council)
+    assert.throws(
+      () => {
+        PostgradService.scheduleDefenseCouncil(phdStudent.id, {
+          defenseDate: "2026-11-15",
+          councilMembers: [
+            { employeeId: "DAU260001-ID", employeeCode: "DAU260001", fullName: "GS.TS. Nguyễn Hiệu Trưởng", role: "PRESIDENT" },
+            { employeeId: "DAU260007-ID", employeeCode: "DAU260007", fullName: "TS. Võ Quốc Hùng", role: "REVIEWER_1" },
+            { employeeId: "DAU260003-ID", employeeCode: "DAU260003", fullName: "ThS. Nguyễn Văn An", role: "REVIEWER_2" },
+            { employeeId: "DAU260004-ID", employeeCode: "DAU260004", fullName: "ThS. Phạm Thị Mai", role: "COMMISSIONER" },
+            { employeeId: "DAU260005-ID", employeeCode: "DAU260005", fullName: "ThS. Đỗ Thị Quỳnh Chi", role: "SECRETARY" },
+          ],
+        });
+      },
+      (err) => {
+        assert.strictEqual(err.statusCode, 400);
+        assert.strictEqual(err.code, "CONFLICT_OF_INTEREST");
+        return true;
+      },
+      "Must reject supervisor sitting on student's defense council"
+    );
+    console.log("   ✓ Guardrail enforced: Supervisors barred from Defense Council (COI)");
+
+    // 3C: Valid 5 non-supervisor members schedule
     const scheduled = PostgradService.scheduleDefenseCouncil(phdStudent.id, {
       defenseDate: "2026-11-15",
       councilMembers: [
-        { employeeId: "DAU260001-ID", employeeCode: "DAU260001", fullName: "GS.TS. Nguyễn Hiệu Trưởng", role: "PRESIDENT" },
-        { employeeId: "DAU260002-ID", employeeCode: "DAU260002", fullName: "TS. Lê Hoàng Nam", role: "REVIEWER_1" },
+        { employeeId: "DAU260006-ID", employeeCode: "DAU260006", fullName: "PGS.TS. Hoàng Minh Tuấn", role: "PRESIDENT" },
+        { employeeId: "DAU260007-ID", employeeCode: "DAU260007", fullName: "TS. Võ Quốc Hùng", role: "REVIEWER_1" },
         { employeeId: "DAU260003-ID", employeeCode: "DAU260003", fullName: "ThS. Nguyễn Văn An", role: "REVIEWER_2" },
         { employeeId: "DAU260004-ID", employeeCode: "DAU260004", fullName: "ThS. Phạm Thị Mai", role: "COMMISSIONER" },
         { employeeId: "DAU260005-ID", employeeCode: "DAU260005", fullName: "ThS. Đỗ Thị Quỳnh Chi", role: "SECRETARY" },
@@ -182,7 +205,7 @@ async function runPostgraduateAcademicDefenseTests() {
       councilMembers: [
         { employeeId: "DAU260001-ID", employeeCode: "DAU260001", fullName: "GS.TS. Nguyễn Hiệu Trưởng", role: "PRESIDENT" },
         { employeeId: "DAU260002-ID", employeeCode: "DAU260002", fullName: "TS. Lê Hoàng Nam", role: "REVIEWER_1" },
-        { employeeId: "DAU260003-ID", employeeCode: "DAU260003", fullName: "ThS. Nguyễn Văn An", role: "REVIEWER_2" },
+        { employeeId: "DAU260006-ID", employeeCode: "DAU260006", fullName: "PGS.TS. Hoàng Minh Tuấn", role: "REVIEWER_2" },
         { employeeId: "DAU260004-ID", employeeCode: "DAU260004", fullName: "ThS. Phạm Thị Mai", role: "COMMISSIONER" },
         { employeeId: "DAU260005-ID", employeeCode: "DAU260005", fullName: "ThS. Đỗ Thị Quỳnh Chi", role: "SECRETARY" },
       ],
@@ -192,7 +215,7 @@ async function runPostgraduateAcademicDefenseTests() {
       memberScores: [
         { employeeId: "DAU260001-ID", score: 60, isApproved: false },
         { employeeId: "DAU260002-ID", score: 65, isApproved: true },
-        { employeeId: "DAU260003-ID", score: 62, isApproved: false },
+        { employeeId: "DAU260006-ID", score: 62, isApproved: false },
         { employeeId: "DAU260004-ID", score: 68, isApproved: true },
         { employeeId: "DAU260005-ID", score: 55, isApproved: false },
       ],
@@ -222,8 +245,8 @@ async function runPostgraduateAcademicDefenseTests() {
     // 4C: Pass case for phdStudent (scores 92, 90, 88, 89, 91 -> avg 90, 5/5 votes)
     const scoredPass = PostgradService.scoreThesisDefense(phdStudent.id, {
       memberScores: [
-        { employeeId: "DAU260001-ID", score: 92, isApproved: true },
-        { employeeId: "DAU260002-ID", score: 90, isApproved: true },
+        { employeeId: "DAU260006-ID", score: 92, isApproved: true },
+        { employeeId: "DAU260007-ID", score: 90, isApproved: true },
         { employeeId: "DAU260003-ID", score: 88, isApproved: true },
         { employeeId: "DAU260004-ID", score: 89, isApproved: true },
         { employeeId: "DAU260005-ID", score: 91, isApproved: true },
@@ -275,9 +298,9 @@ async function runPostgraduateAcademicDefenseTests() {
     const { KpiService } = await import("../apps/api/dist/services/kpi.service.js");
 
     // 7A: Payroll Engine Coupling: Council President honorarium (2M)
-    const presHonorarium = PayrollService.getPostgradCouncilHonorarium("DAU260001");
-    assert.ok(presHonorarium >= 2000000, `President DAU260001 must receive >= 2M honorarium (Actual: ${presHonorarium})`);
-    console.log(`   ✓ Payroll synced: DAU260001 received ${presHonorarium.toLocaleString("vi-VN")} VNĐ council honorarium`);
+    const presHonorarium = PayrollService.getPostgradCouncilHonorarium("DAU260006");
+    assert.ok(presHonorarium >= 2000000, `President DAU260006 must receive >= 2M honorarium (Actual: ${presHonorarium})`);
+    console.log(`   ✓ Payroll synced: DAU260006 received ${presHonorarium.toLocaleString("vi-VN")} VNĐ council honorarium`);
 
     // 7B: Workload Engine Coupling: PhD Primary Supervisor hours (50h)
     const supHours = WorkloadService.getSupervisionHours("DAU260001");

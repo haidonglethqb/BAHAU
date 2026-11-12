@@ -114,25 +114,59 @@ export type RdProjectDto = z.infer<typeof RdProjectDtoSchema>;
 // INPUT VALIDATION SCHEMAS
 // =============================================================================
 
-export const CreateRdProjectInputSchema = z.object({
-  title: z.string().min(5, "Tên đề tài / dự án tối thiểu 5 ký tự"),
-  projectType: RdProjectTypeEnum,
-  level: RdProjectLevelEnum,
-  contractValue: z.coerce.number().min(1000000, "Kinh phí tối thiểu 1.000.000 VNĐ"),
-  institutionalFeePercentage: z.coerce.number().min(10).max(50).default(25),
-  startDate: z.string(),
-  endDate: z.string(),
-  departmentName: z.string().default("Khoa Kiến trúc"),
-  members: z.array(
-    z.object({
-      employeeId: z.string(),
-      employeeCode: z.string(),
-      fullName: z.string(),
-      role: RdTeamMemberRoleEnum,
-      royaltyPercentage: z.coerce.number().min(0).max(100).default(0),
-    })
-  ).min(1, "Phải có ít nhất 1 thành viên chủ nhiệm / chủ trì"),
-});
+export const CreateRdProjectInputSchema = z
+  .object({
+    title: z.string().min(5, "Tên đề tài / dự án tối thiểu 5 ký tự"),
+    projectType: RdProjectTypeEnum,
+    level: RdProjectLevelEnum,
+    contractValue: z.coerce.number().min(1000000, "Kinh phí tối thiểu 1.000.000 VNĐ"),
+    institutionalFeePercentage: z.coerce.number().min(10).max(50).default(25),
+    startDate: z.string(),
+    endDate: z.string(),
+    departmentName: z.string().default("Khoa Kiến trúc"),
+    members: z
+      .array(
+        z.object({
+          employeeId: z.string().min(1),
+          employeeCode: z.string().min(1),
+          fullName: z.string().min(1),
+          role: RdTeamMemberRoleEnum,
+          royaltyPercentage: z.coerce.number().min(0).max(100).default(0),
+        })
+      )
+      .min(1, "Phải có ít nhất 1 thành viên chủ nhiệm / chủ trì"),
+  })
+  .superRefine((data, ctx) => {
+    const start = new Date(data.startDate);
+    const end = new Date(data.endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() < start.getTime()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu",
+      });
+    }
+    const seen = new Set<string>();
+    let totalPct = 0;
+    for (const m of data.members) {
+      if (seen.has(m.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["members"],
+          message: `Thành viên ${m.employeeId} bị trùng lặp`,
+        });
+      }
+      seen.add(m.employeeId);
+      totalPct += m.royaltyPercentage || 0;
+    }
+    if (totalPct > 100) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["members"],
+        message: `Tổng tỷ lệ phân bổ nhuận bút (${totalPct}%) không được vượt quá 100%`,
+      });
+    }
+  });
 
 export type CreateRdProjectInput = z.infer<typeof CreateRdProjectInputSchema>;
 
@@ -145,14 +179,30 @@ export const ReviewRdProjectInputSchema = z.object({
 
 export type ReviewRdProjectInput = z.infer<typeof ReviewRdProjectInputSchema>;
 
-export const AllocateRoyaltyInputSchema = z.object({
-  memberAllocations: z.array(
-    z.object({
-      employeeId: z.string(),
-      royaltyPercentage: z.coerce.number().min(0).max(100),
-    })
-  ).min(1),
-});
+export const AllocateRoyaltyInputSchema = z
+  .object({
+    memberAllocations: z
+      .array(
+        z.object({
+          employeeId: z.string().min(1),
+          royaltyPercentage: z.coerce.number().min(0).max(100),
+        })
+      )
+      .min(1),
+  })
+  .superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    for (const item of data.memberAllocations) {
+      if (seen.has(item.employeeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["memberAllocations"],
+          message: `Trùng lặp phân bổ cho thành viên ${item.employeeId}`,
+        });
+      }
+      seen.add(item.employeeId);
+    }
+  });
 
 export type AllocateRoyaltyInput = z.infer<typeof AllocateRoyaltyInputSchema>;
 
