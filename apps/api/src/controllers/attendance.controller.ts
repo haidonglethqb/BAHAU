@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@bahau/database";
 import { AttendanceService } from "../services/attendance.service.js";
 import { AppError } from "../middlewares/error.middleware.js";
+import { kioskBiometricService } from "../services/kiosk-biometric.service.js";
 
 /** Schema kiểm tra dữ liệu đầu vào hợp lệ cho điểm danh khuôn mặt (bỏ qua employeeId/timestamp từ client). */
 export const FaceAttendanceSchema = z.preprocess(
@@ -208,24 +209,45 @@ export async function getKioskStatus(req: Request, res: Response): Promise<void>
       orderBy: { employeeCode: "asc" },
     });
 
+    const enrollments = kioskBiometricService.getAllEnrollments();
+
     const list = employees.map((emp) => {
       const primary = emp.assignments.find((a) => a.assignmentType === "PRIMARY") || emp.assignments[0];
       const todayRec = emp.attendanceRecords[0] || null;
       const summary = emp.monthlyTimesheets[0] || null;
+      const enrollment = enrollments[emp.id] ?? null;
+
+      const checkInIso = todayRec?.checkInTime?.toISOString() ?? null;
+      const checkOutIso = todayRec?.checkOutTime?.toISOString() ?? null;
+      const lateMinutes = kioskBiometricService.computeLateMinutes(checkInIso);
+      const earlyLeaveMinutes = kioskBiometricService.computeEarlyLeaveMinutes(checkOutIso, checkInIso);
+      const checkInSnapshot = checkInIso
+        ? kioskBiometricService.getPunchSnapshot(dateStr, emp.id, "checkin")
+        : null;
+      const checkOutSnapshot = checkOutIso
+        ? kioskBiometricService.getPunchSnapshot(dateStr, emp.id, "checkout")
+        : null;
+
       return {
         id: emp.id,
         employeeCode: emp.employeeCode,
         fullName: emp.fullName,
         unitName: primary?.unit?.name || "ĐH Kiến trúc Đà Nẵng",
         positionName: primary?.position?.name || "Nhân sự / Giảng viên",
+        hasFaceEnrolled: Boolean(enrollment),
+        faceDescriptor: enrollment ? enrollment.descriptor : null,
         today: todayRec
           ? {
               workDate: dateStr,
-              checkInTime: todayRec.checkInTime?.toISOString() ?? null,
-              checkOutTime: todayRec.checkOutTime?.toISOString() ?? null,
+              checkInTime: checkInIso,
+              checkOutTime: checkOutIso,
               rawWorkingHours: Number(todayRec.rawWorkingHours),
               status: todayRec.status,
               deviceSource: todayRec.deviceSource,
+              lateMinutes,
+              earlyLeaveMinutes,
+              checkInSnapshot,
+              checkOutSnapshot,
             }
           : null,
         monthlyWorkingDays: summary ? Number(summary.actualWorkingDays) : 0,
@@ -233,15 +255,102 @@ export async function getKioskStatus(req: Request, res: Response): Promise<void>
       };
     });
 
+    const todayLogs = list
+      .flatMap((emp) => {
+        const logs: Array<{
+          id: string;
+          employeeId: string;
+          employeeCode: string;
+          employeeName: string;
+          unitName: string;
+          mode: "checkin" | "checkout";
+          timeIso: string;
+          method: string | null;
+          status: string;
+          lateMinutes: number;
+          earlyLeaveMinutes: number;
+          snapshot: string | null;
+        }> = [];
+
+        if (emp.today?.checkInTime) {
+          logs.push({
+            id: `${emp.id}-checkin`,
+            employeeId: emp.id,
+            employeeCode: emp.employeeCode,
+            employeeName: emp.fullName,
+            unitName: emp.unitName,
+            mode: "checkin",
+            timeIso: emp.today.checkInTime,
+            method: emp.today.deviceSource,
+            status: emp.today.status,
+            lateMinutes: emp.today.lateMinutes,
+            earlyLeaveMinutes: 0,
+            snapshot: emp.today.checkInSnapshot,
+          });
+        }
+
+        if (emp.today?.checkOutTime) {
+          logs.push({
+            id: `${emp.id}-checkout`,
+            employeeId: emp.id,
+            employeeCode: emp.employeeCode,
+            employeeName: emp.fullName,
+            unitName: emp.unitName,
+            mode: "checkout",
+            timeIso: emp.today.checkOutTime,
+            method: emp.today.deviceSource,
+            status: emp.today.status,
+            lateMinutes: 0,
+            earlyLeaveMinutes: emp.today.earlyLeaveMinutes,
+            snapshot: emp.today.checkOutSnapshot,
+          });
+        }
+
+        return logs;
+      })
+      .sort((a, b) => new Date(b.timeIso).getTime() - new Date(a.timeIso).getTime());
+
+    const totalEmployees = list.length;
+    const checkedInCount = list.filter((emp) => Boolean(emp.today?.checkInTime)).length;
+    const lateCount = list.filter(
+      (emp) => Boolean(emp.today?.checkInTime) && (emp.today?.lateMinutes ?? 0) > 0
+    ).length;
+    const onTimeCount = checkedInCount - lateCount;
+    const checkedOutCount = list.filter((emp) => Boolean(emp.today?.checkOutTime)).length;
+    const notCheckedInCount = totalEmployees - checkedInCount;
+
+    const stats = {
+      totalEmployees,
+      checkedInCount,
+      onTimeCount,
+      lateCount,
+      checkedOutCount,
+      notCheckedInCount,
+    };
+
     res.status(200).json({
       success: true,
-      data: { workDate: dateStr, month, year, employees: list },
+      data: { workDate: dateStr, month, year, stats, employees: list, todayLogs },
     });
   } catch (err) {
     console.warn("[AttendanceController] getKioskStatus failed:", err);
     res.status(200).json({
       success: true,
-      data: { workDate: dateStr, month, year, employees: [] },
+      data: {
+        workDate: dateStr,
+        month,
+        year,
+        stats: {
+          totalEmployees: 0,
+          checkedInCount: 0,
+          onTimeCount: 0,
+          lateCount: 0,
+          checkedOutCount: 0,
+          notCheckedInCount: 0,
+        },
+        employees: [],
+        todayLogs: [],
+      },
     });
   }
 }
@@ -252,7 +361,7 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
     employeeCode?: string;
     mode?: unknown;
     biometricMethod?: "FACE_ID" | "FINGERPRINT";
-    snapshot?: string;
+    snapshot?: unknown;
   };
 
   const resolvedMode = mode === undefined ? "checkin" : mode;
@@ -264,6 +373,8 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
     );
   }
 
+  const validSnapshot = kioskBiometricService.validateSnapshot(snapshot);
+
   let targetId = employeeId;
   if (!targetId && employeeCode) {
     const emp = await prisma.employee.findUnique({ where: { employeeCode } });
@@ -272,6 +383,8 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
   if (!targetId) {
     throw new AppError(400, "BAD_REQUEST", "Vui lòng chọn nhân sự để chấm công.");
   }
+
+  const { dateStr } = getVnTodayUtc();
 
   const deviceSource =
     biometricMethod === "FINGERPRINT"
@@ -293,6 +406,7 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
     }
 
     const result = await AttendanceService.resetTodayAttendance(targetId);
+    kioskBiometricService.clearDaySnapshotsForEmployee(dateStr, targetId);
     res.status(200).json({
       success: true,
       data: result,
@@ -303,18 +417,66 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
   const result =
     resolvedMode === "checkout"
       ? await AttendanceService.faceCheckOut(targetId, {
-          snapshot,
+          snapshot: validSnapshot ?? undefined,
           deviceSource,
           timestamp: new Date(),
         })
       : await AttendanceService.faceCheckIn(targetId, {
-          snapshot,
+          snapshot: validSnapshot ?? undefined,
           deviceSource,
           timestamp: new Date(),
         });
 
+  if (validSnapshot) {
+    kioskBiometricService.savePunchSnapshot(dateStr, targetId, resolvedMode, validSnapshot);
+  }
+
+  const lateMinutes = kioskBiometricService.computeLateMinutes(result.checkInTime ?? null);
+  const earlyLeaveMinutes = kioskBiometricService.computeEarlyLeaveMinutes(
+    result.checkOutTime ?? null,
+    result.checkInTime ?? null
+  );
+
   res.status(200).json({
     success: true,
-    data: result,
+    data: {
+      ...result,
+      lateMinutes,
+      earlyLeaveMinutes,
+      snapshot: validSnapshot,
+    },
+  });
+}
+
+export async function kioskEnrollFace(req: Request, res: Response): Promise<void> {
+  const { employeeId, employeeCode, descriptor, sampleImage } = (req.body ?? {}) as {
+    employeeId?: string;
+    employeeCode?: string;
+    descriptor?: number[];
+    sampleImage?: string;
+  };
+
+  let targetId = employeeId;
+  if (!targetId && employeeCode) {
+    const emp = await prisma.employee.findUnique({ where: { employeeCode } });
+    targetId = emp?.id;
+  }
+  if (!targetId) {
+    throw new AppError(400, "BAD_REQUEST", "Vui lòng chọn nhân sự để đăng ký khuôn mặt.");
+  }
+
+  const record = kioskBiometricService.enrollFace(
+    targetId,
+    descriptor as number[],
+    sampleImage
+  );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      employeeId: targetId,
+      enrolledAt: record.enrolledAt,
+      hasFaceEnrolled: true,
+    },
   });
 }

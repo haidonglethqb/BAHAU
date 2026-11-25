@@ -11,6 +11,7 @@ import {
   requireKioskAccess,
   getKioskStatus,
   kioskPunch,
+  kioskEnrollFace,
 } from "../../controllers/attendance.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
 import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
@@ -90,5 +91,6 @@ router.post(
 // Trạm Máy Chấm Công Kiosk Độc Lập (Face ID & Fingerprint)
 router.get("/attendance/kiosk-status", requireKioskAccess, asyncHandler(getKioskStatus));
 router.post("/attendance/kiosk-punch", requireKioskAccess, asyncHandler(kioskPunch));
+router.post("/attendance/kiosk-enroll", requireKioskAccess, asyncHandler(kioskEnrollFace));
 
 export default router;
