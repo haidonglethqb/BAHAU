@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { prisma } from "@bahau/database";
 import { AttendanceService } from "../services/attendance.service.js";
@@ -171,6 +171,23 @@ function getVnTodayUtc(): { dateStr: string; workDateUtc: Date; month: number; y
   return { dateStr, workDateUtc, month, year };
 }
 
+export function requireKioskAccess(req: Request, _res: Response, next: NextFunction): void {
+  const kioskApiKey = process.env.KIOSK_API_KEY;
+  const providedKey = req.headers["x-kiosk-key"];
+  const hasValidKioskKey =
+    Boolean(kioskApiKey) && typeof providedKey === "string" && providedKey === kioskApiKey;
+
+  if (req.user || hasValidKioskKey || process.env.NODE_ENV !== "production") {
+    return next();
+  }
+
+  throw new AppError(
+    401,
+    "UNAUTHENTICATED",
+    "Trạm chấm công Kiosk yêu cầu xác thực thiết bị hoặc đăng nhập."
+  );
+}
+
 export async function getKioskStatus(req: Request, res: Response): Promise<void> {
   const { dateStr, workDateUtc, month, year } = getVnTodayUtc();
   try {
@@ -211,7 +228,7 @@ export async function getKioskStatus(req: Request, res: Response): Promise<void>
               deviceSource: todayRec.deviceSource,
             }
           : null,
-        monthlyWorkingDays: summary ? Number(summary.actualWorkingDays) : 21,
+        monthlyWorkingDays: summary ? Number(summary.actualWorkingDays) : 0,
         standardDays: summary ? Number(summary.standardDays) : 22,
       };
     });
@@ -220,7 +237,8 @@ export async function getKioskStatus(req: Request, res: Response): Promise<void>
       success: true,
       data: { workDate: dateStr, month, year, employees: list },
     });
-  } catch {
+  } catch (err) {
+    console.warn("[AttendanceController] getKioskStatus failed:", err);
     res.status(200).json({
       success: true,
       data: { workDate: dateStr, month, year, employees: [] },
@@ -232,10 +250,19 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
   const { employeeId, employeeCode, mode, biometricMethod, snapshot } = (req.body ?? {}) as {
     employeeId?: string;
     employeeCode?: string;
-    mode?: "checkin" | "checkout" | "reset";
+    mode?: unknown;
     biometricMethod?: "FACE_ID" | "FINGERPRINT";
     snapshot?: string;
   };
+
+  const resolvedMode = mode === undefined ? "checkin" : mode;
+  if (resolvedMode !== "checkin" && resolvedMode !== "checkout" && resolvedMode !== "reset") {
+    throw new AppError(
+      400,
+      "BAD_REQUEST",
+      "Chế độ chấm công không hợp lệ. Chỉ chấp nhận checkin, checkout hoặc reset."
+    );
+  }
 
   let targetId = employeeId;
   if (!targetId && employeeCode) {
@@ -251,20 +278,30 @@ export async function kioskPunch(req: Request, res: Response): Promise<void> {
       ? "KIOSK_FINGERPRINT_OPTICAL"
       : "KIOSK_FACE_AI_CAMERA";
 
-  if (mode === "reset") {
-    const { workDateUtc } = getVnTodayUtc();
-    await prisma.attendanceRecord.deleteMany({
-      where: { employeeId: targetId, workDate: workDateUtc },
-    });
+  if (resolvedMode === "reset") {
+    if (process.env.NODE_ENV === "production") {
+      const canReset = req.user?.roles.some((r) =>
+        ["ROLE_SYSADMIN", "ROLE_HR_OFFICER"].includes(r)
+      );
+      if (!canReset) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Chỉ Quản trị viên hoặc Phòng TCHC mới được reset bản ghi chấm công."
+        );
+      }
+    }
+
+    const result = await AttendanceService.resetTodayAttendance(targetId);
     res.status(200).json({
       success: true,
-      data: { reset: true, employeeId: targetId },
+      data: result,
     });
     return;
   }
 
   const result =
-    mode === "checkout"
+    resolvedMode === "checkout"
       ? await AttendanceService.faceCheckOut(targetId, {
           snapshot,
           deviceSource,

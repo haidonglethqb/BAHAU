@@ -8,6 +8,7 @@ import {
   faceCheckIn,
   faceCheckOut,
   FaceAttendanceSchema,
+  requireKioskAccess,
   getKioskStatus,
   kioskPunch,
 } from "../../controllers/attendance.controller.js";
@@ -87,7 +88,7 @@ router.post(
 );
 
 // Trạm Máy Chấm Công Kiosk Độc Lập (Face ID & Fingerprint)
-router.get("/attendance/kiosk-status", asyncHandler(getKioskStatus));
-router.post("/attendance/kiosk-punch", asyncHandler(kioskPunch));
+router.get("/attendance/kiosk-status", requireKioskAccess, asyncHandler(getKioskStatus));
+router.post("/attendance/kiosk-punch", requireKioskAccess, asyncHandler(kioskPunch));
 
 export default router;

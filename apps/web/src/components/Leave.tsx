@@ -244,7 +244,7 @@ export function Leave() {
             status:
               role === 'HR_SPECIALIST'
                 ? 'HR_PENDING'
-                : role === 'RECTOR'
+                : role === 'RECTOR' || role === 'SYSTEM_ADMIN'
                 ? 'RECTOR_PENDING'
                 : 'DEAN_PENDING',
           }))
@@ -359,15 +359,13 @@ export function Leave() {
               {role === 'LECTURER' && 'Sổ Phép Viên Chức'}
               {role === 'DEAN' && 'Phê Duyệt Cấp Khoa'}
               {role === 'HR_SPECIALIST' && 'Nghiệp Vụ Sổ Phép TCHC'}
-              {role === 'RECTOR' && 'Ban Giám Hiệu Phê Duyệt'}
-              {role === 'SYSTEM_ADMIN' && 'Giám Sát Workflow'}
+              {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && 'Ban Giám Hiệu Phê Duyệt'}
             </span>
             <span className="text-xs text-muted">
               {role === 'LECTURER' && `${user?.fullName || 'ThS. Nguyễn Văn An'} · Khoa Kiến trúc`}
               {role === 'DEAN' && `PGS.TS. Trần Thị Bình · Trưởng Khoa Kiến trúc`}
               {role === 'HR_SPECIALIST' && `ThS. Lê Minh Cường · Phòng Tổ chức - Hành chính`}
-              {role === 'RECTOR' && `GS.TS. Hoàng Đức Dũng · Hiệu trưởng`}
-              {role === 'SYSTEM_ADMIN' && `KS. Phạm Quản Trị · Quản trị hệ thống`}
+              {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && `${user?.fullName || 'GS.TS. Hoàng Đức Dũng'} · ${user?.roleLabel || 'Ban Giám Hiệu & Quản trị'}`}
             </span>
           </div>
 
@@ -375,15 +373,13 @@ export function Leave() {
             {role === 'LECTURER' && 'Sổ Phép & Đăng Ký Nghỉ Cá Nhân'}
             {role === 'DEAN' && 'Quản Lý & Phê Duyệt Phép — Khoa Kiến Trúc'}
             {role === 'HR_SPECIALIST' && 'Trung Tâm Quản Lý Sổ Phép & Quyết Toán Nghỉ Toàn Trường'}
-            {role === 'RECTOR' && 'Giám Sát Hiện Diện & Phê Duyệt Công Tác Ban Giám Hiệu'}
-            {role === 'SYSTEM_ADMIN' && 'Giám Sát Động Cơ Quy Trình Nghỉ Phép (Workflow Engine)'}
+            {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && 'Giám Sát Hiện Diện & Phê Duyệt Công Tác Ban Giám Hiệu'}
           </h1>
           <p className="text-xs sm:text-sm text-muted">
             {role === 'LECTURER' && 'Theo dõi số dư ngày phép, đăng ký nghỉ bù/phép năm và theo dõi luồng duyệt điện tử'}
             {role === 'DEAN' && 'Thẩm định hồ sơ nghỉ phép, lịch dạy thay và cử công tác chuyên môn của CBGV Khoa Kiến trúc'}
             {role === 'HR_SPECIALIST' && 'Quyết toán trừ phép, tính công nghỉ không hưởng lương và lưu vết Sổ cái điện tử (Double-Entry Ledger)'}
-            {role === 'RECTOR' && 'Phê duyệt các đoàn công tác nước ngoài, hội thảo quốc tế và đơn xin nghỉ của Trưởng đơn vị'}
-            {role === 'SYSTEM_ADMIN' && 'Kiểm tra trạng thái máy trạng thái hữu hạn (FSM) và thời gian phản hồi quy trình (SLA)'}
+            {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && 'Phê duyệt các đoàn công tác nước ngoài, hội thảo quốc tế và đơn xin nghỉ của Trưởng đơn vị'}
           </p>
         </div>
 

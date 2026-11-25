@@ -104,6 +104,8 @@ function formatVnTime(iso?: string | null): string {
   })
 }
 
+const isDevMode = process.env.NODE_ENV !== 'production'
+
 export default function StandaloneCheckInKioskPage() {
   const [employees, setEmployees] = useState<KioskEmployee[]>(FALLBACK_KIOSK_EMPLOYEES)
   const [selectedEmpId, setSelectedEmpId] = useState<string>('')
@@ -318,62 +320,30 @@ export default function StandaloneCheckInKioskPage() {
           ...prev.slice(0, 9),
         ])
       } else {
-        // Offline / validation fallback
-        if (res.status === 422) {
-          setBannerResult({
-            type: 'error',
-            title: 'Chưa thể thực hiện Check-out',
-            subtitle: json?.error?.message || 'Nhân sự chưa thực hiện Check-in trong ngày hôm nay.',
-            timestamp: timeLabel,
-            methodLabel,
-          })
-        } else {
-          // Local update if DB offline
-          setEmployees((prev) =>
-            prev.map((emp) => {
-              if (emp.id !== selectedEmployee.id) return emp
-              const prevToday = emp.today || {
-                workDate: new Date().toISOString().split('T')[0],
-                checkInTime: null,
-                checkOutTime: null,
-                rawWorkingHours: 0,
-                status: 'PRESENT',
-                deviceSource: methodLabel,
-              }
-              return {
-                ...emp,
-                today:
-                  mode === 'checkin'
-                    ? { ...prevToday, checkInTime: nowIso, status: 'PRESENT' }
-                    : { ...prevToday, checkOutTime: nowIso, rawWorkingHours: 8.0, status: 'PRESENT' },
-                monthlyWorkingDays:
-                  mode === 'checkout' ? Math.min(emp.standardDays, emp.monthlyWorkingDays + 1) : emp.monthlyWorkingDays,
-              }
-            })
-          )
-          setBannerResult({
-            type: 'success',
-            title:
-              mode === 'checkin'
-                ? `CHECK-IN THÀNH CÔNG — ${selectedEmployee.fullName}`
-                : `CHECK-OUT THÀNH CÔNG — ${selectedEmployee.fullName}`,
-            subtitle: `Đã xác thực sinh trắc học (${methodLabel}) lúc ${timeLabel}.`,
-            timestamp: timeLabel,
-            methodLabel,
-          })
-          setLogs((prev) => [
-            {
-              id: `${Date.now()}`,
-              time: timeLabel,
-              employeeName: selectedEmployee.fullName,
-              employeeCode: selectedEmployee.employeeCode,
-              mode,
-              method: biometricMethod,
-              statusText: mode === 'checkin' ? 'Đã vào ca' : 'Đã hoàn thành ca',
-            },
-            ...prev.slice(0, 9),
-          ])
-        }
+        const errorTitle =
+          res.status === 422
+            ? mode === 'checkout'
+              ? 'Chưa thể thực hiện Check-out'
+              : 'Dữ liệu chấm công không hợp lệ'
+            : res.status === 409
+            ? 'Kỳ chấm công đã khóa'
+            : res.status === 401 || res.status === 403
+            ? 'Không có quyền thực hiện chấm công'
+            : mode === 'checkin'
+            ? 'Check-in thất bại'
+            : 'Check-out thất bại'
+
+        setBannerResult({
+          type: 'error',
+          title: errorTitle,
+          subtitle:
+            json?.error?.message ||
+            (res.status === 422
+              ? 'Nhân sự chưa thực hiện Check-in trong ngày hôm nay.'
+              : `Máy chủ từ chối yêu cầu chấm công (HTTP ${res.status}).`),
+          timestamp: timeLabel,
+          methodLabel,
+        })
       }
     } catch {
       setBannerResult({
@@ -391,8 +361,13 @@ export default function StandaloneCheckInKioskPage() {
 
   const handleResetToday = async () => {
     if (!selectedEmployee) return
+    const timeLabel = formatVnTime(new Date().toISOString())
+    const methodLabel =
+      biometricMethod === 'FACE_ID'
+        ? 'Nhận diện Khuôn mặt AI (Face ID)'
+        : 'Quét Vân tay Quang học (Fingerprint)'
     try {
-      await fetch('/api/v1/attendance/kiosk-punch', {
+      const res = await fetch('/api/v1/attendance/kiosk-punch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -401,14 +376,32 @@ export default function StandaloneCheckInKioskPage() {
           mode: 'reset',
         }),
       })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || json?.success === false) {
+        setBannerResult({
+          type: 'error',
+          title: 'Reset bản ghi chấm công thất bại',
+          subtitle:
+            json?.error?.message || 'Không thể reset bản ghi chấm công hôm nay.',
+          timestamp: timeLabel,
+          methodLabel,
+        })
+        return
+      }
+      setEmployees((prev) =>
+        prev.map((emp) => (emp.id === selectedEmployee.id ? { ...emp, today: null } : emp))
+      )
+      setBannerResult(null)
+      await fetchKioskStatus()
     } catch {
-      // ignore
+      setBannerResult({
+        type: 'error',
+        title: 'Reset bản ghi chấm công thất bại',
+        subtitle: 'Không thể reset bản ghi chấm công hôm nay.',
+        timestamp: timeLabel,
+        methodLabel,
+      })
     }
-    setEmployees((prev) =>
-      prev.map((emp) => (emp.id === selectedEmployee.id ? { ...emp, today: null } : emp))
-    )
-    setBannerResult(null)
-    await fetchKioskStatus()
   }
 
   return (
@@ -723,7 +716,7 @@ export default function StandaloneCheckInKioskPage() {
                     </span>
                     <h4 className="text-sm font-bold text-white">{selectedEmployee.fullName}</h4>
                   </div>
-                  {hasCheckedIn && (
+                  {isDevMode && hasCheckedIn && (
                     <button
                       type="button"
                       onClick={handleResetToday}

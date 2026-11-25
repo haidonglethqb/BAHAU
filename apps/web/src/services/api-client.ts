@@ -310,7 +310,7 @@ class ApiClient {
         this.setSessionId(res.data.sessionId)
         return res
       }
-      if ((res.status === 0 || res.status >= 500) && password === 'Admin@123456') {
+      if (process.env.NODE_ENV !== 'production' && (res.status === 0 || res.status >= 500) && password === 'Admin@123456') {
         const seedUser = this.getDevSeedUser(email)
         if (seedUser) {
           const sessionId = `dev-local-${Date.now()}`

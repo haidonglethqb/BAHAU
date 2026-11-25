@@ -54,9 +54,9 @@ function getAuthHeaders(includeJson = false): Record<string, string> {
 }
 
 export default function AttendanceManagePage() {
-  const { user } = useAuth();
-  const canImport = user?.role === "HR_SPECIALIST";
-  const canLock = user?.role === "HR_SPECIALIST" || user?.role === "RECTOR";
+  const { hasRole } = useAuth();
+  const canImport = hasRole(["HR_SPECIALIST", "SYSTEM_ADMIN"]);
+  const canLock = hasRole(["HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]);
 
   const initialPeriod = getVnMonthYear();
   const [month, setMonth] = useState(initialPeriod.month);

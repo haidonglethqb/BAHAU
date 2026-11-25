@@ -58,6 +58,8 @@ tests/e2e/reports/*
 # 6. Database & Local Storage
 storage/uploads/*
 !storage/uploads/.gitkeep
+.data/
+**/.data/
 postgres_data/
 pgdata/
 *.sqlite

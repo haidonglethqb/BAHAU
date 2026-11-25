@@ -30,9 +30,8 @@ function getAuthHeaders(withJson = true): HeadersInit {
 }
 
 export function ExecutiveResolutionsModal({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth()
-  const role = user?.role || 'LECTURER'
-  const isRector = role === 'RECTOR'
+  const { hasRole } = useAuth()
+  const isRector = hasRole(['RECTOR', 'SYSTEM_ADMIN'])
 
   const [candidates, setCandidates] = useState<any[]>([])
   const [loadingCandidates, setLoadingCandidates] = useState(true)

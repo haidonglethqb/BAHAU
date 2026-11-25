@@ -456,7 +456,7 @@ function LecturerDashboardView({ user }: { user: any }) {
               <span>Tóm Tắt Lương & Bảo Hiểm Xã Hội Cá Nhân</span>
             </div>
             <p className="text-xs text-slate-700 leading-relaxed">
-              Lương tính theo <strong>22/22 ngày công</strong> chấm công thực tế. Đã trích đóng đầy đủ <strong>BHXH (8%)</strong>, <strong>BHYT (1.5%)</strong> và <strong>BHTN (1%)</strong>.
+              Lương được tính tự động theo ngày công chấm công thực tế trong tháng. Đã áp dụng trích đóng đầy đủ <strong>BHXH (8%)</strong>, <strong>BHYT (1.5%)</strong> và <strong>BHTN (1%)</strong> theo quy định.
             </p>
             <Link
               href="/payroll"

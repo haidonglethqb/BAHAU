@@ -41,7 +41,7 @@ export interface PayslipDto {
   royaltyPayment?: number
   postgradHonorarium?: number
   grossIncome: number
-  insurableBase: number
+  insurableBase?: number
   socialInsurance: number
   healthInsurance: number
   unemploymentInsurance: number
@@ -320,50 +320,68 @@ export function PayslipModal({
                 </div>
               </div>
 
-              {/* Deductions */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
-                    3. Các Khoản Khấu Trừ Pháp Định (BHXH, BHYT, BHTN & Thuế TNCN)
-                  </h4>
-                  <Badge tone="danger">Khấu trừ</Badge>
-                </div>
-                <div className="rounded-xl border border-line divide-y divide-line text-[13px]">
-                  <Row label="Bảo hiểm xã hội (8.0%)" amount={-(payslip.socialInsurance || 0)} negative />
-                  <Row label="Bảo hiểm y tế (1.5%)" amount={-(payslip.healthInsurance || 0)} negative />
-                  <Row label="Bảo hiểm thất nghiệp (1.0%)" amount={-(payslip.unemploymentInsurance || 0)} negative />
-                  <Row label="Tổng bảo hiểm bắt buộc NLĐ đóng (10.5%)" amount={-(payslip.totalInsurance || 0)} negative />
-                  <Row label="Thuế thu nhập cá nhân (Biểu lũy tiến)" amount={-(payslip.personalIncomeTax || 0)} negative />
-                </div>
-              </div>
-
-              {/* Section 4: Employer Social Insurance Contribution (21.5%) */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
-                    4. Quỹ Bảo Hiểm Xã Hội Đơn Vị Đóng Cho Tác Nhân (21.5%)
-                  </h4>
-                  <Badge tone="success">Đơn vị chi trả</Badge>
-                </div>
-                {(() => {
-                  const insBase =
-                    (payslip.baseSalary || 0) +
+              {/* Deductions & Employer Social Insurance Contribution (21.5%) */}
+              {(() => {
+                const insuranceBase =
+                  payslip.insurableBase ??
+                  ((payslip.baseSalary || 0) +
                     (payslip.leadershipAllowance || 0) +
-                    (payslip.seniorityAllowance || 0)
-                  const orgBhxh = Math.round(insBase * 0.175)
-                  const orgBhyt = Math.round(insBase * 0.03)
-                  const orgBhtn = Math.round(insBase * 0.01)
-                  return (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 divide-y divide-emerald-100 text-[13px]">
-                      <Row label="Lương căn cứ tính đóng BHXH bắt buộc" amount={insBase} />
-                      <Row label="Đơn vị đóng Quỹ BHXH (Ốm đau, Thai sản, Hưu trí - 17.5%)" amount={orgBhxh} highlight />
-                      <Row label="Đơn vị đóng Quỹ BHYT (3.0%)" amount={orgBhyt} highlight />
-                      <Row label="Đơn vị đóng Quỹ BHTN (1.0%)" amount={orgBhtn} highlight />
-                      <Row label="Tổng Quỹ BHXH Đơn vị đóng cho nhân sự (21.5%)" amount={orgBhxh + orgBhyt + orgBhtn} highlight />
+                    (payslip.seniorityAllowance || 0))
+                const empBhxh =
+                  payslip.socialInsurance ??
+                  (insuranceBase > 0 ? Math.round(insuranceBase * 0.08) : 0)
+                const empBhyt =
+                  payslip.healthInsurance ??
+                  (insuranceBase > 0 ? Math.round(insuranceBase * 0.015) : 0)
+                const empBhtn =
+                  payslip.unemploymentInsurance ??
+                  (insuranceBase > 0 ? Math.round(insuranceBase * 0.01) : 0)
+                const empInsTotal =
+                  payslip.totalInsurance ?? (empBhxh + empBhyt + empBhtn)
+                const waiveEmployer =
+                  insuranceBase <= 0 ||
+                  (empInsTotal === 0 && payslip.insurableBase === 0)
+                const orgBhxh = waiveEmployer ? 0 : Math.round(insuranceBase * 0.175)
+                const orgBhyt = waiveEmployer ? 0 : Math.round(insuranceBase * 0.03)
+                const orgBhtn = waiveEmployer ? 0 : Math.round(insuranceBase * 0.01)
+                const orgInsTotal = orgBhxh + orgBhyt + orgBhtn
+
+                return (
+                  <>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
+                          3. Các Khoản Khấu Trừ Pháp Định (BHXH, BHYT, BHTN & Thuế TNCN)
+                        </h4>
+                        <Badge tone="danger">Khấu trừ</Badge>
+                      </div>
+                      <div className="rounded-xl border border-line divide-y divide-line text-[13px]">
+                        <Row label="Bảo hiểm xã hội (8.0%)" amount={-empBhxh} negative />
+                        <Row label="Bảo hiểm y tế (1.5%)" amount={-empBhyt} negative />
+                        <Row label="Bảo hiểm thất nghiệp (1.0%)" amount={-empBhtn} negative />
+                        <Row label="Tổng bảo hiểm bắt buộc NLĐ đóng (10.5%)" amount={-empInsTotal} negative />
+                        <Row label="Thuế thu nhập cá nhân (Biểu lũy tiến)" amount={-(payslip.personalIncomeTax || 0)} negative />
+                      </div>
                     </div>
-                  )
-                })()}
-              </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
+                          4. Quỹ Bảo Hiểm Xã Hội Đơn Vị Đóng Cho Tác Nhân (21.5%)
+                        </h4>
+                        <Badge tone="success">Đơn vị chi trả</Badge>
+                      </div>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 divide-y divide-emerald-100 text-[13px]">
+                        <Row label="Lương căn cứ tính đóng BHXH bắt buộc" amount={insuranceBase} />
+                        <Row label="Đơn vị đóng Quỹ BHXH (Ốm đau, Thai sản, Hưu trí - 17.5%)" amount={orgBhxh} highlight />
+                        <Row label="Đơn vị đóng Quỹ BHYT (3.0%)" amount={orgBhyt} highlight />
+                        <Row label="Đơn vị đóng Quỹ BHTN (1.0%)" amount={orgBhtn} highlight />
+                        <Row label="Tổng Quỹ BHXH Đơn vị đóng cho nhân sự (21.5%)" amount={orgInsTotal} highlight />
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
 
               {/* Net Salary Total */}
               <div className="p-4 rounded-xl bg-gradient-to-r from-brand-600 to-brand-800 text-white flex items-center justify-between shadow-md">

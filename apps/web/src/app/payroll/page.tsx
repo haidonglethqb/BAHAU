@@ -72,6 +72,47 @@ async function authFetchJson(url: string, init: RequestInit = {}) {
   return json
 }
 
+function formatBhxhCode(employeeCode?: string) {
+  const digits = (employeeCode || '').replace(/\D/g, '')
+  return digits ? `4820${digits.padStart(6, '0')}` : '4820000000'
+}
+
+function computeInsuranceBreakdown(item: PayslipDto) {
+  const insuranceBase =
+    item.insurableBase ??
+    ((item.baseSalary || 0) +
+      (item.leadershipAllowance || 0) +
+      (item.seniorityAllowance || 0))
+  const empBhxh =
+    item.socialInsurance ??
+    (insuranceBase > 0 ? Math.round(insuranceBase * 0.08) : 0)
+  const empBhyt =
+    item.healthInsurance ??
+    (insuranceBase > 0 ? Math.round(insuranceBase * 0.015) : 0)
+  const empBhtn =
+    item.unemploymentInsurance ??
+    (insuranceBase > 0 ? Math.round(insuranceBase * 0.01) : 0)
+  const empInsTotal = item.totalInsurance ?? (empBhxh + empBhyt + empBhtn)
+  const waiveEmployer =
+    insuranceBase <= 0 || (empInsTotal === 0 && item.insurableBase === 0)
+  const orgBhxh = waiveEmployer ? 0 : Math.round(insuranceBase * 0.175)
+  const orgBhyt = waiveEmployer ? 0 : Math.round(insuranceBase * 0.03)
+  const orgBhtn = waiveEmployer ? 0 : Math.round(insuranceBase * 0.01)
+  const orgInsTotal = orgBhxh + orgBhyt + orgBhtn
+
+  return {
+    insuranceBase,
+    empBhxh,
+    empBhyt,
+    empBhtn,
+    empInsTotal,
+    orgBhxh,
+    orgBhyt,
+    orgBhtn,
+    orgInsTotal,
+  }
+}
+
 export default function PayrollPage() {
   const { user } = useAuth()
   const role = user?.role || 'LECTURER'
@@ -513,69 +554,64 @@ export default function PayrollPage() {
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-rose-700 mb-2 flex items-center gap-1.5">
-                        <AlertTriangle size={14} /> Các Khoản Trích Nộp & Khấu Trừ Nghĩa Vụ
-                      </h4>
-                      <div className="space-y-2 rounded-xl bg-slate-50 p-3.5 border border-line text-xs">
-                        <div className="flex justify-between py-1 border-b border-slate-200">
-                          <span className="text-slate-600">Bảo hiểm xã hội BHXH (8%)</span>
-                          <strong className="text-rose-700">- {formatVnd(myPayslip.socialInsurance)}</strong>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-200">
-                          <span className="text-slate-600">Bảo hiểm y tế BHYT (1.5%)</span>
-                          <strong className="text-rose-700">- {formatVnd(myPayslip.healthInsurance)}</strong>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-200">
-                          <span className="text-slate-600">Bảo hiểm thất nghiệp BHTN (1%)</span>
-                          <strong className="text-rose-700">- {formatVnd(myPayslip.unemploymentInsurance)}</strong>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-slate-600">Thuế thu nhập cá nhân (TNCN)</span>
-                          <strong className="text-rose-700">- {formatVnd(myPayslip.personalIncomeTax)}</strong>
-                        </div>
-                        <div className="flex justify-between py-1 pt-2 border-t border-slate-300 font-bold text-rose-700">
-                          <span>Tổng khấu trừ nghĩa vụ</span>
-                          <span>- {formatVnd(totalDeductions)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 mb-2 flex items-center gap-1.5">
-                        <ShieldCheck size={14} /> Quỹ Bảo Hiểm Xã Hội Đơn Vị Đóng Cho Tác Nhân (21.5%)
-                      </h4>
-                      {(() => {
-                        const insBase =
-                          (myPayslip.baseSalary || 0) +
-                          (myPayslip.leadershipAllowance || 0) +
-                          (myPayslip.seniorityAllowance || 0)
-                        const empBhxh175 = Math.round(insBase * 0.175)
-                        const empBhyt30 = Math.round(insBase * 0.03)
-                        const empBhtn10 = Math.round(insBase * 0.01)
-                        const empTotal215 = empBhxh175 + empBhyt30 + empBhtn10
-                        return (
-                          <div className="space-y-1.5 rounded-xl bg-emerald-50/60 p-3.5 border border-emerald-200 text-xs">
-                            <div className="flex justify-between py-0.5 text-slate-600">
-                              <span>Mức lương căn cứ đóng BHXH:</span>
-                              <strong className="text-ink">{formatVnd(insBase)}</strong>
-                            </div>
-                            <div className="flex justify-between py-0.5 text-slate-600">
-                              <span>Đơn vị đóng BHXH (17.5%):</span>
-                              <strong className="text-emerald-800">{formatVnd(empBhxh175)}</strong>
-                            </div>
-                            <div className="flex justify-between py-0.5 text-slate-600">
-                              <span>Đơn vị đóng BHYT (3.0%) & BHTN (1.0%):</span>
-                              <strong className="text-emerald-800">{formatVnd(empBhyt30 + empBhtn10)}</strong>
-                            </div>
-                            <div className="flex justify-between pt-1.5 border-t border-emerald-200 font-bold text-emerald-800">
-                              <span>Tổng Đơn vị đóng (21.5%):</span>
-                              <span>{formatVnd(empTotal215)}</span>
+                    {(() => {
+                      const ins = computeInsuranceBreakdown(myPayslip)
+                      return (
+                        <>
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-rose-700 mb-2 flex items-center gap-1.5">
+                              <AlertTriangle size={14} /> Các Khoản Trích Nộp & Khấu Trừ Nghĩa Vụ
+                            </h4>
+                            <div className="space-y-2 rounded-xl bg-slate-50 p-3.5 border border-line text-xs">
+                              <div className="flex justify-between py-1 border-b border-slate-200">
+                                <span className="text-slate-600">Bảo hiểm xã hội BHXH (8%)</span>
+                                <strong className="text-rose-700">- {formatVnd(ins.empBhxh)}</strong>
+                              </div>
+                              <div className="flex justify-between py-1 border-b border-slate-200">
+                                <span className="text-slate-600">Bảo hiểm y tế BHYT (1.5%)</span>
+                                <strong className="text-rose-700">- {formatVnd(ins.empBhyt)}</strong>
+                              </div>
+                              <div className="flex justify-between py-1 border-b border-slate-200">
+                                <span className="text-slate-600">Bảo hiểm thất nghiệp BHTN (1%)</span>
+                                <strong className="text-rose-700">- {formatVnd(ins.empBhtn)}</strong>
+                              </div>
+                              <div className="flex justify-between py-1">
+                                <span className="text-slate-600">Thuế thu nhập cá nhân (TNCN)</span>
+                                <strong className="text-rose-700">- {formatVnd(myPayslip.personalIncomeTax)}</strong>
+                              </div>
+                              <div className="flex justify-between py-1 pt-2 border-t border-slate-300 font-bold text-rose-700">
+                                <span>Tổng khấu trừ nghĩa vụ</span>
+                                <span>- {formatVnd(totalDeductions)}</span>
+                              </div>
                             </div>
                           </div>
-                        )
-                      })()}
-                    </div>
+
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 mb-2 flex items-center gap-1.5">
+                              <ShieldCheck size={14} /> Quỹ Bảo Hiểm Xã Hội Đơn Vị Đóng Cho Tác Nhân (21.5%)
+                            </h4>
+                            <div className="space-y-1.5 rounded-xl bg-emerald-50/60 p-3.5 border border-emerald-200 text-xs">
+                              <div className="flex justify-between py-0.5 text-slate-600">
+                                <span>Mức lương căn cứ đóng BHXH:</span>
+                                <strong className="text-ink">{formatVnd(ins.insuranceBase)}</strong>
+                              </div>
+                              <div className="flex justify-between py-0.5 text-slate-600">
+                                <span>Đơn vị đóng BHXH (17.5%):</span>
+                                <strong className="text-emerald-800">{formatVnd(ins.orgBhxh)}</strong>
+                              </div>
+                              <div className="flex justify-between py-0.5 text-slate-600">
+                                <span>Đơn vị đóng BHYT (3.0%) & BHTN (1.0%):</span>
+                                <strong className="text-emerald-800">{formatVnd(ins.orgBhyt + ins.orgBhtn)}</strong>
+                              </div>
+                              <div className="flex justify-between pt-1.5 border-t border-emerald-200 font-bold text-emerald-800">
+                                <span>Tổng Đơn vị đóng (21.5%):</span>
+                                <span>{formatVnd(ins.orgInsTotal)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )
+                    })()}
 
                     <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-5 space-y-2">
                       <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">
@@ -858,18 +894,17 @@ export default function PayrollPage() {
                       (item.pedagogicalAllowance || 0) +
                       (item.seniorityAllowance || 0) +
                       (item.leadershipAllowance || 0)
-                    const insuranceBase =
-                      (item.baseSalary || 0) +
-                      (item.leadershipAllowance || 0) +
-                      (item.seniorityAllowance || 0)
-                    const empBhxh = item.socialInsurance || Math.round(insuranceBase * 0.08)
-                    const empBhyt = item.healthInsurance || Math.round(insuranceBase * 0.015)
-                    const empBhtn = item.unemploymentInsurance || Math.round(insuranceBase * 0.01)
-                    const empInsTotal = item.totalInsurance || empBhxh + empBhyt + empBhtn
-                    const orgBhxh = Math.round(insuranceBase * 0.175)
-                    const orgBhyt = Math.round(insuranceBase * 0.03)
-                    const orgBhtn = Math.round(insuranceBase * 0.01)
-                    const orgInsTotal = orgBhxh + orgBhyt + orgBhtn
+                    const {
+                      insuranceBase,
+                      empBhxh,
+                      empBhyt,
+                      empBhtn,
+                      empInsTotal,
+                      orgBhxh,
+                      orgBhyt,
+                      orgBhtn,
+                      orgInsTotal,
+                    } = computeInsuranceBreakdown(item)
 
                     const actorRoleLabel = item.departmentName?.includes('Giám hiệu')
                       ? 'Role 3: Quản trị & Phê duyệt'
@@ -877,7 +912,7 @@ export default function PayrollPage() {
                       ? 'Role 2: Quản lý NS - Tiền lương'
                       : 'Role 1: Nhân sự / Giảng viên'
 
-                    const bhxhCode = `BHXH-48200${String(idx + 101)}`
+                    const bhxhCode = `BHXH-${formatBhxhCode(item.employeeCode)}`
 
                     return (
                       <tr key={item.id || item.employeeId || idx} className="hover:bg-slate-50/80 transition-colors">
@@ -998,15 +1033,14 @@ export default function PayrollPage() {
                 </thead>
                 <tbody className="divide-y divide-line text-slate-700">
                   {items.map((item, idx) => {
-                    const insuranceBase =
-                      (item.baseSalary || 0) +
-                      (item.leadershipAllowance || 0) +
-                      (item.seniorityAllowance || 0)
-                    const empBhxh = item.socialInsurance || Math.round(insuranceBase * 0.08)
-                    const empBhyt = item.healthInsurance || Math.round(insuranceBase * 0.015)
-                    const empBhtn = item.unemploymentInsurance || Math.round(insuranceBase * 0.01)
-                    const empInsTotal = item.totalInsurance || empBhxh + empBhyt + empBhtn
-                    const orgInsTotal = Math.round(insuranceBase * 0.215)
+                    const {
+                      insuranceBase,
+                      empBhxh,
+                      empBhyt,
+                      empBhtn,
+                      empInsTotal,
+                      orgInsTotal,
+                    } = computeInsuranceBreakdown(item)
                     const grandTotal = empInsTotal + orgInsTotal
 
                     const actorRoleLabel = item.departmentName?.includes('Giám hiệu')
@@ -1018,7 +1052,7 @@ export default function PayrollPage() {
                     return (
                       <tr key={`bhxh-${item.id || item.employeeId || idx}`} className="hover:bg-slate-50">
                         <td className="px-3 py-2.5 font-mono font-bold text-brand-700">
-                          48200{String(idx + 101)}
+                          {formatBhxhCode(item.employeeCode)}
                         </td>
                         <td className="px-3 py-2.5 font-bold text-ink">{item.employeeName}</td>
                         <td className="px-3 py-2.5">

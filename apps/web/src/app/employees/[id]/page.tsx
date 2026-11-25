@@ -133,8 +133,8 @@ const TITLE_LABELS: Record<string, string> = {
 export default function EmployeeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const employeeId = resolvedParams.id;
-  const { user } = useAuth();
-  const canAddEvent = user?.role === "HR_SPECIALIST" || user?.role === "RECTOR";
+  const { hasRole } = useAuth();
+  const canAddEvent = hasRole(["HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]);
 
   const [employee, setEmployee] = useState<EmployeeDetail | null>(null);
   const [events, setEvents] = useState<EmploymentEventItem[]>([]);

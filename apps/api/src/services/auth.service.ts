@@ -28,6 +28,7 @@ export class AuthService {
           "attendance:view_unit",
           "attendance:view_own",
           "attendance:lock_period",
+          "ai:chat",
         ],
         unitsManaged: [],
       };
@@ -50,6 +51,7 @@ export class AuthService {
           "attendance:view_own",
           "attendance:lock_period",
           "attendance:import_raw",
+          "ai:chat",
         ],
         unitsManaged: [],
       };
@@ -62,7 +64,7 @@ export class AuthService {
         employeeCode: "DAU260002",
         fullName: "GS.TS. Hoàng Đức Dũng",
         roles: ["ROLE_RECTOR"],
-        permissions: ["payroll:view_all", "payroll:approve", "attendance:view_all", "executive:all"],
+        permissions: ["payroll:view_all", "payroll:approve", "attendance:view_all", "executive:all", "ai:chat"],
         unitsManaged: [],
       };
     }
@@ -74,7 +76,7 @@ export class AuthService {
         employeeCode: "DAU260001",
         fullName: "PGS.TS. Trần Thị Bình",
         roles: ["ROLE_UNIT_HEAD"],
-        permissions: ["attendance:view_unit", "attendance:view_own", "workflow:approve_unit", "payroll:view_all"],
+        permissions: ["attendance:view_unit", "attendance:view_own", "workflow:approve_unit", "payroll:view_all", "ai:chat"],
         unitsManaged: ["unit-arch"],
       };
     }
@@ -86,7 +88,7 @@ export class AuthService {
         employeeCode: "DAU260003",
         fullName: "ThS. Nguyễn Văn An",
         roles: ["ROLE_EMPLOYEE"],
-        permissions: ["attendance:view_own", "attendance:adjust_request", "leave:create_request", "payroll:view_own"],
+        permissions: ["attendance:view_own", "attendance:adjust_request", "leave:create_request", "payroll:view_own", "ai:chat"],
         unitsManaged: [],
       };
     }
@@ -353,11 +355,9 @@ export class AuthService {
       }
     }
 
+    // Hỗ trợ vai trò gộp Role 3 (Quản trị hệ thống kiêm quyền phê duyệt Ban Giám hiệu)
     if (rolesSet.has("ROLE_SYSADMIN")) {
       rolesSet.add("ROLE_RECTOR");
-    }
-    if (rolesSet.has("ROLE_HR_OFFICER")) {
-      rolesSet.add("ROLE_UNIT_HEAD");
     }
 
     return {

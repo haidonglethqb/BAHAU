@@ -1360,4 +1360,39 @@ export class AttendanceService {
       throw err;
     }
   }
+
+  /**
+   * Reset bản ghi chấm công trong ngày của nhân sự và đồng bộ lại bảng công tháng
+   */
+  public static async resetTodayAttendance(
+    employeeId: string
+  ): Promise<{ reset: boolean; employeeId: string }> {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const { year, month, workDateUtc } = this.getVnDateParts(new Date());
+        const period = await this.getOrCreatePeriod(month, year, tx);
+        if (period.isLocked) {
+          throw new AppError(
+            409,
+            "PERIOD_LOCKED",
+            `Kỳ công tháng ${month}/${year} đã khóa, không thể reset bản ghi chấm công.`
+          );
+        }
+
+        await tx.attendanceRecord.deleteMany({
+          where: { employeeId, workDate: workDateUtc },
+        });
+
+        await this.recalculateMonthlySummary(employeeId, period.id, month, year, tx);
+
+        return { reset: true, employeeId };
+      });
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      if (isDbConnectionError(err)) {
+        throw new AppError(503, "DATABASE_UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu.");
+      }
+      throw err;
+    }
+  }
 }

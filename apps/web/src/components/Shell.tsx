@@ -39,6 +39,7 @@ import { Avatar, cx } from './ui'
 import { NotificationDropdown } from './NotificationDropdown'
 import { PayslipModal } from './PayslipModal'
 import { ExecutiveResolutionsModal } from './ExecutiveResolutionsModal'
+import { FloatingAiWidget } from './ai/FloatingAiWidget'
 
 export interface NavItem {
   href: string
@@ -122,9 +123,11 @@ export function Shell({
   const [showPayslip, setShowPayslip] = useState(false)
   const [showExecutive, setShowExecutive] = useState(false)
 
+  const isDevMode = process.env.NODE_ENV !== 'production'
   const userRole = isAuthenticated && user ? user.role : null
 
   const handleQuickSwitchRole = async (email: string) => {
+    if (!isDevMode) return
     setUserMenuOpen(false)
     await login(email, 'Admin@123456')
   }
@@ -364,6 +367,19 @@ export function Shell({
                     <span>Trạm Check-in Kiosk</span>
                   </Link>
 
+                  <Link
+                    href="/ai-assistant"
+                    className={cx(
+                      'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-colors shadow-2xs',
+                      pathname === '/ai-assistant'
+                        ? 'bg-indigo-600 text-white border-indigo-700'
+                        : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border-indigo-200',
+                    )}
+                  >
+                    <Sparkles size={14} className={pathname === '/ai-assistant' ? 'text-amber-300' : 'text-indigo-600'} />
+                    <span>AI Trợ lý</span>
+                  </Link>
+
                   {hasRole('SYSTEM_ADMIN') && (
                     <Link
                       href="/admin/system"
@@ -418,31 +434,33 @@ export function Shell({
                           {user.roleLabel}
                         </span>
                       </div>
-                      <div className="px-2 py-1 border-b border-line mb-1">
-                        <p className="px-1 pb-1 font-mono text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                          Chuyển nhanh 3 Role cốt lõi
-                        </p>
-                        {[
-                          { label: '1. Nhân sự / Giảng viên', email: 'employee@dau.edu.vn', code: 'LECTURER' },
-                          { label: '2. Quản lý NS - Tiền lương', email: 'hrspecialist@dau.edu.vn', code: 'HR_SPECIALIST' },
-                          { label: '3. Quản trị & Phê duyệt', email: 'admin@dau.edu.vn', code: 'SYSTEM_ADMIN' },
-                        ].map((r) => (
-                          <button
-                            key={r.code}
-                            type="button"
-                            onClick={() => handleQuickSwitchRole(r.email)}
-                            className={cx(
-                              'flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer',
-                              user.role === r.code
-                                ? 'bg-brand-50 font-bold text-brand-700'
-                                : 'text-slate-600 hover:bg-slate-50',
-                            )}
-                          >
-                            <span>{r.label}</span>
-                            {user.role === r.code && <span className="text-[9px] text-brand-600">Đang dùng</span>}
-                          </button>
-                        ))}
-                      </div>
+                      {isDevMode && (
+                        <div className="px-2 py-1 border-b border-line mb-1">
+                          <p className="px-1 pb-1 font-mono text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                            Chuyển nhanh 3 Role cốt lõi
+                          </p>
+                          {[
+                            { label: '1. Nhân sự / Giảng viên', email: 'employee@dau.edu.vn', code: 'LECTURER' },
+                            { label: '2. Quản lý NS - Tiền lương', email: 'hrspecialist@dau.edu.vn', code: 'HR_SPECIALIST' },
+                            { label: '3. Quản trị & Phê duyệt', email: 'admin@dau.edu.vn', code: 'SYSTEM_ADMIN' },
+                          ].map((r) => (
+                            <button
+                              key={r.code}
+                              type="button"
+                              onClick={() => handleQuickSwitchRole(r.email)}
+                              className={cx(
+                                'flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer',
+                                user.role === r.code
+                                  ? 'bg-brand-50 font-bold text-brand-700'
+                                  : 'text-slate-600 hover:bg-slate-50',
+                              )}
+                            >
+                              <span>{r.label}</span>
+                              {user.role === r.code && <span className="text-[9px] text-brand-600">Đang dùng</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <Link
                         href="/profile"
                         onClick={() => setUserMenuOpen(false)}
@@ -475,9 +493,10 @@ export function Shell({
         <main className="flex-1 px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">{children}</main>
       </div>
 
-      {/* Modals */}
+      {/* Modals & AI Floating Widget */}
       {isAuthenticated && showPayslip && <PayslipModal onClose={() => setShowPayslip(false)} />}
       {isAuthenticated && showExecutive && <ExecutiveResolutionsModal onClose={() => setShowExecutive(false)} />}
+      <FloatingAiWidget />
     </div>
   )
 }

@@ -7,6 +7,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowRight,
+  Bot,
   Check,
   CheckCircle2,
   Clock,
@@ -32,9 +33,10 @@ import {
   Zap,
 } from "lucide-react";
 import { AuthGuard } from "../../../components/AuthGuard";
+import { AdminAiControlPanel } from "../../../components/admin/AdminAiControlPanel";
 import { Badge, Button, StatusPill, cx } from "../../../components/ui";
 
-type TabType = "probes" | "metrics" | "outbox" | "jobs";
+type TabType = "probes" | "metrics" | "outbox" | "jobs" | "ai";
 
 function getAuthHeaders(withJson = false): HeadersInit {
   const headers: Record<string, string> = {};
@@ -233,6 +235,23 @@ export default function AdminSystemPage() {
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  // Read URL query parameter ?tab=ai safely without useSearchParams (avoids Suspense boundary requirement)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const tabParam = searchParams.get("tab");
+      if (
+        tabParam === "ai" ||
+        tabParam === "probes" ||
+        tabParam === "metrics" ||
+        tabParam === "outbox" ||
+        tabParam === "jobs"
+      ) {
+        setActiveTab(tabParam as TabType);
+      }
+    }
+  }, []);
 
   // Auto-refresh interval
   useEffect(() => {
@@ -584,6 +603,19 @@ export default function AdminSystemPage() {
                 {jobStats.active} Đang chạy
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab("ai")}
+            className={cx(
+              "flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-bold transition-all cursor-pointer whitespace-nowrap",
+              activeTab === "ai"
+                ? "border-brand-500 text-brand-600 bg-brand-50/40 rounded-t-lg"
+                : "border-transparent text-muted hover:text-ink hover:border-slate-300"
+            )}
+          >
+            <Bot size={16} />
+            <span>AI Agent &amp; API</span>
           </button>
         </div>
 
@@ -1276,6 +1308,11 @@ export default function AdminSystemPage() {
             </div>
           </div>
         )}
+
+        {/* ================================================================== */}
+        {/* TAB 5: AI AGENT & API CONTROL PANEL                                */}
+        {/* ================================================================== */}
+        {activeTab === "ai" && <AdminAiControlPanel />}
 
         {/* ================================================================== */}
         {/* MODAL: OUTBOX PAYLOAD INSPECTOR                                    */}

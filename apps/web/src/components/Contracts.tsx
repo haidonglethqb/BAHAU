@@ -149,10 +149,10 @@ async function authFetchJson<T>(
 }
 
 export function Contracts() {
-  const { user } = useAuth()
+  const { user, hasRole } = useAuth()
   const role = user?.role || 'LECTURER'
-  const canManageContracts = role === 'HR_SPECIALIST' || role === 'RECTOR'
-  const canReadAlerts = role === 'DEAN' || role === 'HR_SPECIALIST' || role === 'RECTOR'
+  const canManageContracts = hasRole(['HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'])
+  const canReadAlerts = hasRole(['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'])
 
   const [contracts, setContracts] = useState<ContractDto[]>([])
   const [pagination, setPagination] = useState<PaginationMeta | null>(null)
@@ -195,14 +195,6 @@ export function Contracts() {
   })
 
   const fetchData = useCallback(async () => {
-    if (role === 'SYSTEM_ADMIN') {
-      setLoading(false)
-      setContracts([])
-      setAlerts(null)
-      setErrorMsg('Vai trò Quản trị Hệ thống (SYSTEM_ADMIN) không có quyền truy cập dữ liệu hợp đồng lao động.')
-      return
-    }
-
     setLoading(true)
     setErrorMsg(null)
 
@@ -572,15 +564,13 @@ export function Contracts() {
             <span className="rounded bg-brand-50 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-brand-700 border border-brand-200">
               {role === 'DEAN' && 'Quản Lý Hợp Đồng Đơn Vị'}
               {role === 'HR_SPECIALIST' && 'Quản Trị HĐLĐ Toàn Trường'}
-              {role === 'RECTOR' && 'Phê Duyệt HĐLĐ Ban Giám Hiệu'}
-              {role === 'SYSTEM_ADMIN' && 'Phân Quyền Hợp Đồng'}
+              {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && 'Phê Duyệt HĐLĐ Ban Giám Hiệu'}
             </span>
           </div>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">
             {role === 'DEAN' && 'Quản Lý Hợp Đồng Giảng Viên Đơn Vị'}
             {role === 'HR_SPECIALIST' && 'Quản Lý Hợp Đồng Lao Động & Viên Chức Toàn Trường'}
-            {role === 'RECTOR' && 'Theo Dõi & Tái Ký Hợp Đồng Lao Động — Ban Giám Hiệu'}
-            {role === 'SYSTEM_ADMIN' && 'Quản Lý Hợp Đồng Lao Động'}
+            {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && 'Theo Dõi & Tái Ký Hợp Đồng Lao Động — Ban Giám Hiệu'}
           </h1>
           <p className="text-xs sm:text-sm text-muted">
             Theo dõi hợp đồng lao động, cảnh báo đáo hạn 30 / 31–60 / 61–90 ngày và xử lý tái ký đồng bộ với CSDL.
