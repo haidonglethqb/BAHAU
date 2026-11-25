@@ -84,50 +84,65 @@ export function Header() {
               </a>
             </>
           ) : (
-            /* Authenticated Faculty/Staff Intranet Navigation */
+            /* Authenticated Faculty/Staff Intranet Navigation (Streamlined for 3 Core Roles) */
             <>
               <Link href="/dashboard" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 text-brand-600 font-bold">
-                Dashboard
+                Tổng quan
               </Link>
-              {hasRole(["DEAN", "HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]) && (
-                <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                  CBGV
-                </Link>
+              {user?.role === "LECTURER" && (
+                <>
+                  <Link href="/attendance" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Chấm công của tôi
+                  </Link>
+                  <Link href="/leave" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Nghỉ phép
+                  </Link>
+                  <Link href="/payroll" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Phiếu lương & BHXH
+                  </Link>
+                  <Link href="/profile" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Hồ sơ cá nhân
+                  </Link>
+                </>
               )}
-              {hasRole(["HR_SPECIALIST", "SYSTEM_ADMIN"]) && (
-                <Link href="/contracts" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                  Hợp đồng
-                </Link>
+              {user?.role === "HR_SPECIALIST" && (
+                <>
+                  <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Nhân sự
+                  </Link>
+                  <Link href="/contracts" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Hợp đồng
+                  </Link>
+                  <Link href="/attendance" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Quản lý Chấm công
+                  </Link>
+                  <Link href="/leave" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Duyệt phép
+                  </Link>
+                  <Link href="/payroll" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 font-semibold text-emerald-700">
+                    Tính lương & BHXH
+                  </Link>
+                </>
               )}
-              <Link href="/leave" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                Nghỉ phép
-              </Link>
-              <Link href="/attendance" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                Chấm công
-              </Link>
-              <Link href="/workload" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                Giờ chuẩn
-              </Link>
-              {hasRole(["DEAN", "HR_SPECIALIST", "RECTOR", "SYSTEM_ADMIN"]) && (
-                <Link href="/approvals" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
-                  Phê duyệt
-                </Link>
-              )}
-              <Link
-                href="/ai-assistant"
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200"
-              >
-                <Sparkles size={13} />
-                <span>AI Trợ lý</span>
-              </Link>
-              {hasRole(["SYSTEM_ADMIN", "RECTOR"]) && (
-                <Link
-                  href="/admin/system"
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold"
-                >
-                  <Activity size={13} />
-                  <span>Hệ thống</span>
-                </Link>
+              {user?.role === "SYSTEM_ADMIN" && (
+                <>
+                  <Link href="/payroll" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100 font-semibold text-emerald-700">
+                    Phê duyệt Lương & BHXH
+                  </Link>
+                  <Link href="/approvals" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Phê duyệt Đơn
+                  </Link>
+                  <Link href="/employees" className="px-2.5 py-1.5 rounded-lg hover:text-ink hover:bg-slate-100">
+                    Danh bạ Nhân sự
+                  </Link>
+                  <Link
+                    href="/admin/system"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold"
+                  >
+                    <Activity size={13} />
+                    <span>Hệ thống</span>
+                  </Link>
+                </>
               )}
             </>
           )}

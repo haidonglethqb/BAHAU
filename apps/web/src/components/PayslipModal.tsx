@@ -332,9 +332,37 @@ export function PayslipModal({
                   <Row label="Bảo hiểm xã hội (8.0%)" amount={-(payslip.socialInsurance || 0)} negative />
                   <Row label="Bảo hiểm y tế (1.5%)" amount={-(payslip.healthInsurance || 0)} negative />
                   <Row label="Bảo hiểm thất nghiệp (1.0%)" amount={-(payslip.unemploymentInsurance || 0)} negative />
-                  <Row label="Tổng bảo hiểm bắt buộc (10.5%)" amount={-(payslip.totalInsurance || 0)} negative />
+                  <Row label="Tổng bảo hiểm bắt buộc NLĐ đóng (10.5%)" amount={-(payslip.totalInsurance || 0)} negative />
                   <Row label="Thuế thu nhập cá nhân (Biểu lũy tiến)" amount={-(payslip.personalIncomeTax || 0)} negative />
                 </div>
+              </div>
+
+              {/* Section 4: Employer Social Insurance Contribution (21.5%) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[13px] font-bold uppercase tracking-wider text-slate-500">
+                    4. Quỹ Bảo Hiểm Xã Hội Đơn Vị Đóng Cho Tác Nhân (21.5%)
+                  </h4>
+                  <Badge tone="success">Đơn vị chi trả</Badge>
+                </div>
+                {(() => {
+                  const insBase =
+                    (payslip.baseSalary || 0) +
+                    (payslip.leadershipAllowance || 0) +
+                    (payslip.seniorityAllowance || 0)
+                  const orgBhxh = Math.round(insBase * 0.175)
+                  const orgBhyt = Math.round(insBase * 0.03)
+                  const orgBhtn = Math.round(insBase * 0.01)
+                  return (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 divide-y divide-emerald-100 text-[13px]">
+                      <Row label="Lương căn cứ tính đóng BHXH bắt buộc" amount={insBase} />
+                      <Row label="Đơn vị đóng Quỹ BHXH (Ốm đau, Thai sản, Hưu trí - 17.5%)" amount={orgBhxh} highlight />
+                      <Row label="Đơn vị đóng Quỹ BHYT (3.0%)" amount={orgBhyt} highlight />
+                      <Row label="Đơn vị đóng Quỹ BHTN (1.0%)" amount={orgBhtn} highlight />
+                      <Row label="Tổng Quỹ BHXH Đơn vị đóng cho nhân sự (21.5%)" amount={orgBhxh + orgBhyt + orgBhtn} highlight />
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Net Salary Total */}

@@ -164,12 +164,17 @@ export default function AdaptiveDashboardPage() {
           </div>
         </div>
 
-        {/* Render specific workspace based on detected role */}
+        {/* Render specific workspace based on detected 3 Core Roles */}
         {role === "LECTURER" && <LecturerDashboardView user={user} />}
         {role === "DEAN" && <DeanDashboardView user={user} />}
         {role === "HR_SPECIALIST" && <HrDashboardView user={user} />}
         {role === "RECTOR" && <RectorDashboardView user={user} />}
-        {role === "SYSTEM_ADMIN" && <SystemAdminDashboardView user={user} />}
+        {role === "SYSTEM_ADMIN" && (
+          <div className="space-y-8">
+            <RectorDashboardView user={user} />
+            <SystemAdminDashboardView user={user} />
+          </div>
+        )}
       </div>
     </AuthGuard>
   );
@@ -234,18 +239,18 @@ function LecturerDashboardView({ user }: { user: any }) {
 
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            href="/leave"
+            href="/attendance"
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 px-3.5 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
           >
-            <Wallet size={14} />
-            <span>Tạo Đơn Xin Phép</span>
+            <CalendarCheck size={14} />
+            <span>Chấm Công Của Tôi</span>
           </Link>
           <Link
-            href="/workload"
+            href="/payroll"
             className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition-colors"
           >
-            <BookOpen size={14} />
-            <span>Khai Báo Giờ Chuẩn</span>
+            <Banknote size={14} />
+            <span>Phiếu Lương & BHXH</span>
           </Link>
         </div>
       </div>
@@ -444,20 +449,20 @@ function LecturerDashboardView({ user }: { user: any }) {
             </div>
           </Card>
 
-          {/* AI Trợ lý Gợi ý cá nhân */}
-          <Card className="p-5 bg-gradient-to-br from-purple-50/70 to-white border-purple-200">
-            <div className="flex items-center gap-2 text-purple-700 font-bold text-xs mb-2">
-              <Sparkles size={16} />
-              <span>Gợi Ý Từ AI Trợ Lý Đào Tạo</span>
+          {/* Tóm tắt Phiếu lương & BHXH cá nhân */}
+          <Card className="p-5 bg-gradient-to-br from-emerald-50/70 to-white border-emerald-200">
+            <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs mb-2">
+              <Banknote size={16} />
+              <span>Tóm Tắt Lương & Bảo Hiểm Xã Hội Cá Nhân</span>
             </div>
             <p className="text-xs text-slate-700 leading-relaxed">
-              Thầy An có <strong>1 bài báo khoa học</strong> vừa được chấp nhận đăng tại Tạp chí Khoa học & Công nghệ. Bạn có thể nộp minh chứng để tự động cộng <strong>40 giờ chuẩn NCKH</strong> vào hồ sơ năm học.
+              Lương tính theo <strong>22/22 ngày công</strong> chấm công thực tế. Đã trích đóng đầy đủ <strong>BHXH (8%)</strong>, <strong>BHYT (1.5%)</strong> và <strong>BHTN (1%)</strong>.
             </p>
             <Link
-              href="/ai-assistant"
-              className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:underline"
+              href="/payroll"
+              className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:underline"
             >
-              Hỏi chi tiết cách nộp minh chứng →
+              Xem chi tiết Phiếu lương & BHXH →
             </Link>
           </Card>
         </div>

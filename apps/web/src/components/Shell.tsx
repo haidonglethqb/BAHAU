@@ -53,47 +53,55 @@ export interface NavGroup {
   items: NavItem[]
 }
 
-const NAV_GROUPS: NavGroup[] = [
-  {
-    group: 'TỔNG QUAN & ĐIỀU HÀNH',
-    items: [
-      { href: '/dashboard', label: 'Bàn làm việc', icon: <LayoutDashboard size={18} /> },
-      { href: '/units', label: 'Cây tổ chức', icon: <Network size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
-    ],
-  },
-  {
-    group: 'CÁ NHÂN & CÔNG TÁC',
-    items: [
-      { href: '/profile', label: 'Hồ sơ & CV', icon: <User size={18} /> },
-      { href: '/leave', label: 'Sổ phép năm', icon: <Wallet size={18} /> },
-      { href: '/attendance', label: 'Chấm công & Quẹt thẻ', icon: <CalendarCheck size={18} /> },
-      { href: '/trips', label: 'Lệnh công tác', icon: <Plane size={18} /> },
-    ],
-  },
-  {
-    group: 'HỌC THUẬT & CHUYÊN MÔN',
-    items: [
-      { href: '/workload', label: 'Giờ chuẩn Studio', icon: <BookOpen size={18} /> },
-      { href: '/training', label: 'Đào tạo & Chứng chỉ', icon: <GraduationCap size={18} /> },
-      { href: '/kpi', label: 'Đánh giá KPI', icon: <TrendingUp size={18} /> },
-      { href: '/tenure', label: 'Xét Chức danh & Thăng hạng', icon: <Award size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
-      { href: '/recruitment', label: 'Tuyển dụng & Giảng thử', icon: <UserPlus size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
-      { href: '/rd', label: 'NCKH & Nhuận Bút Thiết Kế', icon: <Compass size={18} /> },
-      { href: '/postgraduate', label: 'Đào tạo Sau Đại học', icon: <BookMarked size={18} /> },
-    ],
-  },
-  {
-    group: 'QUẢN TRỊ & HÀNH CHÍNH',
-    items: [
-      { href: '/employees', label: 'Danh bạ CBGV', icon: <Users size={18} />, allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
-      { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} />, allowedRoles: ['HR_SPECIALIST', 'SYSTEM_ADMIN'] },
-      { href: '/payroll', label: 'Bảng lương', icon: <Banknote size={18} /> },
-      { href: '/approvals', label: 'Hộp thư phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox', allowedRoles: ['DEAN', 'HR_SPECIALIST', 'RECTOR', 'SYSTEM_ADMIN'] },
-      { href: '/ai-assistant', label: 'AI Trợ lý Quy chế', icon: <Sparkles size={18} />, badge: 'AI' },
-      { href: '/admin/system', label: 'Hệ thống (Control Center)', icon: <Activity size={18} />, badge: 'K8s', allowedRoles: ['SYSTEM_ADMIN'] },
-    ],
-  },
-]
+const ROLE_NAV_GROUPS: Record<string, NavGroup[]> = {
+  LECTURER: [
+    {
+      group: 'KHÔNG GIAN NHÂN SỰ CÁ NHÂN',
+      items: [
+        { href: '/dashboard', label: 'Bàn làm việc cá nhân', icon: <LayoutDashboard size={18} /> },
+        { href: '/attendance', label: 'Chấm công của tôi', icon: <CalendarCheck size={18} /> },
+        { href: '/leave', label: 'Đơn xin nghỉ phép', icon: <Wallet size={18} /> },
+        { href: '/payroll', label: 'Phiếu lương & BHXH', icon: <Banknote size={18} /> },
+        { href: '/profile', label: 'Hồ sơ cá nhân', icon: <User size={18} /> },
+      ],
+    },
+  ],
+  HR_SPECIALIST: [
+    {
+      group: 'QUẢN LÝ NHÂN SỰ & NGÀY CÔNG',
+      items: [
+        { href: '/dashboard', label: 'Tổng quan Nhân sự', icon: <LayoutDashboard size={18} /> },
+        { href: '/employees', label: 'Hồ sơ Nhân sự', icon: <Users size={18} /> },
+        { href: '/contracts', label: 'Hợp đồng lao động', icon: <FileText size={18} /> },
+        { href: '/attendance', label: 'Quản lý Chấm công', icon: <CalendarCheck size={18} /> },
+        { href: '/leave', label: 'Duyệt phép & Sổ phép', icon: <Wallet size={18} /> },
+      ],
+    },
+    {
+      group: 'TIỀN LƯƠNG & BẢO HIỂM',
+      items: [
+        { href: '/payroll', label: 'Tính lương & BHXH', icon: <Banknote size={18} /> },
+      ],
+    },
+  ],
+  SYSTEM_ADMIN: [
+    {
+      group: 'ĐIỀU HÀNH & PHÊ DUYỆT',
+      items: [
+        { href: '/dashboard', label: 'Tổng quan & Quỹ lương', icon: <LayoutDashboard size={18} /> },
+        { href: '/payroll', label: 'Phê duyệt Lương & BHXH', icon: <Banknote size={18} /> },
+        { href: '/approvals', label: 'Hộp thư Phê duyệt', icon: <Inbox size={18} />, badge: 'Inbox' },
+        { href: '/employees', label: 'Danh bạ Nhân sự', icon: <Users size={18} /> },
+      ],
+    },
+    {
+      group: 'QUẢN TRỊ HỆ THỐNG',
+      items: [
+        { href: '/admin/system', label: 'Hệ thống & Phân quyền', icon: <Activity size={18} />, badge: 'Admin' },
+      ],
+    },
+  ],
+}
 
 export function Shell({
   children,
@@ -107,7 +115,7 @@ export function Shell({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { user, loading, isAuthenticated, logout, hasRole } = useAuth()
+  const { user, loading, isAuthenticated, login, logout, hasRole } = useAuth()
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -116,24 +124,13 @@ export function Shell({
 
   const userRole = isAuthenticated && user ? user.role : null
 
+  const handleQuickSwitchRole = async (email: string) => {
+    setUserMenuOpen(false)
+    await login(email, 'Admin@123456')
+  }
+
   const filteredNavGroups = userRole
-    ? NAV_GROUPS.map((group) => {
-        const items = group.items
-          .filter((item) => !item.allowedRoles || hasRole(item.allowedRoles))
-          .map((item) => {
-            if (item.href === '/payroll') {
-              if (userRole === 'LECTURER') {
-                return { ...item, label: 'Phiếu lương cá nhân' }
-              }
-              if (userRole === 'DEAN') {
-                return { ...item, label: 'Bảng lương Khoa' }
-              }
-              return { ...item, label: 'Bảng lương Toàn trường' }
-            }
-            return item
-          })
-        return { ...group, items }
-      }).filter((group) => group.items.length > 0)
+    ? ROLE_NAV_GROUPS[userRole] || ROLE_NAV_GROUPS.LECTURER
     : []
 
   const handleLogout = async () => {
@@ -359,6 +356,14 @@ export function Shell({
             {isAuthenticated && user ? (
               <>
                 <div className="hidden lg:flex items-center gap-1.5">
+                  <Link
+                    href="/checkin"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-50 text-sky-800 hover:bg-sky-100 border border-sky-200 text-xs font-bold transition-colors shadow-2xs"
+                  >
+                    <CalendarCheck size={14} className="text-sky-600" />
+                    <span>Trạm Check-in Kiosk</span>
+                  </Link>
+
                   {hasRole('SYSTEM_ADMIN') && (
                     <Link
                       href="/admin/system"
@@ -405,13 +410,38 @@ export function Shell({
                   </button>
 
                   {userMenuOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-52 rounded-xl border border-line bg-white p-1.5 shadow-xl z-50">
+                    <div className="absolute right-0 top-full mt-2 w-60 rounded-xl border border-line bg-white p-1.5 shadow-xl z-50">
                       <div className="px-3 py-2 border-b border-line mb-1">
                         <p className="text-xs font-bold text-ink truncate">{user.fullName}</p>
                         <p className="text-[11px] text-muted truncate">{user.email}</p>
                         <span className="mt-1 inline-block rounded bg-brand-50 px-1.5 py-0.2 text-[10px] font-bold text-brand-700 border border-brand-200">
                           {user.roleLabel}
                         </span>
+                      </div>
+                      <div className="px-2 py-1 border-b border-line mb-1">
+                        <p className="px-1 pb-1 font-mono text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                          Chuyển nhanh 3 Role cốt lõi
+                        </p>
+                        {[
+                          { label: '1. Nhân sự / Giảng viên', email: 'employee@dau.edu.vn', code: 'LECTURER' },
+                          { label: '2. Quản lý NS - Tiền lương', email: 'hrspecialist@dau.edu.vn', code: 'HR_SPECIALIST' },
+                          { label: '3. Quản trị & Phê duyệt', email: 'admin@dau.edu.vn', code: 'SYSTEM_ADMIN' },
+                        ].map((r) => (
+                          <button
+                            key={r.code}
+                            type="button"
+                            onClick={() => handleQuickSwitchRole(r.email)}
+                            className={cx(
+                              'flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer',
+                              user.role === r.code
+                                ? 'bg-brand-50 font-bold text-brand-700'
+                                : 'text-slate-600 hover:bg-slate-50',
+                            )}
+                          >
+                            <span>{r.label}</span>
+                            {user.role === r.code && <span className="text-[9px] text-brand-600">Đang dùng</span>}
+                          </button>
+                        ))}
                       </div>
                       <Link
                         href="/profile"

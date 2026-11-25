@@ -146,7 +146,7 @@ export function Leave() {
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (role === 'DEAN') return 'dept_approvals'
     if (role === 'HR_SPECIALIST') return 'hr_confirm'
-    if (role === 'RECTOR') return 'rector_approvals'
+    if (role === 'RECTOR' || role === 'SYSTEM_ADMIN') return 'rector_approvals'
     return 'my_requests'
   })
 
@@ -168,7 +168,7 @@ export function Leave() {
       setActiveTab('dept_approvals')
     } else if (role === 'HR_SPECIALIST' && activeTab === 'my_requests') {
       setActiveTab('hr_confirm')
-    } else if (role === 'RECTOR' && activeTab === 'my_requests') {
+    } else if ((role === 'RECTOR' || role === 'SYSTEM_ADMIN') && activeTab === 'my_requests') {
       setActiveTab('rector_approvals')
     } else if (role === 'LECTURER') {
       setActiveTab('my_requests')
@@ -182,7 +182,7 @@ export function Leave() {
       const [balRes, reqRes, pendingRes] = await Promise.allSettled([
         authFetchJson('/api/v1/leave/balance/my'),
         authFetchJson('/api/v1/leave/requests/my'),
-        role === 'DEAN' || role === 'HR_SPECIALIST' || role === 'RECTOR'
+        role === 'DEAN' || role === 'HR_SPECIALIST' || role === 'RECTOR' || role === 'SYSTEM_ADMIN'
           ? authFetchJson('/api/v1/workflow/pending')
           : Promise.resolve({ data: [] }),
       ])
@@ -250,7 +250,7 @@ export function Leave() {
           }))
         if (role === 'DEAN') setDeanPending(mappedPending)
         if (role === 'HR_SPECIALIST') setHrPending(mappedPending)
-        if (role === 'RECTOR') setRectorPending(mappedPending)
+        if (role === 'RECTOR' || role === 'SYSTEM_ADMIN') setRectorPending(mappedPending)
       }
     } catch (e: any) {
       setLoadError(e?.message || 'Lỗi kết nối máy chủ.')
@@ -479,14 +479,14 @@ export function Leave() {
         />
       )}
 
-      {role === 'RECTOR' && (
+      {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && (
         <Tabs
           activeTab={activeTab}
           onChange={setActiveTab}
           tabs={[
             { id: 'rector_approvals', label: 'Đoàn Công Tác & Trưởng Đơn Vị Xin Nghỉ', count: rectorPending.length },
             { id: 'rector_overview', label: 'Báo Cáo Tỷ Lệ Vắng Mặt Toàn Trường' },
-            { id: 'my_requests', label: 'Lịch Công Tác Của Hiệu Trưởng', count: requests.length },
+            { id: 'my_requests', label: 'Lịch Công Tác Cá Nhân', count: requests.length },
           ]}
         />
       )}
@@ -746,7 +746,7 @@ export function Leave() {
       )}
 
       {/* VIEW 4: RECTOR APPROVAL TAB */}
-      {role === 'RECTOR' && activeTab === 'rector_approvals' && (
+      {(role === 'RECTOR' || role === 'SYSTEM_ADMIN') && activeTab === 'rector_approvals' && (
         <Card className="p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-line pb-3">
             <div>

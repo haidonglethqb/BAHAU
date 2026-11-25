@@ -37,24 +37,27 @@ interface AuthContextType {
 }
 
 const ROLE_ALIAS_MAP: Record<string, string> = {
+  // Role 3: Quản trị & Phê duyệt (Gộp Admin hệ thống & Ban Giám hiệu)
   ROLE_SYSADMIN: "SYSTEM_ADMIN",
   SYSTEM_ADMIN: "SYSTEM_ADMIN",
   SYSADMIN: "SYSTEM_ADMIN",
   ADMIN: "SYSTEM_ADMIN",
-  ROLE_RECTOR: "RECTOR",
-  RECTOR: "RECTOR",
-  HIEUTRUONG: "RECTOR",
+  ROLE_RECTOR: "SYSTEM_ADMIN",
+  RECTOR: "SYSTEM_ADMIN",
+  HIEUTRUONG: "SYSTEM_ADMIN",
+  // Role 2: Quản lý Nhân sự - Tiền lương (Gộp TCHC, Kế toán & Quản lý đơn vị)
   ROLE_HR_OFFICER: "HR_SPECIALIST",
   ROLE_HR_SPECIALIST: "HR_SPECIALIST",
   HR_OFFICER: "HR_SPECIALIST",
   HR_SPECIALIST: "HR_SPECIALIST",
   TCHC: "HR_SPECIALIST",
-  ROLE_ACCOUNTANT: "ACCOUNTANT",
-  ACCOUNTANT: "ACCOUNTANT",
-  ROLE_UNIT_HEAD: "DEAN",
-  UNIT_HEAD: "DEAN",
-  DEAN: "DEAN",
-  TRUONGKHOA: "DEAN",
+  ROLE_ACCOUNTANT: "HR_SPECIALIST",
+  ACCOUNTANT: "HR_SPECIALIST",
+  ROLE_UNIT_HEAD: "HR_SPECIALIST",
+  UNIT_HEAD: "HR_SPECIALIST",
+  DEAN: "HR_SPECIALIST",
+  TRUONGKHOA: "HR_SPECIALIST",
+  // Role 1: Nhân sự / Giảng viên (Cá nhân)
   ROLE_EMPLOYEE: "LECTURER",
   EMPLOYEE: "LECTURER",
   LECTURER: "LECTURER",
@@ -63,20 +66,14 @@ const ROLE_ALIAS_MAP: Record<string, string> = {
 
 const ROLE_PRIORITY = [
   "SYSTEM_ADMIN",
-  "RECTOR",
   "HR_SPECIALIST",
-  "ACCOUNTANT",
-  "DEAN",
   "LECTURER",
 ];
 
 const ROLE_LABEL_MAP: Record<string, { roleLabel: string; title: string }> = {
-  SYSTEM_ADMIN: { roleLabel: "Quản trị hệ thống", title: "Quản trị viên" },
-  RECTOR: { roleLabel: "Hiệu trưởng", title: "Ban Giám hiệu" },
-  HR_SPECIALIST: { roleLabel: "Phòng TCHC", title: "Chuyên viên TCHC" },
-  ACCOUNTANT: { roleLabel: "Kế toán", title: "Chuyên viên Tài chính" },
-  DEAN: { roleLabel: "Trưởng đơn vị", title: "Trưởng khoa / Đơn vị" },
-  LECTURER: { roleLabel: "Giảng viên (CBGV)", title: "Giảng viên / Cán bộ" },
+  SYSTEM_ADMIN: { roleLabel: "Quản trị & Phê duyệt", title: "Quản trị viên / Ban Giám hiệu" },
+  HR_SPECIALIST: { roleLabel: "Quản lý Nhân sự - Tiền lương", title: "Chuyên viên Nhân sự - Tiền lương" },
+  LECTURER: { roleLabel: "Nhân sự / Giảng viên", title: "Giảng viên / Cán bộ" },
 };
 
 export function normalizeRoleCode(roleCode: string): string {

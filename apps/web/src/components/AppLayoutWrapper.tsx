@@ -7,10 +7,11 @@ import { Shell } from './Shell';
 export function AppLayoutWrapper({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  // Landing page, login page, and public document verification have standalone full-page layouts
+  // Landing page, login page, biometric checkin kiosk, and public document verification have standalone full-page layouts
   const isPublicStandalonePage =
     pathname === '/' ||
     pathname === '/login' ||
+    pathname === '/checkin' ||
     pathname === '/verify' ||
     Boolean(pathname?.startsWith('/verify/'));
 

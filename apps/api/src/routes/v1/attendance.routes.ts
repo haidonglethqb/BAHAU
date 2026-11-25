@@ -8,6 +8,8 @@ import {
   faceCheckIn,
   faceCheckOut,
   FaceAttendanceSchema,
+  getKioskStatus,
+  kioskPunch,
 } from "../../controllers/attendance.controller.js";
 import { validateBody, validateQuery } from "../../middlewares/validate.middleware.js";
 import { requireAuth, requirePermission } from "../../middlewares/auth.middleware.js";
@@ -83,5 +85,9 @@ router.post(
   validateBody(FaceAttendanceSchema),
   asyncHandler(faceCheckOut)
 );
+
+// Trạm Máy Chấm Công Kiosk Độc Lập (Face ID & Fingerprint)
+router.get("/attendance/kiosk-status", asyncHandler(getKioskStatus));
+router.post("/attendance/kiosk-punch", asyncHandler(kioskPunch));
 
 export default router;

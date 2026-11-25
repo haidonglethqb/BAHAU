@@ -8,9 +8,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@bahau/web",
+    "dev": "concurrently -k -n \"API,WEB\" -c \"cyan,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
     "dev:all": "concurrently -k -n \"API,WEB\" -c \"cyan,magenta\" \"npm run dev:api\" \"npm run dev:web\"",
-    "dev:api": "npm run dev --workspace=@bahau/api",
+    "dev:api": "npm run build --workspace=@bahau/contracts && npm run dev --workspace=@bahau/api",
     "dev:web": "npm run dev --workspace=@bahau/web",
     "start": "npm run start --workspace=@bahau/web",
     "build": "npm run build --workspaces --if-present",

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { z } from "zod";
+import { prisma } from "@bahau/database";
 import { AttendanceService } from "../services/attendance.service.js";
 import { AppError } from "../middlewares/error.middleware.js";
 
@@ -158,4 +159,125 @@ export async function faceCheckIn(req: Request, res: Response): Promise<void> {
 
 export async function faceCheckOut(req: Request, res: Response): Promise<void> {
   await handleFaceAttendance(req, res, "checkout");
+}
+
+function getVnTodayUtc(): { dateStr: string; workDateUtc: Date; month: number; year: number } {
+  const vn = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  const year = vn.getUTCFullYear();
+  const month = vn.getUTCMonth() + 1;
+  const day = vn.getUTCDate();
+  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const workDateUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  return { dateStr, workDateUtc, month, year };
+}
+
+export async function getKioskStatus(req: Request, res: Response): Promise<void> {
+  const { dateStr, workDateUtc, month, year } = getVnTodayUtc();
+  try {
+    const employees = await prisma.employee.findMany({
+      where: { employmentStatus: { notIn: ["RESIGNED", "RETIRED"] } },
+      include: {
+        assignments: {
+          where: { status: "ACTIVE" },
+          include: { unit: true, position: true },
+        },
+        attendanceRecords: {
+          where: { workDate: workDateUtc },
+        },
+        monthlyTimesheets: {
+          where: { period: { month, year } },
+        },
+      },
+      orderBy: { employeeCode: "asc" },
+    });
+
+    const list = employees.map((emp) => {
+      const primary = emp.assignments.find((a) => a.assignmentType === "PRIMARY") || emp.assignments[0];
+      const todayRec = emp.attendanceRecords[0] || null;
+      const summary = emp.monthlyTimesheets[0] || null;
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        fullName: emp.fullName,
+        unitName: primary?.unit?.name || "ĐH Kiến trúc Đà Nẵng",
+        positionName: primary?.position?.name || "Nhân sự / Giảng viên",
+        today: todayRec
+          ? {
+              workDate: dateStr,
+              checkInTime: todayRec.checkInTime?.toISOString() ?? null,
+              checkOutTime: todayRec.checkOutTime?.toISOString() ?? null,
+              rawWorkingHours: Number(todayRec.rawWorkingHours),
+              status: todayRec.status,
+              deviceSource: todayRec.deviceSource,
+            }
+          : null,
+        monthlyWorkingDays: summary ? Number(summary.actualWorkingDays) : 21,
+        standardDays: summary ? Number(summary.standardDays) : 22,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { workDate: dateStr, month, year, employees: list },
+    });
+  } catch {
+    res.status(200).json({
+      success: true,
+      data: { workDate: dateStr, month, year, employees: [] },
+    });
+  }
+}
+
+export async function kioskPunch(req: Request, res: Response): Promise<void> {
+  const { employeeId, employeeCode, mode, biometricMethod, snapshot } = (req.body ?? {}) as {
+    employeeId?: string;
+    employeeCode?: string;
+    mode?: "checkin" | "checkout" | "reset";
+    biometricMethod?: "FACE_ID" | "FINGERPRINT";
+    snapshot?: string;
+  };
+
+  let targetId = employeeId;
+  if (!targetId && employeeCode) {
+    const emp = await prisma.employee.findUnique({ where: { employeeCode } });
+    targetId = emp?.id;
+  }
+  if (!targetId) {
+    throw new AppError(400, "BAD_REQUEST", "Vui lòng chọn nhân sự để chấm công.");
+  }
+
+  const deviceSource =
+    biometricMethod === "FINGERPRINT"
+      ? "KIOSK_FINGERPRINT_OPTICAL"
+      : "KIOSK_FACE_AI_CAMERA";
+
+  if (mode === "reset") {
+    const { workDateUtc } = getVnTodayUtc();
+    await prisma.attendanceRecord.deleteMany({
+      where: { employeeId: targetId, workDate: workDateUtc },
+    });
+    res.status(200).json({
+      success: true,
+      data: { reset: true, employeeId: targetId },
+    });
+    return;
+  }
+
+  const result =
+    mode === "checkout"
+      ? await AttendanceService.faceCheckOut(targetId, {
+          snapshot,
+          deviceSource,
+          timestamp: new Date(),
+        })
+      : await AttendanceService.faceCheckIn(targetId, {
+          snapshot,
+          deviceSource,
+          timestamp: new Date(),
+        });
+
+  res.status(200).json({
+    success: true,
+    data: result,
+  });
 }

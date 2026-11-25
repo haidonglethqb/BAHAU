@@ -8,11 +8,9 @@ import { useAuth } from '../context/AuthContext'
 import { useRouter } from 'next/navigation'
 
 const DEV_SEED_ACCOUNTS: Array<{ label: string; email: string; uiRole: Role }> = [
-  { label: 'Giảng viên (CBGV)', email: 'employee@dau.edu.vn', uiRole: 'cbgv' },
-  { label: 'Trưởng đơn vị', email: 'unithead@dau.edu.vn', uiRole: 'truongkhoa' },
-  { label: 'Phòng TCHC', email: 'hrspecialist@dau.edu.vn', uiRole: 'tchc' },
-  { label: 'Hiệu trưởng', email: 'rector@dau.edu.vn', uiRole: 'hieutruong' },
-  { label: 'Admin Hệ thống', email: 'admin@dau.edu.vn', uiRole: 'admin' },
+  { label: '1. Nhân sự / Giảng viên', email: 'employee@dau.edu.vn', uiRole: 'cbgv' },
+  { label: '2. Quản lý Nhân sự - Tiền lương', email: 'hrspecialist@dau.edu.vn', uiRole: 'tchc' },
+  { label: '3. Quản trị & Phê duyệt (Admin)', email: 'admin@dau.edu.vn', uiRole: 'admin' },
 ]
 
 function mapToUiRole(role?: string): Role {
@@ -49,6 +47,7 @@ export function Login({
 
   const handleSelectSeedEmail = (seedEmail: string) => {
     setEmail(seedEmail)
+    setPassword('Admin@123456')
     setError(null)
   }
 
@@ -205,13 +204,24 @@ export function Login({
               </Button>
             </form>
 
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => router.push('/checkin')}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 px-4 py-2.5 text-xs font-bold text-emerald-800 transition cursor-pointer shadow-2xs"
+              >
+                <ShieldCheck size={15} className="text-emerald-600" />
+                <span>Mở Giao Diện Máy Chấm Công Riêng (Check-in / Check-out Kiosk)</span>
+              </button>
+            </div>
+
             {isDevMode && (
               <div className="mt-7 border-t border-line pt-5">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted">
                     TÀI KHOẢN SEED MÔI TRƯỜNG DEV
                   </span>
-                  <span className="text-[10px] text-slate-400">Bấm để điền email</span>
+                  <span className="text-[10px] text-slate-400">Mật khẩu chung: Admin@123456</span>
                 </div>
                 <div className="grid grid-cols-1 gap-1.5">
                   {DEV_SEED_ACCOUNTS.map((acc) => (
@@ -226,7 +236,7 @@ export function Login({
                         <span className="text-muted">{acc.email}</span>
                       </div>
                       <span className="text-[10px] text-brand-600 font-medium shrink-0 flex items-center gap-0.5">
-                        <UserCheck size={11} /> Điền email
+                        <UserCheck size={11} /> Điền tự động
                       </span>
                     </button>
                   ))}

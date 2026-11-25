@@ -304,11 +304,20 @@ export default function AttendancePersonalPage() {
           </button>
 
           <a
-            href="/attendance/manage"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition"
+            href="/checkin"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition"
           >
-            Quản trị Bảng công đơn vị →
+            <Camera size={15} /> Mở Trạm Check-in / Check-out Riêng →
           </a>
+
+          {user?.role !== "LECTURER" && (
+            <a
+              href="/attendance/manage"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition"
+            >
+              Quản trị Bảng công đơn vị →
+            </a>
+          )}
         </div>
       </div>
 
